@@ -1,7 +1,7 @@
 module Rbac
   # This list is used to detemine whether RBAC, based on assigned tags, should be applied for a class in a search that is based on the class.
   # Classes should be added to this list ONLY after:
-  # 1. It has been added to the MiqExpression.@@base_tables list
+  # 1. It has been added to the MiqExpression::BASE_TABLES list
   # 2. Tagging has been enabled in the UI
   # 3. Class contains acts_as_miq_taggable
   CLASSES_THAT_PARTICIPATE_IN_RBAC = %w(
@@ -23,7 +23,6 @@ module Rbac
     ResourcePool
     SecurityGroup
     Service
-    ServiceTemplate
     Storage
     VmOrTemplate
   )
@@ -60,16 +59,16 @@ module Rbac
   TENANT_ACCESS_STRATEGY = {
     'ExtManagementSystem'    => :ancestor_ids,
     'MiqAeNamespace'         => :ancestor_ids,
-    'MiqRequest'             => nil, # tenant only
+    'MiqRequest'             => :descendant_ids,
     'MiqRequestTask'         => nil, # tenant only
+    'MiqTemplate'            => :ancestor_ids,
     'Provider'               => :ancestor_ids,
     'ServiceTemplateCatalog' => :ancestor_ids,
     'ServiceTemplate'        => :ancestor_ids,
     'Service'                => :descendant_ids,
+    'Tenant'                 => :descendant_ids,
     'Vm'                     => :descendant_ids
   }
-
-  NO_SCOPE = :_no_scope_
 
   ########################################################################################
   # RBAC is:
@@ -118,17 +117,38 @@ module Rbac
     klass.select(minimum_columns_for(klass)).where(cond)
   end
 
+  # @return nil if no objects are owned by self service or user not a selfservice user
+  # @return [Array<Integer>] object_ids owned by a user or group
   def self.get_self_service_object_ids(user_or_group, klass)
     targets = get_self_service_objects(user_or_group, klass)
-    targets = targets.collect(&:id) if targets.respond_to?(:collect)
+    targets = targets.reorder(nil).collect(&:id) if targets.respond_to?(:collect)
     targets
+  end
+
+  def self.calc_filtered_ids(scope, user_filters, user_or_group = nil)
+    klass = scope.respond_to?(:klass) ? scope.klass : scope
+    u_filtered_ids = get_self_service_object_ids(user_or_group, klass)
+    b_filtered_ids = get_belongsto_filter_object_ids(klass, user_filters['belongsto'])
+    m_filtered_ids = get_managed_filter_object_ids(klass, scope, user_filters['managed'])
+    d_filtered_ids = user_filters['ids_via_descendants']
+
+    filtered_ids = combine_filtered_ids(u_filtered_ids, b_filtered_ids, m_filtered_ids, d_filtered_ids)
+    [filtered_ids, u_filtered_ids]
   end
 
   #
   # Algorithm: filter = u_filtered_ids UNION (b_filtered_ids INTERSECTION m_filtered_ids)
   #            filter = filter UNION d_filtered_ids if filter is not nil
-  #  Each of the x_filtered_ids can be nil, which means that it does not apply
-  # Output can be nil (filters do not apply) or an array of ids
+  #
+  # a nil as input for any field means it does not apply
+  # a nil as output means there is not filter
+  #
+  # @param u_filtered_ids [nil|Array<Integer>] self service user owned objects
+  # @param b_filtered_ids [nil|Array<Integer>] objects that belong to parent
+  # @param m_filtered_ids [nil|Array<Integer>] managed filter object ids
+  # @param d_filtered_ids [nil|Array<Integer>] ids from descendants
+  # @return nil if filters do not aply
+  # @return [Array<Integer>] target ids for filter
   def self.combine_filtered_ids(u_filtered_ids, b_filtered_ids, m_filtered_ids, d_filtered_ids)
     filtered_ids =
       if b_filtered_ids.nil?
@@ -153,49 +173,35 @@ module Rbac
   end
 
   def self.find_targets_with_indirect_rbac(klass, scope, rbac_filters, find_options = {}, user_or_group = nil)
-    parent_class   = rbac_class(klass)
-    u_filtered_ids = get_self_service_object_ids(user_or_group, parent_class)
-    b_filtered_ids = get_belongsto_filter_object_ids(parent_class, rbac_filters['belongsto'])
-    m_filtered_ids = get_managed_filter_object_ids(parent_class, parent_class, rbac_filters['managed'])
-    d_filtered_ids = rbac_filters['ids_via_descendants']
-    filtered_ids   = combine_filtered_ids(u_filtered_ids, b_filtered_ids, m_filtered_ids, d_filtered_ids)
+    parent_class = rbac_class(klass)
+    filtered_ids, _ = calc_filtered_ids(parent_class, rbac_filters, user_or_group)
 
     find_targets_filtered_by_parent_ids(parent_class, klass, scope, find_options, filtered_ids)
   end
 
-  def self.compute_total_count(klass, scope, extra_target_ids, conditions, includes = nil)
-    cond_for_count =
-      if extra_target_ids.nil?
-        conditions
-      else
-        # sanitize_sql_for_conditions is deprecated (at least when given
-        # a hash).. but we can ignore it for now. When it goes away,
-        # we'll be on Rails 5.0, and can use Relation#or instead.
-        ActiveSupport::Deprecation.silence do
-          ids_clause = klass.send(:sanitize_sql_for_conditions, :id => extra_target_ids)
-          if conditions.nil?
-            ids_clause
-          else
-            original_conditions = klass.send(:sanitize_sql_for_conditions, conditions)
-            "(#{original_conditions}) OR (#{ids_clause})"
-          end
-        end
-      end
-    scope.where(cond_for_count).includes(includes).references(includes).count
-  end
-
-  def self.find_reflection(klass, association_to_match)
-    klass.reflections.each do |association, reflection|
-      next unless association == association_to_match
-      return reflection
+  def self.total_scope(scope, extra_target_ids, conditions, includes)
+    if conditions && extra_target_ids
+      scope = scope.where(conditions).or(scope.where(:id => extra_target_ids))
+    elsif conditions
+      scope = scope.where(conditions)
+    elsif extra_target_ids
+      scope = scope.where(:id => extra_target_ids)
     end
-    nil
+
+    scope.includes(includes).references(includes)
   end
 
+  # @param parent_class [Class] Class of parent (e.g. Host)
+  # @param klass [Class] Class of child node (e.g. Vm)
+  # @param scope [] scope for active records (e.g. Vm.archived)
+  # @param find_options [Hash<Symbol,String|Array>] options for active record conditions
+  # @option find_options :conditions [String|Hash|Array] active record where conditions for primary records (e.g. { "vms.archived" => true} )
+  # @param filtered_ids [nil|Array<Integer>] ids for the parent class (e.g. [1,2,3] for host)
+  # @return [Array<Array<Object>,Integer,Integer] targets, total count, authorized count
   def self.find_targets_filtered_by_parent_ids(parent_class, klass, scope, find_options, filtered_ids)
     total_count = scope.where(find_options[:conditions]).includes(find_options[:include]).references(find_options[:include]).count
-    if filtered_ids.kind_of?(Array)
-      reflection = find_reflection(klass, parent_class.name.underscore.to_sym)
+    if filtered_ids
+      reflection = klass.reflections[parent_class.name.underscore]
       if reflection
         ids_clause = ["#{klass.table_name}.#{reflection.foreign_key} IN (?)", filtered_ids]
       else
@@ -211,39 +217,32 @@ module Rbac
     return targets, total_count, auth_count
   end
 
-  def self.find_targets_filtered_by_ids(klass, scope, find_options, u_filtered_ids, b_filtered_ids, m_filtered_ids, d_filtered_ids)
-    total_count  = compute_total_count(klass, scope, u_filtered_ids, find_options[:conditions], find_options[:include])
-    filtered_ids = combine_filtered_ids(u_filtered_ids, b_filtered_ids, m_filtered_ids, d_filtered_ids)
-    if filtered_ids.kind_of?(Array)
-      ids_clause  = ["#{klass.table_name}.id IN (?)", filtered_ids]
+  def self.find_targets_filtered_by_ids(scope, find_options, u_filtered_ids, filtered_ids)
+    total_count  = total_scope(scope, u_filtered_ids, find_options[:conditions], find_options[:include]).count
+    if filtered_ids
+      ids_clause  = ["#{scope.table_name}.id IN (?)", filtered_ids]
       find_options[:conditions] = MiqExpression.merge_where_clauses(find_options[:conditions], ids_clause)
       _log.debug("New Find options: #{find_options.inspect}")
     end
     targets     = method_with_scope(scope, find_options)
-    auth_count  = klass.where(find_options[:conditions]).includes(find_options[:include]).references(find_options[:include]).count
+    auth_count  = targets.except(:offset, :limit, :order).count(:all)
 
     return targets, total_count, auth_count
   end
 
   def self.get_belongsto_filter_object_ids(klass, filter)
-    return nil if filter.nil? || filter.empty?
-    return nil unless BELONGSTO_FILTER_CLASSES.include?(safe_base_class(klass).name)
+    return nil if !BELONGSTO_FILTER_CLASSES.include?(safe_base_class(klass).name) || filter.blank?
     get_belongsto_matches(filter, rbac_class(klass)).collect(&:id)
   end
 
   def self.get_managed_filter_object_ids(klass, scope, filter)
-    return nil if filter.nil? || filter.empty?
-    return nil unless TAGGABLE_FILTER_CLASSES.include?(safe_base_class(klass).name)
-    scope.find_tags_by_grouping(filter, :ns => '*', :select => minimum_columns_for(klass)).collect(&:id)
+    return nil if !TAGGABLE_FILTER_CLASSES.include?(safe_base_class(klass).name) || filter.blank?
+    scope.find_tags_by_grouping(filter, :ns => '*', :select => minimum_columns_for(klass)).reorder(nil).collect(&:id)
   end
 
-  def self.find_targets_with_direct_rbac(klass, scope, rbac_filters, find_options = {}, user_or_group = nil)
-    u_filtered_ids = get_self_service_object_ids(user_or_group, klass)
-    b_filtered_ids = get_belongsto_filter_object_ids(klass, rbac_filters['belongsto'])
-    m_filtered_ids = get_managed_filter_object_ids(klass, scope, rbac_filters['managed'])
-    d_filtered_ids = rbac_filters['ids_via_descendants']
-
-    find_targets_filtered_by_ids(klass, scope, find_options, u_filtered_ids, b_filtered_ids, m_filtered_ids, d_filtered_ids)
+  def self.find_targets_with_direct_rbac(scope, rbac_filters, find_options = {}, user_or_group = nil)
+    filtered_ids, u_filtered_ids = calc_filtered_ids(scope, rbac_filters, user_or_group)
+    find_targets_filtered_by_ids(scope, find_options, u_filtered_ids, filtered_ids)
   end
 
   def self.find_targets_with_user_group_rbac(klass, scope, _rbac_filters, find_options = {}, user_or_group = nil)
@@ -259,7 +258,8 @@ module Rbac
       end
 
       cond, incl = MiqExpression.merge_where_clauses_and_includes([find_options[:condition], cond].compact, [find_options[:include]].compact)
-      targets = klass.all(find_options.except(:conditions, :include)).where(cond).includes(incl).references(incl)
+      targets = klass.where(cond).includes(incl).references(incl).group(find_options[:group])
+                     .order(find_options[:order]).offset(find_options[:offset]).limit(find_options[:limit]).to_a
 
       [targets, targets.length, targets.length]
     else
@@ -268,11 +268,9 @@ module Rbac
   end
 
   def self.find_options_for_tenant(klass, user_or_group, find_options = {})
-    tenant_ids = klass.accessible_tenant_ids(user_or_group, accessible_tenant_ids_strategy(klass))
-    return find_options if tenant_ids.empty?
+    tenant_id_clause = klass.tenant_id_clause(user_or_group)
 
-    tenant_id_clause = {klass.table_name => {:tenant_id => tenant_ids}}
-    find_options[:conditions] = MiqExpression.merge_where_clauses(find_options[:conditions], tenant_id_clause)
+    find_options[:conditions] = MiqExpression.merge_where_clauses(find_options[:conditions], tenant_id_clause) if tenant_id_clause
     find_options
   end
 
@@ -283,7 +281,7 @@ module Rbac
   def self.find_targets_with_rbac(klass, scope, rbac_filters, find_options = {}, user_or_group = nil)
     find_options = find_options_for_tenant(klass, user_or_group, find_options) if klass.respond_to?(:scope_by_tenant?) && klass.scope_by_tenant?
 
-    return find_targets_with_direct_rbac(klass, scope, rbac_filters, find_options, user_or_group)     if apply_rbac_to_class?(klass)
+    return find_targets_with_direct_rbac(scope, rbac_filters, find_options, user_or_group)     if apply_rbac_to_class?(klass)
     return find_targets_with_indirect_rbac(klass, scope, rbac_filters, find_options, user_or_group)   if apply_rbac_to_associated_class?(klass)
     return find_targets_with_user_group_rbac(klass, scope, rbac_filters, find_options, user_or_group) if apply_user_group_rbac_to_class?(klass)
     find_targets_without_rbac(klass, scope, find_options)
@@ -297,9 +295,8 @@ module Rbac
   end
 
   def self.minimum_columns_for(klass)
-    columns = ['id']
-    columns << 'type' if klass.column_names.include?('type') # STI classes will instantiate calling class without type column
-    columns.join(', ')
+    # STI classes will instantiate calling class without type column
+    klass.column_names.include?('type') ? %w(id type) : %w(id)
   end
 
   def self.get_user_info(user, userid, miq_group, miq_group_id)
@@ -308,19 +305,22 @@ module Rbac
     if user && miq_group
       user.current_group = miq_group if user.miq_groups.include?(miq_group)
     end
+    miq_group ||= user.try(:current_group)
     # for reports, user is currently nil, so use the group filter
     user_filters = user.try(:get_filters) || miq_group.try(:get_filters) || {}
+    user_filters = user_filters.dup
     user_filters["managed"] ||= []
 
     [user, miq_group, user_filters]
   end
 
   def self.filtered(objects, options = {})
-    if objects.present?
-      Rbac.search(options.merge(:targets => objects, :results_format => :objects)).first
-    else
-      objects
+    if objects.nil?
+      Vmdb::Deprecation.deprecation_warning("objects = nil",
+                                            "use [] to get an empty result back. nil will return all records",
+                                            caller(0)) unless Rails.env.production?
     end
+    Rbac.search(options.merge(:targets => objects, :results_format => :objects, :empty_means_empty => true)).first
   end
 
   def self.find_via_descendants(descendants, method_name, klass)
@@ -387,17 +387,62 @@ module Rbac
     return descendant_klass, method_name
   end
 
+  # @param  options filtering options
+  # @option options :targets       [nil|Array<Numeric|Object>|scope] Objects to be filtered
+  #   - an nil entry uses the optional where_clause
+  #   - Array<Numeric> list if ids. :class is required. results are returned as ids
+  #   - Array<Object> list of objects. results are returned as objects
+  # @option options :named_scope   [Symbol|Array<String,Integer>] support for using named scope in search
+  #     Example without args: :named_scope => :in_my_region
+  #     Example with args:    :named_scope => [in_region, 1]
+  # @option options :class_or_name [Class|String]
+  # @option options :conditions    [Hash|String|Array<String>]
+  # @option options :where_clause  []
+  # @option options :sub_filter
+  # @option options :include_for_find [Array<Symbol>]
+  # @option options :filter
+  # @option options :results_format [:id, :objects] (default: for object targets, :object, otherwise :id)
+
+  # @option options :user         [User]     (default: current_user)
+  # @option options :userid       [String]   User#userid (not user_id)
+  # @option options :miq_group    [MiqGroup] (default: current_user.current_group)
+  # @option options :miq_group_id [Numeric]
+  # @option options :match_via_descendants [Hash]
+  # @option options :order        [Numeric] (default: no order)
+  # @option options :limit        [Numeric] (default: no limit)
+  # @option options :offset       [Numeric] (default: no offset)
+  # @option options :apply_limit_in_sql [Boolean]
+  # @option options :ext_options
+  # @return [Array<Array<Numeric|Object>,Hash>] list of object and the associated search options
+  #   Array<Numeric|Object> list of object in the same order as input targets if possible
+  # @option attrs :total_count [Numeric]
+  # @option attrs :auth_count [Numeric]
+  # @option attrs :user_filters
+  # @option attrs apply_limit_in_sql
+  # @option attrs target_ids_for_paging
+
   def self.search(options = {})
+    # now:   search(:targets => [],  :class => Vm) searches Vms
+    # later: search(:targets => [],  :class => Vm) returns []
+    #        search(:targets => nil, :class => Vm) will always search Vms
+    if options.key?(:targets) && options[:targets].kind_of?(Array) && options[:targets].empty?
+      return [], {:total_count => 0} if options[:empty_means_empty]
+
+      Vmdb::Deprecation.deprecation_warning(":targets => []", "use :targets => nil to search all records",
+                                            caller(0)) unless Rails.env.production?
+      options[:targets] = nil
+    end
+    options = options.dup
     # => empty inputs - normal find with optional where_clause
     # => list if ids - :class is required for this format.
     # => list of objects
     # results are returned in the same format as the targets. for empty targets, the default result format is a list of ids.
-    targets           = options.delete(:targets) || []
+    targets           = options.delete(:targets)
 
     # Support for using named_scopes in search. Supports scopes with or without args:
     # Example without args: :named_scope => :in_my_region
     # Example with args:    :named_scope => [in_region, 1]
-    scope             = options.delete(:named_scope) || NO_SCOPE
+    scope             = options.delete(:named_scope)
 
     class_or_name     = options.delete(:class) { Object }
     conditions        = options.delete(:conditions)
@@ -417,21 +462,37 @@ module Rbac
     ids_clause             = nil
     target_ids             = nil
 
-    unless targets.empty?
+    if targets.nil?
+      scope = apply_scope(klass, scope)
+    elsif targets.kind_of?(Array)
       if targets.first.kind_of?(Numeric)
-        target_ids       = targets
+        target_ids = targets
       else
         target_ids       = targets.collect(&:id)
         klass            = targets.first.class.base_class unless klass.respond_to?(:find)
         results_format ||= :objects
       end
+      scope = apply_scope(klass, scope)
 
       ids_clause = ["#{klass.table_name}.id IN (?)", target_ids] if klass.respond_to?(:table_name)
+    else # targets is a scope, class, or AASM class (VimPerformanceDaily in particular)
+      targets = targets.to_s.constantize if targets.kind_of?(String) || targets.kind_of?(Symbol)
+      targets = targets.all if targets < ActiveRecord::Base
+
+      results_format ||= :objects
+      scope = apply_scope(targets, scope)
+
+      unless klass.respond_to?(:find)
+        klass = targets
+        klass = klass.klass if klass.respond_to?(:klass)
+        # working around MiqAeDomain not being in rbac_class
+        klass = klass.base_class if klass.respond_to?(:base_class) && rbac_class(klass).nil? && rbac_class(klass.base_class)
+      end
     end
 
     user_filters['ids_via_descendants'] = ids_via_descendants(rbac_class(klass), options.delete(:match_via_descendants), :user => user, :miq_group => miq_group)
 
-    exp_sql, exp_includes, exp_attrs = search_filter.to_sql(tz) unless search_filter.nil? || klass.respond_to?(:instances_are_derived?)
+    exp_sql, exp_includes, exp_attrs = search_filter.to_sql(tz) if search_filter && !klass.respond_to?(:instances_are_derived?)
     conditions, include_for_find = MiqExpression.merge_where_clauses_and_includes([conditions, sub_filter, where_clause, exp_sql, ids_clause], [include_for_find, exp_includes])
 
     attrs[:apply_limit_in_sql] = (exp_attrs.nil? || exp_attrs[:supported_by_sql]) && user_filters["belongsto"].blank?
@@ -443,14 +504,13 @@ module Rbac
     _log.debug("Find options: #{find_options.inspect}")
 
     if klass.respond_to?(:find)
-      scope = apply_scope(klass, scope)
       targets, total_count, auth_count = find_targets_with_rbac(klass, scope, user_filters, find_options, user || miq_group)
     else
       total_count = targets.length
       auth_count  = targets.length
     end
 
-    unless search_filter.nil?
+    if search_filter && targets && (!exp_attrs || !exp_attrs[:supported_by_sql])
       rejects     = targets.reject { |obj| self.matches_search_filters?(obj, search_filter, tz) }
       auth_count -= rejects.length
       targets -= rejects
@@ -464,7 +524,7 @@ module Rbac
 
     # Preserve sort order of incoming target_ids
     if !target_ids.nil? && !options[:order]
-      targets = targets.sort { |a, b| target_ids.index(a.id) <=> target_ids.index(b.id) }
+      targets = targets.sort_by { |a| target_ids.index(a.id) }
     end
 
     attrs.merge!(:total_count => total_count, :auth_count => auth_count)
@@ -485,15 +545,15 @@ module Rbac
     if ar_scope == VmdbDatabaseConnection || ar_scope == VmdbDatabaseSetting
       ar_scope.all
     elsif ar_scope < ActsAsArModel || (ar_scope.respond_to?(:instances_are_derived?) && ar_scope.instances_are_derived?)
-      ar_scope.find(:all, options)
+      ar_scope.all(options)
     else
       ar_scope.apply_legacy_finder_options(options)
     end
   end
 
   def self.apply_scope(klass, scope)
-    scope_name = scope.to_miq_a.first
-    if scope_name == NO_SCOPE
+    scope_name = Array.wrap(scope).first
+    if scope_name.nil?
       klass
     else
       raise "Named scope '#{scope_name}' is not defined for class '#{klass.name}'" unless klass.respond_to?(scope_name)
@@ -516,6 +576,10 @@ module Rbac
         end
       elsif klass == Host
         results.concat(get_belongsto_matches_for_host(vcmeta_list.last))
+      elsif vcmeta_list.last.kind_of?(Host) && klass <= VmOrTemplate
+        host = vcmeta_list.last
+        vms_and_templates = host.send(klass.base_model.to_s.tableize).to_a
+        results.concat(vms_and_templates)
       else
         vcmeta_list.each { |vcmeta| results.push(vcmeta) if vcmeta.kind_of?(klass) }
         results.concat(vcmeta_list.last.descendants.select { |obj| obj.kind_of?(klass) })

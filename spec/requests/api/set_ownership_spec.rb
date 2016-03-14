@@ -6,19 +6,7 @@
 # - Vms                     /api/vms/:id
 # - Templates               /api/templates/:id
 #
-require 'spec_helper'
-
 describe ApiController do
-  include Rack::Test::Methods
-
-  before(:each) do
-    init_api_spec_env
-  end
-
-  def app
-    Vmdb::Application
-  end
-
   def expect_set_ownership_success(object, href, user = nil, group = nil)
     expect_single_action_result(:success => true, :message => "setting ownership", :href => href)
     expect(object.reload.evm_owner).to eq(user)  if user

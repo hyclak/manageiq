@@ -19,16 +19,22 @@ class RequestRefererService
     'vm'                       => %w(launch_html5_console show:id show_list), # http://localhost:3000/vm/show/400r6
     # 'launch_html5_console' above added due to IE even in version 11 does not set the referrer headir
     # most likely when the new window is opened by JavaScript code
+    'availability_zone'        => %w(show:id show_list), # http://localhost:3000/availability_zone/show/400r1
     'host'                     => %w(show:id show_list), # http://localhost:3000/host/show/400r6
     'miq_request'              => %w(show:id show_list), # http://localhost:3000/miq_request/show/400r3
     'ems_cluster'              => %w(show:id show_list), # http://localhost:3000/ems_cluster/show/400r2
     'storage'                  => %w(show:id show_list), # http://localhost:3000//storage/show/400r1
     'ems_container'            => %w(show:id show_list), # http://localhost:3000/ems_container/show/400r1
+    'flavor'                   => %w(show:id show_list),
+    'cloud_tenant'             => %w(show:id show_list), # http://localhost:3000/cloud_tenant/show/400r1
+    'cloud_volume'             => %w(show:id show_list), # http://localhost:3000/cloud_volume/show
+    'cloud_volume_snapshot'    => %w(show:id show_list), # http://localhost:3000/cloud_volume_snapshot/show
     'container'                => %w(explorer), # http://localhost:3000/container/explorer
     'container_group'          => %w(show:id show_list), # http://localhost:3000/container_group/show/400r1
     'container_node'           => %w(show:id show_list), # http://localhost:3000/container_node/show/400r1
     'container_service'        => %w(show:id show_list), # http://localhost:3000/container_service/show/400r1
     'container_topology'       => %w(show:id show),      # http://localhost:3000/container_topology/show/5 or http://localhost:3000/container_topology/show
+    'middleware_topology'      => %w(show:id show),      # http://localhost:3000/middleware_topology/show/5 or http://localhost:3000/middleware_topology/show
     'container_replicator'     => %w(show:id show_list), # http://localhost:3000/container_replicator/show/400r1
     'container_route'          => %w(show:id show_list), # http://localhost:3000/container_route/show/400r1
     'container_project'        => %w(show:id show_list), # http://localhost:3000/container_project/show/400r1
@@ -166,7 +172,8 @@ class RequestRefererService
 
   def allowed_access?(request, controller_name, action_name, referer)
     access_whitelisted?(request, controller_name, action_name) ||
-      referer_valid?(request.referer, referer, request.headers, controller_name, action_name)
+      referer_valid?(request.referer, referer, request.headers, controller_name, action_name) ||
+      (ENV['MIQ_DISABLE_RRS'] && Rails.env.development?)
   end
 
   def referer_valid?(referer, saved_referer, headers, controller_name, action_name)

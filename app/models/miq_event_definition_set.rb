@@ -1,7 +1,5 @@
-class MiqEventDefinitionSet < ActiveRecord::Base
+class MiqEventDefinitionSet < ApplicationRecord
   acts_as_miq_set
-
-  default_scope { where conditions_for_my_region_default_scope }
 
   def self.seed
     CSV.foreach(fixture_path, :headers => true, :skip_lines => /^#/) do |csv_row|
@@ -22,6 +20,6 @@ class MiqEventDefinitionSet < ActiveRecord::Base
   end
 
   def self.fixture_path
-    Rails.root.join("db/fixtures/#{to_s.pluralize.underscore}.csv")
+    FIXTURE_DIR.join("#{to_s.pluralize.underscore}.csv")
   end
 end

@@ -66,8 +66,8 @@ module OpsController::Settings::CapAndU
     # need to create an array of items, if their or their children's capture has been changed then make the changed one blue.
     render :update do |page|                    # Use JS to update the display
       page.replace_html(@refresh_div, :partial => @refresh_partial) if @refresh_div
-      page << "$('#clusters_div').#{params[:all_clusters] == "1" ? "hide" : "show"}()" if params[:all_clusters]
-      page << "$('#storages_div').#{params[:all_storages] == "1" ? "hide" : "show"}()" if params[:all_storages]
+      page << "$('#clusters_div').#{params[:all_clusters] == 'true' ? "hide" : "show"}()" if params[:all_clusters]
+      page << "$('#storages_div').#{params[:all_storages] == 'true' ? "hide" : "show"}()" if params[:all_storages]
       if params[:id] || params[:check_all] # || (params[:tree_name] == "cu_datastore_tree" && params[:check_all])
         if (params[:id] && params[:id].split('_')[0] == "Datastore") || (params[:tree_name] == "cu_datastore_tree" && params[:check_all])
           # change nodes to blue if they were changed during current edit session
@@ -195,7 +195,8 @@ module OpsController::Settings::CapAndU
 
     @edit[:current][:storages] = []
     @st_recs = {}
-    Storage.in_my_region.all(:include => [:taggings, :tags, :hosts], :select => "id, name, store_type, location").sort_by { |s| s.name.downcase }.each do |s|
+    Storage.in_my_region.includes(:taggings, :tags, :hosts).select(:id, :name, :store_type, :location)
+      .sort_by { |s| s.name.downcase }.each do |s|
       @st_recs[s.id] = s
       @edit[:current][:storages].push(:name       => s.name,
                                       :id         => s.id,
@@ -213,8 +214,8 @@ module OpsController::Settings::CapAndU
       nodetype = params[:id].split(':')
       node_type = nodetype.length >= 2 ? nodetype[1].split('_') : nodetype[0].split('_')
     end
-    @edit[:new][:all_clusters] = params[:all_clusters] == "1" if params[:all_clusters]
-    @edit[:new][:all_storages] = params[:all_storages] == "1" if params[:all_storages]
+    @edit[:new][:all_clusters] = params[:all_clusters] == 'true' if params[:all_clusters]
+    @edit[:new][:all_storages] = params[:all_storages] == 'true' if params[:all_storages]
     if params[:tree_name] == "clhosts_tree"     # User checked/unchecked a cluster tree node
       if params[:check_all]                         # to handle check/uncheck cluster all checkbox
         @edit[:new][:clusters].each do |c|                                  # Check each clustered host
@@ -291,7 +292,7 @@ module OpsController::Settings::CapAndU
       cl_node[:title] = c[:name]
       cl_node[:tooltip] = c[:name]
       cl_node[:style] = "cursor:default"     # No cursor pointer
-      cl_node[:icon] = "cluster.png"
+      cl_node[:icon] = ActionController::Base.helpers.image_path("100/cluster.png")
       cl_kids = []
       cl_hash = @cl_hash[c[:id]]
       cluster = cl_hash[:cl_rec]
@@ -316,9 +317,9 @@ module OpsController::Settings::CapAndU
         temp = {}
         temp[:key] = "Cluster_" + c[:id].to_s + ":Host_" + h.id.to_s
         temp[:title] = h.name
-        temp[:tooltip] = "Host: #{h.name}"
+        temp[:tooltip] = _("Host: %{name}") % {:name => h.name}
         temp[:style] = "cursor:default"      # No cursor pointer
-        temp[:icon] = "host.png"
+        temp[:icon] = ActionController::Base.helpers.image_path("100/host.png")
         temp[:select] = enabled_host_ids.include?(h.id.to_i) ? true : false
         cl_kids.push(temp)
       end
@@ -341,10 +342,10 @@ module OpsController::Settings::CapAndU
     unless @edit[:current][:non_cl_hosts].blank?
       h_node = {}                       # Build the ems node
       h_node[:key] = "NonCluster_0"
-      h_node[:title] = "Non-clustered Hosts"
-      h_node[:tooltip] = "Non-clustered Hosts"
+      h_node[:title] = _("Non-clustered Hosts")
+      h_node[:tooltip] = _("Non-clustered Hosts")
       h_node[:style] = "cursor:default"      # No cursor pointer
-      h_node[:icon] = "host.png"
+      h_node[:icon] = ActionController::Base.helpers.image_path("100/host.png")
       count = non_cl_host_capture_state
       if count.to_i == @edit[:current][:non_cl_hosts].length
         h_node[:select] = true
@@ -358,9 +359,9 @@ module OpsController::Settings::CapAndU
         temp = {}
         temp[:key] = "NonCluster_0" + ":Host_" + h[:id].to_s
         temp[:title] = h[:name]
-        temp[:tooltip] = "Host: #{h[:name]}"
+        temp[:tooltip] = _("Host: %{name}") % {:name => h[:name]}
         temp[:style] = "cursor:default"      # No cursor pointer
-        temp[:icon] = "host.png"
+        temp[:icon] = ActionController::Base.helpers.image_path("100/host.png")
         temp[:select] = h[:capture] ? true : false
         h_kids.push(temp)
       end
@@ -395,7 +396,7 @@ module OpsController::Settings::CapAndU
       ds_node[:title] = "<b>#{s[:name]}</b> [#{s[:location]}]"
       ds_node[:tooltip] = "#{s[:name]} [#{s[:location]}]"
       ds_node[:style] = "cursor:default"     # No cursor pointer
-      ds_node[:icon] = "storage.png"
+      ds_node[:icon] = ActionController::Base.helpers.image_path("100/storage.png")
       ds_node[:select] = s[:capture] == true
 
       children = []
@@ -418,7 +419,7 @@ module OpsController::Settings::CapAndU
         temp[:tooltip] = h[:name]
         temp[:style] = "cursor:default"      # No cursor pointer
         temp[:hideCheckbox] = true
-        temp[:icon] = "host.png"
+        temp[:icon] = ActionController::Base.helpers.image_path("100/host.png")
         children.push(temp)
       end
 

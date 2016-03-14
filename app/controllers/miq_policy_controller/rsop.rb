@@ -30,7 +30,7 @@ module MiqPolicyController::Rsop
       else
         miq_task = MiqTask.find(params[:task_id])     # Not first time, read the task record
         if miq_task.task_results.blank?               # Check to see if any results came back
-          add_flash(_("Policy Simulation generation returned: ") << miq_task.message, :error)
+          add_flash(_("Policy Simulation generation returned: %{error_message}") % {:error_message => miq_task.message}, :error)
         else
           @sb[:rsop][:results] = miq_task.task_results
           session[:rsop_tree] = rsop_build_tree
@@ -51,6 +51,7 @@ module MiqPolicyController::Rsop
     else  # No params, first time in
       @breadcrumbs = []
       @accords = [{:name => "rsop", :title => "Options", :container => "rsop_options_div"}]
+      session[:changed] = false
       @sb[:rsop] ||= {}   # Leave exising values
       rsop_put_objects_in_sb(find_filtered(ExtManagementSystem, :all), :emss)
       rsop_put_objects_in_sb(find_filtered(EmsCluster, :all), :clusters)
@@ -159,7 +160,7 @@ module MiqPolicyController::Rsop
     event = MiqEventDefinition.find(@sb[:rsop][:event_value])
     root_node = TreeNodeBuilder.generic_tree_node(
       "rsoproot",
-      "Policy Simulation Results for Event [#{event.description}]",
+      _("Policy Simulation Results for Event [%{description}]") % {:description => event.description},
       "event-#{event.name}.png",
       "",
       :style_class => "cfme-no-cursor-node",
@@ -202,7 +203,7 @@ module MiqPolicyController::Rsop
         t_kids.push(nn) unless nn.nil?
       end
     when "pp"
-      title = "<strong>Profile:</strong> #{node[:description]}"
+      title = "<strong>#{_('Profile:')}</strong> #{node[:description]}"
       expand = false
       node[:policies].sort_by { |a| a[:description].downcase }.each do |p|
         nn = rsop_tree_add_node(p, key, "p")
@@ -222,18 +223,18 @@ module MiqPolicyController::Rsop
         t_kids.push(nn) unless nn.nil?
       end
     when "c"
-      title = "<strong>Condition:</strong> #{node[:description]}"
+      title = "<strong>#{_('Condition:')}</strong> #{node[:description]}"
       expand = false
       t_kids.push(rsop_tree_add_node(node[:scope], key, "s")) if node[:scope]
       t_kids.push(rsop_tree_add_node(node[:expression], key, "e")) if node[:expression]
     when "a"
-      title = "<strong>Action:</strong> #{node[:description]}"
+      title = "<strong>#{_('Action:')}</strong> #{node[:description]}"
       expand = false
     when "s"
       icon = node[:result] == true ? "checkmark.png" : "na.png"
       s_text, s_tip = exp_build_string(node)
       title = "<style>span.ws-wrap { white-space: normal; }</style>
-        <strong>Scope:</strong> <span class='ws-wrap'>#{s_text}"
+        <strong>#{_('Scope:')}</strong> <span class='ws-wrap'>#{s_text}"
       tooltip = s_tip
       expand = false
     when "e"
@@ -242,7 +243,7 @@ module MiqPolicyController::Rsop
       icon = "x.png" if node["result"] == false
       e_text, e_tip = exp_build_string(node)
       title = "<style>span.ws-wrap { white-space: normal; }</style>
-        <strong>Expression:</strong> <span class='ws-wrap'>#{e_text}"
+        <strong>#{_('Expression')}:</strong> <span class='ws-wrap'>#{e_text}"
       tooltip = e_tip
       expand = false
     end

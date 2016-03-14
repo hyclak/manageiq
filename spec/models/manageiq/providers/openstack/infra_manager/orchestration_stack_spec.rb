@@ -1,5 +1,3 @@
-require "spec_helper"
-
 describe ManageIQ::Providers::Openstack::InfraManager::OrchestrationStack do
   let(:ems) { FactoryGirl.create(:ems_openstack_infra) }
   let(:template) { FactoryGirl.create(:orchestration_template) }
@@ -71,14 +69,14 @@ describe ManageIQ::Providers::Openstack::InfraManager::OrchestrationStack do
 
         # TODO(lsmola) convert status to Status object
         # orchestration_stack.raw_exists?.should be_true
-        orchestration_stack.update_ready?.should be_true
+        expect(orchestration_stack.update_ready?).to be_truthy
       end
 
       it 'determines stack not exist' do
         allow(raw_stacks).to receive(:get).with(orchestration_stack.name, orchestration_stack.ems_ref).and_return(nil)
         expect { orchestration_stack.raw_status }.to raise_error(MiqException::MiqOrchestrationStackNotExistError)
 
-        orchestration_stack.raw_exists?.should be_false
+        expect(orchestration_stack.raw_exists?).to be_falsey
       end
 
       it 'catches errors from provider' do

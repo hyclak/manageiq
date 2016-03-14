@@ -1,4 +1,3 @@
-require "spec_helper"
 describe ToolbarHelper do
   describe "#buttons_to_html" do
     subject { buttons_to_html(buttons) }
@@ -167,6 +166,19 @@ describe ToolbarHelper do
     it 'renders ul with items, links and icons' do
       expect(subject).to have_selector('ul li', :count => 2)
       expect(subject).to have_selector('li a i.fa.fa-th')
+    end
+  end
+
+  describe "#data_hash_keys" do
+    it "returns hash without elements with nil value" do
+      output_hash = data_hash_keys(:pressed => nil, :explorer => true)
+      expect(output_hash['data-explorer']).to be_truthy
+      expect(output_hash).not_to have_key('data-pressed')
+    end
+
+    it "converts :url_parms do data-url_parms" do
+      output_hash = data_hash_keys(:url_parms => 'foobar')
+      expect(output_hash['data-url_parms']).to eq('foobar')
     end
   end
 end

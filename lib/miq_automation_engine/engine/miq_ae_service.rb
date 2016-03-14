@@ -1,4 +1,6 @@
-require_relative 'miq_ae_service_model_legacy'
+require_relative 'miq_ae_service/miq_ae_service_model_legacy'
+require_relative 'miq_ae_service/miq_ae_service_object_common'
+require_relative 'miq_ae_service/miq_ae_service_vmdb'
 module MiqAeMethodService
   class Deprecation < Vmdb::Deprecation
     def self.default_log
@@ -16,7 +18,8 @@ module MiqAeMethodService
   class MiqAeService
     include Vmdb::Logging
     include DRbUndumped
-    include MiqAeServiceModelLegacy
+    include MiqAeMethodService::MiqAeServiceModelLegacy
+    include MiqAeMethodService::MiqAeServiceVmdb
 
     @@id_hash = {}
     @@current = []
@@ -136,22 +139,15 @@ module MiqAeMethodService
     def instantiate(uri)
       obj = @workspace.instantiate(uri, @workspace.ae_user, @workspace.current_object)
       return nil if obj.nil?
-      drb_return(MiqAeServiceObject.new(obj, self))
+      MiqAeServiceObject.new(obj, self)
     rescue => e
       return nil
-    end
-
-    def drb_return(obj)
-      # Save a reference to the object, so that we control when it gets deleted.  Otherwise, Ruby Garbage Collection may remove it prematurely.
-      # If it is removed prematurely and then referenced by the method, we get a DRb recycled object error
-      @drb_server_references << obj
-      obj
     end
 
     def object(path = nil)
       obj = @workspace.get_obj_from_path(path)
       return nil if obj.nil?
-      drb_return MiqAeServiceObject.new(obj, self)
+      MiqAeServiceObject.new(obj, self)
     end
 
     def hash_to_query(hash)
@@ -179,7 +175,7 @@ module MiqAeMethodService
     end
 
     def current_object
-      @current_object ||= drb_return(MiqAeServiceObject.new(@workspace.current_object, self))
+      @current_object ||= MiqAeServiceObject.new(@workspace.current_object, self)
     end
 
     def current_method
@@ -200,20 +196,9 @@ module MiqAeMethodService
 
     def objects(aobj)
       aobj.collect do |obj|
-        obj = drb_return(MiqAeServiceObject.new(obj, self)) unless obj.kind_of?(MiqAeServiceObject)
+        obj = MiqAeServiceObject.new(obj, self) unless obj.kind_of?(MiqAeServiceObject)
         obj
       end
-    end
-
-    def vmdb(model_name, *args)
-      service = service_model(model_name)
-      args.empty? ? service : service.find(*args)
-    end
-
-    def service_model(model_name)
-      "MiqAeMethodService::MiqAeService#{model_name}".constantize
-    rescue NameError
-      service_model_lookup(model_name)
     end
 
     def datastore
@@ -222,32 +207,8 @@ module MiqAeMethodService
     def ldap
     end
 
-    CUSTOMER_ROOT = File.expand_path(File.join(Rails.root, "..", "customer"))
-    $:.push CUSTOMER_ROOT
-    def new_object(what, *args)
-      begin
-        require what.underscore
-      rescue LoadError => err
-        _log.warn("Error requiring <#{what}> from #{CUSTOMER_ROOT} because <#{err.message}>")
-        return nil
-      end
-
-      begin
-        klass = what.constantize
-      rescue NameError => err
-        _log.warn("Error converting <#{what}> to a constant because <#{err.message}>")
-        ruby_file = File.join(CUSTOMER_ROOT, "#{what.underscore}.rb")
-        contents  = File.read(ruby_file) rescue nil
-        _log.warn("Contents of Customer Library <#{ruby_file}> are:\n#{contents}")
-        return nil
-      end
-
-      klass.send(:include, DRbUndumped) unless klass.ancestors.include?(DRbUndumped)
-      drb_return klass.new(*args)
-    end
-
     def execute(m, *args)
-      drb_return MiqAeServiceMethods.send(m, *args)
+      MiqAeServiceMethods.send(m, *args)
     rescue NoMethodError => err
       raise MiqAeException::MethodNotFound, err.message
     end
@@ -383,67 +344,9 @@ module MiqAeMethodService
     end
   end
 
-  module MiqAeServiceObjectCommon
-    def attributes
-      @object.attributes.each_with_object({}) do |(key, value), hash|
-        hash[key] = value.kind_of?(MiqAePassword) ? value.to_s : value
-      end
-    end
-
-    def attributes=(hash)
-      @object.attributes = hash
-    end
-
-    def [](attr)
-      value = @object[attr.downcase]
-      value = value.to_s if value.kind_of?(MiqAePassword)
-      value
-    end
-
-    def []=(attr, value)
-      @object[attr.downcase] = value
-    end
-
-    # To explicitly override Object#id method, which is spewing deprecation warnings to use Object#object_id
-    def id
-      @object ? @object.id : nil
-    end
-
-    def decrypt(attr)
-      MiqAePassword.decrypt_if_password(@object[attr.downcase])
-    end
-
-    def current_field_name
-      @object.current_field_name
-    end
-
-    def current_field_type
-      @object.current_field_type
-    end
-
-    def current_message
-      @object.current_message
-    end
-
-    def namespace
-      @object.namespace
-    end
-
-    def class_name
-      @object.klass
-    end
-
-    def instance_name
-      @object.instance
-    end
-
-    def name
-      @object.object_name
-    end
-  end
 
   class MiqAeServiceObject
-    include MiqAeServiceObjectCommon
+    include MiqAeMethodService::MiqAeServiceObjectCommon
     include DRbUndumped
 
     def initialize(obj, svc)

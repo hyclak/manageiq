@@ -127,18 +127,16 @@ module ApplicationController::Explorer
     return if performed?
     # no need to render anything, method will render flash message when async task is completed
 
-    x_button_response(model, action)
-  end
-
-  def x_button_response(model, action)
     if @refresh_partial == "layouts/flash_msg"
       render :update do |page|
         page.replace("flash_msg_div", :partial => "layouts/flash_msg")
       end
     elsif @refresh_partial
-      replace_right_cell unless action == 'download_pdf' # no need to render anything when download_pdf button is pressed on summary screen
+      # no need to render anything when download_pdf button is pressed on summary screen
+      replace_right_cell unless action == 'download_pdf'
     else
-      add_flash(_("Button not yet implemented") + " #{model}:#{action}", :error) unless @flash_array
+      add_flash(_("Button not yet implemented %{model}:%{action}") %
+        {:model => model, :action => action}, :error) unless @flash_array
       render :update do |page|
         page.replace("flash_msg_div", :partial => "layouts/flash_msg")
       end
@@ -201,7 +199,7 @@ module ApplicationController::Explorer
   def x_edit_tags_cancel
     id = params[:id]
     return unless load_edit("#{session[:tag_db]}_edit_tags__#{id}", "replace_cell__explorer")
-    add_flash(_("%s was cancelled by the user") % "Tag Edit")
+    add_flash(_("Tag Edit was cancelled by the user"))
     get_node_info(x_node)
     @edit = nil # clean out the saved info
     replace_right_cell
@@ -211,8 +209,8 @@ module ApplicationController::Explorer
     tagging_edit_tags_save_and_replace_right_cell
   end
 
-  def x_build_node_id(object, pid = nil, options = {})
-    TreeNodeBuilder.build_id(object, pid, options)
+  def x_build_node_id(object, options = {})
+    TreeNodeBuilder.build_id(object, nil, options)
   end
 
   # Add the children of a node that is being expanded (autoloaded), called by generic tree_autoload method
@@ -237,7 +235,8 @@ module ApplicationController::Explorer
     unless kls.where(:id => from_cid(rec_id)).exists?
       @replace_trees = [@sb[:active_accord]] # refresh trees
       self.x_node = "root"
-      add_flash(_("Last selected %s no longer exists") % ui_lookup(:model => kls.to_s), :error)
+      add_flash(_("Last selected %{record_name} no longer exists") %
+        {:record_name => ui_lookup(:model => kls.to_s)}, :error)
     end
     x_node
   end

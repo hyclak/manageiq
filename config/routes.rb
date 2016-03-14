@@ -128,6 +128,33 @@ Vmdb::Application.routes.draw do
       ),
     },
 
+    :auth_key_pair_cloud      => {
+      :get  => %w(
+        download_data
+        edit
+        index
+        new
+        show
+        show_list
+        tagging_edit
+        tag_edit_form_field_changed
+      ) + compare_get,
+      :post => %w(
+        button
+        create
+        dynamic_checkbox_refresh
+        form_field_changed
+        listnav_search_selected
+        panel_control
+        quick_search
+        show
+        show_list
+        tagging_edit
+        tag_edit_form_field_changed
+        update
+      ) + adv_search_post + compare_post + exp_post + save_post
+    },
+
     :availability_zone        => {
       :get  => %w(
         download_data
@@ -270,6 +297,60 @@ Vmdb::Application.routes.draw do
                compare_post
     },
 
+    :cloud_volume             => {
+      :get  => %w(
+        download_data
+        edit
+        index
+        new
+        show
+        show_list
+        tagging_edit
+        tag_edit_form_field_changed
+      ) + compare_get,
+      :post => %w(
+        button
+        create
+        dynamic_checkbox_refresh
+        form_field_changed
+        listnav_search_selected
+        panel_control
+        quick_search
+        show
+        show_list
+        tagging_edit
+        tag_edit_form_field_changed
+        update
+      ) + compare_post + adv_search_post + exp_post + save_post
+    },
+
+    :cloud_volume_snapshot    => {
+      :get  => %w(
+        download_data
+        edit
+        index
+        new
+        show
+        show_list
+        tagging_edit
+        tag_edit_form_field_changed
+      ) + compare_get,
+      :post => %w(
+        button
+        create
+        dynamic_checkbox_refresh
+        form_field_changed
+        listnav_search_selected
+        panel_control
+        quick_search
+        show
+        show_list
+        tagging_edit
+        tag_edit_form_field_changed
+        update
+      ) + compare_post + adv_search_post + exp_post + save_post
+    },
+
     :configuration            => {
       # TODO: routes for new/edit/copy buttons need to be revisited
       # TODO: so they can be changed to send up POST request instead of GET
@@ -303,6 +384,7 @@ Vmdb::Application.routes.draw do
         show
         tl_chooser
         wait_for_task
+        show_list
         tagging_edit
         tag_edit_form_field_changed
       ),
@@ -404,6 +486,7 @@ Vmdb::Application.routes.draw do
         edit
         index
         new
+        perf_top_chart
         show
         show_list
         tagging_edit
@@ -425,7 +508,11 @@ Vmdb::Application.routes.draw do
         wait_for_task
         tagging_edit
         tag_edit_form_field_changed
-      ) + adv_search_post + exp_post + save_post
+      ) +
+               adv_search_post +
+               exp_post +
+               perf_post +
+               save_post
     },
 
     :container_image          => {
@@ -492,6 +579,7 @@ Vmdb::Application.routes.draw do
         edit
         index
         new
+        perf_top_chart
         show
         show_list
         tagging_edit
@@ -509,11 +597,13 @@ Vmdb::Application.routes.draw do
         show
         show_list
         update
+        wait_for_task
         tagging_edit
         tag_edit_form_field_changed
       ) +
                adv_search_post +
                exp_post +
+               perf_post +
                save_post
     },
 
@@ -523,6 +613,7 @@ Vmdb::Application.routes.draw do
         edit
         index
         new
+        perf_top_chart
         show
         show_list
         tagging_edit
@@ -544,7 +635,11 @@ Vmdb::Application.routes.draw do
         wait_for_task
         tagging_edit
         tag_edit_form_field_changed
-      ) + adv_search_post + exp_post + save_post
+      ) +
+               adv_search_post +
+               exp_post +
+               perf_post +
+               save_post
     },
 
     :container_route          => {
@@ -575,7 +670,70 @@ Vmdb::Application.routes.draw do
       ) + adv_search_post + exp_post + save_post
     },
 
+    :persistent_volume        => {
+      :get  => %w(
+        download_data
+        edit
+        index
+        new
+        show
+        show_list
+        tagging_edit
+        tag_edit_form_field_changed
+      ),
+      :post => %w(
+        button
+        create
+        dynamic_checkbox_refresh
+        form_field_changed
+        listnav_search_selected
+        panel_control
+        quick_search
+        sections_field_changed
+        show
+        show_list
+        update
+        tagging_edit
+        tag_edit_form_field_changed
+      ) + adv_search_post + exp_post + save_post
+    },
+
+    :container_build          => {
+      :get  => %w(
+        download_data
+        edit
+        index
+        new
+        show
+        show_list
+        tagging_edit
+        tag_edit_form_field_changed
+      ),
+      :post => %w(
+        button
+        create
+        dynamic_checkbox_refresh
+        form_field_changed
+        listnav_search_selected
+        panel_control
+        quick_search
+        sections_field_changed
+        show
+        show_list
+        update
+        tagging_edit
+        tag_edit_form_field_changed
+      ) + adv_search_post + exp_post + save_post
+    },
+
     :container_topology       => {
+      :get => %w(
+        show
+        data
+      )
+    },
+
+    :middleware_topology       => {
       :get => %w(
         show
         data
@@ -760,6 +918,43 @@ Vmdb::Application.routes.draw do
         edit
         index
         new
+        perf_top_chart
+        show
+        show_list
+        tagging_edit
+        tag_edit_form_field_changed
+      ) +
+               compare_get,
+      :post => %w(
+        button
+        create
+        dynamic_checkbox_refresh
+        form_field_changed
+        listnav_search_selected
+        panel_control
+        quick_search
+        sections_field_changed
+        show
+        show_list
+        tl_chooser
+        update
+        wait_for_task
+        tagging_edit
+        tag_edit_form_field_changed
+      ) +
+               adv_search_post +
+               compare_post +
+               exp_post +
+               perf_post +
+               save_post
+    },
+
+    :ems_middleware            => {
+      :get  => %w(
+        download_data
+        edit
+        index
+        new
         show
         show_list
         tagging_edit
@@ -788,6 +983,77 @@ Vmdb::Application.routes.draw do
                exp_post +
                save_post
     },
+
+    :middleware_server            => {
+      :get  => %w(
+        download_data
+        edit
+        index
+        new
+        show
+        show_list
+        tagging_edit
+        tag_edit_form_field_changed
+      ) +
+               compare_get,
+      :post => %w(
+        button
+        create
+        dynamic_checkbox_refresh
+        form_field_changed
+        listnav_search_selected
+        panel_control
+        quick_search
+        sections_field_changed
+        show
+        show_list
+        tl_chooser
+        update
+        wait_for_task
+        tagging_edit
+        tag_edit_form_field_changed
+      ) +
+               adv_search_post +
+               compare_post +
+               exp_post +
+               save_post
+    },
+
+    :middleware_deployment            => {
+      :get  => %w(
+        download_data
+        edit
+        index
+        new
+        show
+        show_list
+        tagging_edit
+        tag_edit_form_field_changed
+      ) +
+               compare_get,
+      :post => %w(
+        button
+        create
+        dynamic_checkbox_refresh
+        form_field_changed
+        listnav_search_selected
+        panel_control
+        quick_search
+        sections_field_changed
+        show
+        show_list
+        tl_chooser
+        update
+        wait_for_task
+        tagging_edit
+        tag_edit_form_field_changed
+      ) +
+               adv_search_post +
+               compare_post +
+               exp_post +
+               save_post
+    },
+
 
     :flavor                   => {
       # FIXME: Change tagging_edit to POST only; We need to remove the redirects
@@ -823,6 +1089,7 @@ Vmdb::Application.routes.draw do
         dialog_load
         download_data
         edit
+        filesystem_download
         filesystems
         firewall_rules
         timeline_data
@@ -875,7 +1142,6 @@ Vmdb::Application.routes.draw do
         tag_edit_form_field_changed
         tagging_edit
         tl_chooser
-        toggle_policy_profile
         update
         users
         wait_for_task
@@ -1517,17 +1783,14 @@ Vmdb::Application.routes.draw do
         preview_timeline
         render_chart
         report_only
-        review_import
         sample_chart
         sample_timeline
         send_report_data
         tree_autoload_dynatree
         tree_select
-        widget_json
       ),
       :post => %w(
         accordion_select
-        cancel_import
         change_tab
         create
         db_edit
@@ -1662,6 +1925,7 @@ Vmdb::Application.routes.draw do
         explorer
         retirement_info
         retire
+        service_form_fields
         show
       ),
       :post => %w(
@@ -1672,7 +1936,6 @@ Vmdb::Application.routes.draw do
         reload
         retire
         service_edit
-        service_form_field_changed
         service_tag
         tag_edit_form_field_changed
         tree_autoload_dynatree
@@ -1714,6 +1977,7 @@ Vmdb::Application.routes.draw do
         files
         listnav_search_selected
         panel_control
+        disk_files
         perf_chart_chooser
         protect
         quick_search
@@ -2019,6 +2283,7 @@ Vmdb::Application.routes.draw do
         sort_ds_grid
         sort_host_grid
         sort_iso_img_grid
+        sort_vc_grid
         squash_toggle
         tagging_edit
         tag_edit_form_field_changed
@@ -2093,6 +2358,9 @@ Vmdb::Application.routes.draw do
 
   # pure-angular templates
   get '/static/*id' => 'static#show', :format => false
+
+  # ping response for load balancing
+  get '/ping' => 'ping#index'
 
   resources :ems_cloud, :as => :ems_clouds
   match "/auth/:provider/callback" => "sessions#create", :via => :get

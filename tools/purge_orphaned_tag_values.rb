@@ -22,8 +22,9 @@ log "Purging orphaned tag values..."
 # Determine all of the known metric ids in the tag values table
 log "Finding known metric ids..."
 perf_ids = Hash.new { |h, k| h[k] = [] }
+# TODO: there is probably a way to do this without bringing the ids back
 t = Benchmark.realtime do
-  VimPerformanceTagValue.all(:select => "DISTINCT metric_type, metric_id").each { |v| perf_ids[v.metric_type] << v.metric_id }
+  VimPerformanceTagValue.select("metric_type, metric_id").distinct.order(nil).each { |v| perf_ids[v.metric_type] << v.metric_id }
 end
 perf_ids_count = perf_ids.inject(0) { |sum, (_type, ids)| sum + ids.length }
 log "Finding known metric ids...Complete - #{formatter.number_with_delimiter(perf_ids_count)} records (#{t}s)"
@@ -36,7 +37,7 @@ if perf_ids_count > 0
   perf_ids.each do |type, ids|
     klass = type.constantize
     ids.each_slice(opts[:search_window]) do |ids_window|
-      found_ids = klass.all(:select => "id", :conditions => {:id => ids_window}).collect(&:id)
+      found_ids = klass.where(:id => ids_window).pluck(:id)
       deleted_ids[type] += (ids_window - found_ids)
       pbar.progress += ids_window.length
     end
@@ -53,7 +54,7 @@ if perf_ids_count > 0
     pbar = ProgressBar.create(:title => "Deleting", :total => deleted_ids_count, :autofinish => false)
     deleted_ids.each do |type, ids|
       ids.each_slice(opts[:delete_window]) do |ids_window|
-        VimPerformanceTagValue.delete_all(:metric_type => type, :metric_id => ids_window)
+        VimPerformanceTagValue.where(:metric_type => type, :metric_id => ids_window).delete_all
         pbar.progress += ids_window.length
       end
     end

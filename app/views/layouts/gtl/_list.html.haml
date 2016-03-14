@@ -40,17 +40,19 @@
             -# Replaced to exclude non-view table fields from sorting
             - if i == @sortcol
               %th{:class => (@sortdir == "ASC") ? "sorting_asc" : "sorting_desc"}
-                = link_to(h(h),
+                = link_to(h(_(h)),
                   {:action => action_url, :sort_choice => h},
                   "data-miq_sparkle_on"  => true,
                   "data-miq_sparkle_off" => true,
+                  "data-method"          => :post,
                   :remote                => true)
             - else
               %th
-                = link_to(h(h),
+                = link_to(h(_(h)),
                   {:action => action_url, :sort_choice => h},
                   "data-miq_sparkle_on"  => true,
                   "data-miq_sparkle_off" => true,
+                  "data-method"          => :post,
                   :remote                => true)
           - else
             -# Disable column sorting when embedded, for now
@@ -82,7 +84,8 @@
             %td.narrow
               = check_box_tag("check_#{@id}", 1, false,
                 :id      => "listcheckbox",
-                :onclick => "miqUpdateButtons(this, '#{button_div}');")
+                :class   => "list-grid-checkbox",
+                :onclick => "miqGridOnCheck(this, '#{button_div}', 'gtl_div');")
           - title = ""
           - click = ""
           - unless (@embedded || @no_checkboxes) && ! @showlinks
@@ -95,7 +98,7 @@
                 - click = "DoNav('/vm/show/#{to_cid(rec.destination_id)}');"
                 - title = _("Click to view this VM")
             - when "Job"
-              - click = "DoNav('/vm/show/#{to_cid(row["target_id"])}');"
+              - click = "DoNav('/#{row['target_class'].underscore}/show/#{to_cid(row["target_id"])}');"
             - when @vm && view.db
               - click = "DoNav('/vm/#{@listicon.pluralize}/#{@vm.id}?show=#{@id}');"
             - when "Action"

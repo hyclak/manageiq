@@ -1,4 +1,3 @@
-require 'spec_helper'
 require 'vmdb/permission_stores'
 require 'tempfile'
 
@@ -48,7 +47,7 @@ describe Vmdb::PermissionStores do
         config.backend = 'yaml'
         config.options[:filename] = f.path
         config.load
-        expect(config.create).to be
+        expect(config.create).to be_truthy
       end
     end
   end
@@ -66,8 +65,8 @@ describe Vmdb::PermissionStores do
 
         Vmdb::PermissionStores.initialize!
         instance = Vmdb::PermissionStores.instance
-        expect(instance.can?('foo')).to be_true
-        expect(instance.can?('bar')).to be_false
+        expect(instance.can?('foo')).to be_truthy
+        expect(instance.can?('bar')).to be_falsey
       end
     end
   end

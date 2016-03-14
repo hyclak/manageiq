@@ -1,4 +1,4 @@
-- @angularForm = true
+- @angular_form = true
 
 %form.form-horizontal#form_div{"name"          => "angularForm",
                                "ng-controller" => "tenantFormController",
@@ -37,14 +37,17 @@
         %label.col-md-2.control-label
           = _("Use Configuration Settings")
         .col-md-10
-          %input#use_config{"type"        => "checkbox",
-                            "name"        => "use_config_for_attributes",
-                            "ng-model"    => "tenantModel.use_config_for_attributes",
+          %input#use_config{"bs-switch"       => "",
+                            "type"            => "checkbox",
+                            "name"            => "use_config_for_attributes",
+                            "ng-model"        => "tenantModel.use_config_for_attributes",
+                            "switch-on-text"  => "Yes",
+                            "switch-off-text" => "No",
                             "checkchange" => ""}
       %input{"type" => "hidden", "name" => "divisible", "value" => "{{tenantModel.divisible}}"}
   = render :partial => "layouts/angular/x_edit_buttons_angular"
 
 :javascript
-  ManageIQ.angularApplication.value('tenantFormId', '#{@tenant.id || "new"}');
-  ManageIQ.angularApplication.value('tenantType', '#{@tenant_type}');
-  angular.bootstrap(jQuery('#form_div'), ['ManageIQ.angularApplication'], { strictDi: true });
+  ManageIQ.angular.app.value('tenantFormId', '#{@tenant.id || "new"}');
+  ManageIQ.angular.app.value('tenantType', '#{@tenant_type}');
+  miq_bootstrap('#form_div');

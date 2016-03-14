@@ -171,7 +171,7 @@ module ReportFormatter
         unless mri.user_categories.blank?
           user_filters = mri.user_categories.flatten
           unless user_filters.blank?
-            customer_name = VMDB::Config.new("vmdb").config[:server][:company]
+            customer_name = Tenant.root_tenant.name
             user_filter = "User assigned " + customer_name + " Tag filters:"
             t = user_filter + " " * (@line_len - 2 - user_filter.length)
             output << fit_to_width("|#{t}|" + CRLF)
@@ -186,7 +186,7 @@ module ReportFormatter
         unless mri.categories.blank?
           categories = mri.categories.flatten
           unless categories.blank?
-            customer_name = VMDB::Config.new("vmdb").config[:server][:company]
+            customer_name = Tenant.root_tenant.name
             customer_name_title = "Report based " + customer_name + " Tag filters:"
             t = customer_name_title + " " * (@line_len - customer_name_title.length - 2)
             output << fit_to_width("|#{t}|" + CRLF)
@@ -237,7 +237,9 @@ module ReportFormatter
       end
 
       output << @hr
-      cr = format_timezone(Time.now, tz).to_s # Label footer with current time in selected time zone
+      # Label footer with last run on time of selected report or current time for other downloads
+      last_run_on = mri.rpt_options && mri.rpt_options[:last_run_on] || Time.zone.now
+      cr = format_timezone(last_run_on, tz).to_s
       f = cr.center(@line_len - 2)
       output << fit_to_width("|#{f}|" + CRLF)
       output << @hr

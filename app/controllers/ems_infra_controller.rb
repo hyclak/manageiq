@@ -40,7 +40,7 @@ class EmsInfraController < ApplicationController
 
     return unless params[:scale]
 
-    scale_parameters = params.select { |k, _v| k.include?('::count') || k.include?('Count') }
+    scale_parameters = params.select { |k, _v| k.include?('::count') || k.include?('Count') }.to_unsafe_h
     assigned_hosts = scale_parameters.values.sum(&:to_i)
     infra = ManageIQ::Providers::Openstack::InfraManager.find(params[:id])
     if assigned_hosts > infra.hosts.count
@@ -60,7 +60,8 @@ class EmsInfraController < ApplicationController
         # Check if stack is ready to be updated
         update_ready = @stack.update_ready?
       rescue => ex
-        log_and_flash_message(_("Unable to initiate scaling, obtaining of status failed: #{ex}"))
+        log_and_flash_message(_("Unable to initiate scaling, obtaining of status failed: %{message}") %
+                                {:message => ex})
         return
       end
 
@@ -72,7 +73,7 @@ class EmsInfraController < ApplicationController
           @stack.raw_update_stack(nil, scale_parameters_formatted)
           redirect_to :action => 'show', :id => params[:id], :flash_msg => return_message
         rescue => ex
-          log_and_flash_message(_("Unable to initiate scaling: %s") % ex)
+          log_and_flash_message(_("Unable to initiate scaling: %{message}") % {:message => ex})
         end
       else
         # No values were changed

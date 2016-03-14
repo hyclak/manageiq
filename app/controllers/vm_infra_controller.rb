@@ -9,8 +9,6 @@ class VmInfraController < ApplicationController
   after_action :cleanup_action
   after_action :set_session_data
 
-  skip_before_action :set_csp_header, :only => :launch_html5_console
-
   def self.table_name
     @table_name ||= "vm_infra"
   end
@@ -20,28 +18,19 @@ class VmInfraController < ApplicationController
   def features
     [
       ApplicationController::Feature.new_with_hash(
-        :role        => "vandt_accord",
-        :name        => :vandt,
-        :accord_name => "vandt",
-        :tree_name   => :vandt_tree,
-        :title       => "VMs & Templates",
-        :container   => "vandt_accord"),
+        :role  => "vandt_accord",
+        :name  => :vandt,
+        :title => _("VMs & Templates")),
 
       ApplicationController::Feature.new_with_hash(
-        :role        => "vms_filter_accord",
-        :name        => :vms_filter,
-        :accord_name => "vms_filter",
-        :tree_name   => :vms_filter_tree,
-        :title       => "VMs",
-        :container   => "vms_filter_accord"),
+        :role  => "vms_filter_accord",
+        :name  => :vms_filter,
+        :title => _("VMs"),),
 
       ApplicationController::Feature.new_with_hash(
-        :role        => "templates_filter_accord",
-        :name        => :templates_filter,
-        :accord_name => "templates_filter",
-        :tree_name   => :templates_filter_tree,
-        :title       => "Templates",
-        :container   => "templates_filter_accord"),
+        :role  => "templates_filter_accord",
+        :name  => :templates_filter,
+        :title => _("Templates"),),
     ]
   end
 

@@ -1,11 +1,7 @@
 #
 # REST API Request Tests - Queries
 #
-require 'spec_helper'
-
 describe ApiController do
-  include Rack::Test::Methods
-
   let(:zone)       { FactoryGirl.create(:zone, :name => "api_zone") }
   let(:miq_server) { FactoryGirl.create(:miq_server, :guid => miq_server_guid, :zone => zone) }
   let(:ems)        { FactoryGirl.create(:ems_vmware, :zone => zone) }
@@ -15,14 +11,6 @@ describe ApiController do
   let(:vm1_url)    { vms_url(vm1.id) }
 
   let(:vm_href_pattern) { %r{^http://.*/api/vms/[0-9]+$} }
-
-  before(:each) do
-    init_api_spec_env
-  end
-
-  def app
-    Vmdb::Application
-  end
 
   def create_vms(count)
     count.times { FactoryGirl.create(:vm_vmware) }
@@ -129,11 +117,11 @@ describe ApiController do
       run_get(providers_url(provider.id), :attributes => "authentications")
 
       expect_request_success
-      expect_result_to_match_hash(@result, "name" => "sample", "hostname" => "sample.com")
+      expect_result_to_match_hash(response_hash, "name" => "sample")
       expect_result_to_have_keys(%w(authentications))
-      authentication = @result["authentications"].first
+      authentication = response_hash["authentications"].first
       expect(authentication["userid"]).to eq("admin")
-      expect(authentication.key?("password")).to be_false
+      expect(authentication.key?("password")).to be_falsey
     end
 
     it "hides them from configuration hashes" do
@@ -148,11 +136,11 @@ describe ApiController do
 
       expect_request_success
       expect_result_to_have_keys(%w(configurations))
-      configuration = @result["configurations"].first
+      configuration = response_hash["configurations"].first
       authentication = configuration.fetch_path("settings", "authentication")
       expect(authentication).to_not be_nil
       expect(authentication["userid"]).to eq("admin")
-      expect(authentication.key?(password_field)).to be_false
+      expect(authentication.key?(password_field)).to be_falsey
     end
 
     it "hides them from provisioning hashes" do
@@ -171,11 +159,11 @@ describe ApiController do
       run_get provision_requests_url(request.id)
 
       expect_request_success
-      expect_result_to_match_hash(@result, "description" => "sample provision")
-      provision_attrs = @result.fetch_path("options", "attrs")
+      expect_result_to_match_hash(response_hash, "description" => "sample provision")
+      provision_attrs = response_hash.fetch_path("options", "attrs")
       expect(provision_attrs).to_not be_nil
       expect(provision_attrs["userid"]).to eq("admin")
-      expect(provision_attrs.key?(password_field)).to be_false
+      expect(provision_attrs.key?(password_field)).to be_falsey
     end
   end
 end

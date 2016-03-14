@@ -17,7 +17,7 @@ require 'digest'
 #     put: Default to "generic" to be performed by the generic worker.
 #     get: Defaults to "generic" but is typically overridden by the caller (a worker)
 #
-class MiqQueue < ActiveRecord::Base
+class MiqQueue < ApplicationRecord
   belongs_to :handler, :polymorphic => true
 
   attr_accessor :last_exception
@@ -30,6 +30,10 @@ class MiqQueue < ActiveRecord::Base
 
   PRIORITY_WHICH  = [:max, :high, :normal, :low, :min]
   PRIORITY_DIR    = [:higher, :lower]
+
+  def self.columns_for_requeue
+    @requeue_columns ||= MiqQueue.column_names.map(&:to_sym) - [:id]
+  end
 
   def self.priority(which, dir = nil, by = 0)
     raise ArgumentError, "which must be an Integer or one of #{PRIORITY_WHICH.join(", ")}" unless which.kind_of?(Integer) || PRIORITY_WHICH.include?(which)
@@ -340,7 +344,7 @@ class MiqQueue < ActiveRecord::Base
         message = "Message not processed.  Retrying #{err.options[:deliver_on] ? "at #{err.options[:deliver_on]}" : 'immediately'}"
         _log.error("#{MiqQueue.format_short_log_msg(self)}, #{message}")
         status = STATUS_RETRY
-      rescue TimeoutError
+      rescue Timeout::Error
         message = "timed out after #{Time.now - delivered_on} seconds.  Timeout threshold [#{msg_timeout}]"
         _log.error("#{MiqQueue.format_short_log_msg(self)}, #{message}")
         status = STATUS_TIMEOUT
@@ -416,8 +420,7 @@ class MiqQueue < ActiveRecord::Base
 
   def requeue(options = {})
     options.reverse_merge!(attributes.symbolize_keys)
-    options.delete(:id)
-    MiqQueue.put(options)
+    MiqQueue.put(options.slice(*MiqQueue.columns_for_requeue))
   end
 
   def check_for_timeout(log_prefix = "MIQ(MiqQueue.check_for_timeout)", grace = 10.seconds, timeout = msg_timeout.seconds)
@@ -441,7 +444,7 @@ class MiqQueue < ActiveRecord::Base
       options = YAML.load(ERB.new(File.read(@@delete_command_file)).result)
       if options[:required_role].nil? || MiqServer.my_server(true).has_active_role?(options[:required_role])
         _log.info("Executing: [#{@@delete_command_file}], Options: [#{options.inspect}]")
-        deleted = delete_all(options[:conditions])
+        deleted = where(options[:conditions]).delete_all
         _log.info("Executing: [#{@@delete_command_file}] complete, #{deleted} rows deleted")
       end
       File.delete(@@delete_command_file)

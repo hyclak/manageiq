@@ -132,33 +132,39 @@ module ManageIQ::Providers::Kubernetes
       new_result = parse_base_item(node)
 
       new_result.merge!(
-        :type                       => 'ManageIQ::Providers::Kubernetes::ContainerManager::ContainerNode',
-        :identity_infra             => node.spec.externalID,
-        :identity_machine           => node.status.nodeInfo.machineID,
-        :identity_system            => node.status.nodeInfo.systemUUID,
-        :container_runtime_version  => node.status.nodeInfo.containerRuntimeVersion,
-        :kubernetes_proxy_version   => node.status.nodeInfo.kubeProxyVersion,
-        :kubernetes_kubelet_version => node.status.nodeInfo.kubeletVersion,
-        :labels                     => parse_labels(node),
-        :lives_on_id                => nil,
-        :lives_on_type              => nil
+        :type           => 'ManageIQ::Providers::Kubernetes::ContainerManager::ContainerNode',
+        :identity_infra => node.spec.externalID,
+        :labels         => parse_labels(node),
+        :lives_on_id    => nil,
+        :lives_on_type  => nil
       )
 
-      node_memory = node.status.capacity.memory
+      node_info = node.status.try(:nodeInfo)
+      if node_info
+        new_result.merge!(
+          :identity_machine           => node_info.machineID,
+          :identity_system            => node_info.systemUUID,
+          :container_runtime_version  => node_info.containerRuntimeVersion,
+          :kubernetes_proxy_version   => node_info.kubeProxyVersion,
+          :kubernetes_kubelet_version => node_info.kubeletVersion
+        )
+      end
+
+      node_memory = node.status.try(:capacity).try(:memory)
       node_memory &&= parse_iec_number(node_memory) / 1.megabyte
 
       new_result[:computer_system] = {
         :hardware         => {
-          :cpu_total_cores => node.status.capacity.cpu,
+          :cpu_total_cores => node.status.try(:capacity).try(:cpu),
           :memory_mb       => node_memory
         },
         :operating_system => {
-          :distribution   => node.status.nodeInfo.osImage,
-          :kernel_version => node.status.nodeInfo.kernelVersion
+          :distribution   => node_info.try(:osImage),
+          :kernel_version => node_info.try(:kernelVersion)
         }
       }
 
-      max_container_groups = node.status.capacity.pods
+      max_container_groups = node.status.try(:capacity).try(:pods)
       new_result[:max_container_groups] = max_container_groups && parse_iec_number(max_container_groups)
 
       new_result[:container_conditions] = parse_conditions(node)
@@ -170,7 +176,8 @@ module ManageIQ::Providers::Kubernetes
                ManageIQ::Providers::Vmware::InfraManager::Vm.name]
 
       # Searching for the underlying instance for Openstack or oVirt.
-      vms = Vm.where(:uid_ems => new_result[:identity_system].downcase, :type => types)
+      identity_system = new_result[:identity_system].try(:downcase)
+      vms = Vm.where(:uid_ems => identity_system, :type => types) if identity_system
       if vms.to_a.size == 1
         new_result[:lives_on_id] = vms.first.id
         new_result[:lives_on_type] = vms.first.type
@@ -212,7 +219,11 @@ module ManageIQ::Providers::Kubernetes
 
       ports = service.spec.ports
       new_result[:container_service_port_configs] = Array(ports).collect do |port_entry|
-        parse_service_port_config(port_entry, new_result[:ems_ref])
+        pc = parse_service_port_config(port_entry, new_result[:ems_ref])
+        new_result[:container_image_registry] = @data_index.fetch_path(
+          :container_image_registry, :by_host_and_port, "#{new_result[:portal_ip]}:#{pc[:port]}"
+        )
+        pc
       end
 
       new_result[:project] = @data_index.fetch_path(:container_projects, :by_name,
@@ -234,7 +245,8 @@ module ManageIQ::Providers::Kubernetes
         :reason                => pod.status.reason,
         :container_node        => nil,
         :container_definitions => [],
-        :container_replicator  => nil
+        :container_replicator  => nil,
+        :build_pod_name        => pod.metadata.try(:annotations).try("openshift.io/build.name".to_sym)
       )
 
       unless pod.spec.nodeName.nil?
@@ -311,7 +323,7 @@ module ManageIQ::Providers::Kubernetes
       new_result.merge!(parse_volume_source(persistent_volume.spec))
       new_result.merge!(
         :type           => 'PersistentVolume',
-        :parent_type    => 'ManageIQ::Providers::Kubernetes::ContainerManager',
+        :parent_type    => 'ManageIQ::Providers::ContainerManager',
         :capacity       => persistent_volume.spec.capacity.to_h.map { |k, v| "#{k}=#{v}" }.join(','),
         :access_modes   => persistent_volume.spec.accessModes.join(','),
         :reclaim_policy => persistent_volume.spec.persistentVolumeReclaimPolicy,
@@ -370,7 +382,8 @@ module ManageIQ::Providers::Kubernetes
     def parse_range_items(limit_range)
       new_result_h = create_limits_matrix
 
-      limit_range.spec.limits.each do |item|
+      limits = limit_range.try(:spec).try(:limits) || []
+      limits.each do |item|
         item[:max].to_h.each do |resource_name, limit|
           new_result_h[item[:type].to_sym][resource_name.to_sym][:max] = limit
         end
@@ -465,7 +478,7 @@ module ManageIQ::Providers::Kubernetes
       attributes.to_h.each do |key, value|
         custom_attr = {
           :section => section,
-          :name    => key,
+          :name    => key.to_s,
           :value   => value,
           :source  => "kubernetes"
         }
@@ -475,7 +488,7 @@ module ManageIQ::Providers::Kubernetes
     end
 
     def parse_conditions(entity)
-      conditions = entity.status.conditions
+      conditions = entity.status.try(:conditions)
       conditions.to_a.collect do |condition|
         {
           :name                 => condition.type,
@@ -606,13 +619,13 @@ module ManageIQ::Providers::Kubernetes
 
     def parse_base_item(item)
       {
-        :ems_ref            => item.metadata.uid,
-        :name               => item.metadata.name,
+        :ems_ref          => item.metadata.uid,
+        :name             => item.metadata.name,
         # namespace is overriden in more_core_extensions and hence needs
         # a non method access
-        :namespace          => item.metadata["table"][:namespace],
-        :creation_timestamp => item.metadata.creationTimestamp,
-        :resource_version   => item.metadata.resourceVersion
+        :namespace        => item.metadata["table"][:namespace],
+        :ems_created_on   => item.metadata.creationTimestamp,
+        :resource_version => item.metadata.resourceVersion
       }
     end
 

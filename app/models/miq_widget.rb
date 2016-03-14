@@ -2,9 +2,7 @@
 #
 require 'simple-rss'
 
-class MiqWidget < ActiveRecord::Base
-  default_scope { where conditions_for_my_region_default_scope }
-
+class MiqWidget < ApplicationRecord
   default_value_for :enabled, true
   default_value_for :read_only, false
 
@@ -454,7 +452,7 @@ class MiqWidget < ActiveRecord::Base
   def self.available_for_user(user)
     user = get_user(user)
     role = user.miq_user_role_name
-    group = user.miq_group_description
+    group = user.current_group.description
 
     # Return all widgets that either has this user's role or is allowed for all roles, or has this user's group
     all.select do |w|
@@ -611,7 +609,7 @@ class MiqWidget < ActiveRecord::Base
   end
 
   def delete_legacy_contents_for_group(group)
-    MiqWidgetContent.destroy_all(:miq_widget_id => id, :miq_group_id => group.id, :user_id => nil)
+    MiqWidgetContent.where(:miq_widget_id => id, :miq_group_id => group.id, :user_id => nil).destroy_all
   end
 
   private

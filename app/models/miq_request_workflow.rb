@@ -57,7 +57,11 @@ class MiqRequestWorkflow
     @values       = values
     @filters      = {}
     @requester    = requester.kind_of?(User) ? requester : User.lookup_by_identity(requester)
-    @requester.miq_group_description = values[:requester_group]
+    group_description = values[:requester_group]
+    if group_description && group_description != @requester.miq_group_description
+      @requester = @requester.clone
+      @requester.current_group_by_description = group_description
+    end
     @values.merge!(options) unless options.blank?
   end
 
@@ -652,7 +656,7 @@ class MiqRequestWorkflow
     tag_cats = allowed_tags.dup
     tag_cat_names = tag_cats.collect { |cat| cat[:name] }
 
-    Classification.find_all_by_id(pre_tags).each do |tag|
+    Classification.where(:id => pre_tags).each do |tag|
       parent = tag.parent
       next if tag_cat_names.include?(parent.name)
 
@@ -827,8 +831,6 @@ class MiqRequestWorkflow
   # Run the relationship methods and perform set intersections on the returned values.
   # Optional starting set of results maybe passed in.
   def allowed_ci(ci, relats, sources, filtered_ids = nil)
-    return [] if @ems_xml_nodes.nil?
-
     result = nil
     relats.each do |rsc_type|
       rails_logger("allowed_ci - #{rsc_type}_to_#{ci}", 0)
@@ -847,16 +849,10 @@ class MiqRequestWorkflow
   def process_filter(filter_prop, ci_klass, targets)
     rails_logger("process_filter - [#{ci_klass}]", 0)
     filter_id = get_value(@values[filter_prop]).to_i
-    if filter_id.zero?
-      Rbac.filtered(targets,
-                    :class     => ci_klass,
-                    :user      => @requester,
-                    :miq_group => @requester.current_group)
-    else
-      MiqSearch.find(filter_id).filtered(targets,
-                                         :user      => @requester,
-                                         :miq_group => @requester.current_group)
-    end.tap { rails_logger("process_filter - [#{ci_klass}]", 1) }
+    MiqSearch.filtered(filter_id, ci_klass, targets,
+                       :user      => @requester,
+                       :miq_group => @requester.current_group,
+                      ).tap { rails_logger("process_filter - [#{ci_klass}]", 1) }
   end
 
   def find_all_ems_of_type(klass, src = nil)
@@ -882,6 +878,7 @@ class MiqRequestWorkflow
   end
 
   def load_ems_node(item, log_header)
+    @ems_xml_nodes ||= {}
     klass_name = item.kind_of?(MiqHashStruct) ? item.evm_object_class : item.class.base_class.name
     node = @ems_xml_nodes["#{klass_name}_#{item.id}"]
     $log.error "#{log_header} Resource <#{klass_name}_#{item.id} - #{item.name}> not found in cached resource tree." if node.nil?
@@ -1184,7 +1181,7 @@ class MiqRequestWorkflow
   end
 
   def folder_to_respool(src)
-    return nil if src[:folder_id].nil?
+    return nil if src[:folder].nil?
     datacenter = find_datacenter_for_ci(src[:folder])
     targets = find_respools_under_ci(datacenter)
     res_pool_with_path = get_ems_respool(get_ems_metadata_tree(src))
@@ -1248,7 +1245,7 @@ class MiqRequestWorkflow
   end
 
   def respool_to_folder(src)
-    return nil if src[:respool_id].nil?
+    return nil if src[:respool].nil?
     sources = [src[:respool]]
     datacenters = sources.collect { |h| find_datacenter_for_ci(h) }.compact
     folders = {}
@@ -1261,14 +1258,7 @@ class MiqRequestWorkflow
 
     dlg_field = dlg_fields[key]
     data_type = dlg_field[:data_type]
-    set_value = case data_type
-                when :integer then value.to_i_with_method
-                when :float   then value.to_f
-                when :boolean then (value.to_s.downcase == 'true')
-                when :time    then Time.parse(value)
-                when :button  then value # Ignore
-                else value # Ignore
-                end
+    set_value = cast_value(value, data_type)
 
     result = nil
     if dlg_field.key?(:values)
@@ -1289,6 +1279,17 @@ class MiqRequestWorkflow
     _log.warn "Unable to find value for key <#{dialog_name}:#{key}(#{data_type})> with input value <#{set_value.inspect}>.  No matching item found." if result.nil?
     _log.info "setting key <#{dialog_name}:#{key}(#{data_type})> to value <#{set_value.inspect}>"
     values[key] = set_value
+  end
+
+  def cast_value(value, data_type)
+    case data_type
+    when :integer then value.to_i_with_method
+    when :float   then value.to_f
+    when :boolean then value.to_s.downcase.in?(%w(true t))
+    when :time    then Time.zone.parse(value)
+    when :button  then value # Ignore
+    else value # Ignore
+    end
   end
 
   def set_ws_field_value_by_display_name(values, key, data, dialog_name, dlg_fields, obj_key = :name)

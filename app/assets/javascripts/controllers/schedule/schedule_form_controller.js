@@ -1,4 +1,4 @@
-ManageIQ.angularApplication.controller('scheduleFormController', ['$http', '$scope', 'scheduleFormId', 'oneMonthAgo', 'miqService', 'timerOptionService', function($http, $scope, scheduleFormId, oneMonthAgo, miqService, timerOptionService) {
+ManageIQ.angular.app.controller('scheduleFormController', ['$http', '$scope', 'scheduleFormId', 'oneMonthAgo', 'miqService', 'timerOptionService', function($http, $scope, scheduleFormId, oneMonthAgo, miqService, timerOptionService) {
   var init = function() {
 
     $scope.scheduleModel = {
@@ -26,7 +26,7 @@ ManageIQ.angularApplication.controller('scheduleFormController', ['$http', '$sco
     $scope.validateClicked = miqService.validateWithAjax;
     $scope.modelCopy = angular.copy( $scope.scheduleModel );
 
-    ManageIQ.angularApplication.$scope = $scope;
+    ManageIQ.angular.scope = $scope;
 
     if (scheduleFormId == 'new') {
       $scope.newRecord                = true;
@@ -34,7 +34,7 @@ ManageIQ.angularApplication.controller('scheduleFormController', ['$http', '$sco
       $scope.scheduleModel.filter_typ = 'all';
       $scope.scheduleModel.enabled    = true;
       $scope.filterValuesEmpty        = true;
-      $scope.scheduleModel.start_date = moment(moment.utc().add(1, 'days').toDate()).format('MM/DD/YYYY');
+      $scope.scheduleModel.start_date = moment(moment.utc().toDate()).format('MM/DD/YYYY');
       $scope.scheduleModel.timer_typ  = 'Once';
       $scope.scheduleModel.time_zone  = 'UTC';
       $scope.scheduleModel.start_hour = '0';
@@ -147,20 +147,20 @@ ManageIQ.angularApplication.controller('scheduleFormController', ['$http', '$sco
     var type;
 
     if (isVmType()) {
-      type = 'VM';
+      type = __('VM Selection');
     } else if (isHostType()) {
-      type = 'Host';
+      type = __('Host Selection');
     } else if ($scope.scheduleModel.action_typ === 'miq_template') {
-      type = 'Template';
+      type = __('Template Selection');
     } else if ($scope.scheduleModel.action_typ === 'emscluster') {
-      type = 'Cluster';
+      type = __('Cluster Selection');
     } else if ($scope.scheduleModel.action_typ === 'storage') {
-      type = 'Datastore';
+      type = __('Datastore Selection');
     } else if ($scope.scheduleModel.action_typ === 'db_backup') {
-      type = 'Database Backup';
+      type = __('Database Backup Selection');
     }
 
-    return type + ' Selection';
+    return type;
   };
 
   $scope.determineActionType = function() {
@@ -267,7 +267,7 @@ ManageIQ.angularApplication.controller('scheduleFormController', ['$http', '$sco
     }
     $scope.angularForm.$setUntouched(true);
     $scope.angularForm.$setPristine(true);
-    miqService.miqFlash("warn", "All changes have been reset");
+    miqService.miqFlash("warn", __("All changes have been reset"));
   };
 
   $scope.saveClicked = function() {

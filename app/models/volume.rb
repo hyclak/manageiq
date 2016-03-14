@@ -1,4 +1,4 @@
-class Volume < ActiveRecord::Base
+class Volume < ApplicationRecord
   belongs_to :hardware
   has_many :partitions, lambda { |_|
     p = Partition.quoted_table_name
@@ -49,7 +49,7 @@ class Volume < ActiveRecord::Base
       nhp = nh[:partition]
       unless nhp.nil?
         name = nhp[:name]
-        found = parent.hardware.partitions.find_all_by_name(name, :order => :id)
+        found = parent.hardware.partitions.where(:name => name).order(:id)
 
         # Handle duplicate partition names (Generally only in the case of Windows with blank partition names)
         if found.length > 1
@@ -67,7 +67,7 @@ class Volume < ActiveRecord::Base
       nhv = nh[:volume]
       unless nhv.nil?
         name = nhv[:name]
-        found = parent.hardware.volumes.find_all_by_name(name, :order => :id)
+        found = parent.hardware.volumes.where(:name => name).order(:id)
 
         # Handle duplicate volume names (Generally only in the case of Windows with blank volume names)
         if found.length > 1

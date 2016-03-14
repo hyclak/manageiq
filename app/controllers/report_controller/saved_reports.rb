@@ -20,8 +20,9 @@ module ReportController::SavedReports
       @report = nil
       return
     end
-    @right_cell_text ||= _("%{model} \"%{name}\"") % {:name => "#{rr.name} - #{format_timezone(rr.created_on, Time.zone, "gt")}", :model => "Saved Report"}
-    if admin_user? || rr.miq_group_id == current_group_id
+    @right_cell_text ||= _("Saved Report \"%{name}\"") %
+                         {:name => "#{rr.name} - #{format_timezone(rr.created_on, Time.zone, "gt")}"}
+    if admin_user? || current_user.miq_group_ids.include?(rr.miq_group_id)
       @report_result_id = session[:report_result_id] = rr.id
       session[:report_result_runtime] = rr.last_run_on
       task = MiqTask.find_by_id(rr.miq_task_id)
@@ -29,7 +30,8 @@ module ReportController::SavedReports
         @report = rr.report_results
         session[:rpt_task_id] = nil
         if @report.blank?
-          add_flash(_("Saved Report \"%s\" not found, Schedule may have failed") % format_timezone(rr.created_on, Time.zone, "gtl"),
+          add_flash(_("Saved Report \"%{time}\" not found, Schedule may have failed") %
+                    {:time => format_timezone(rr.created_on, Time.zone, "gtl")},
                     :error)
           get_all_reps(rr.miq_report_id.to_s)
           if x_active_tree == :savedreports_tree
@@ -91,14 +93,14 @@ module ReportController::SavedReports
     savedreports = find_checked_items
     if savedreports.empty? && params[:id].present? && !MiqReportResult.exists?(params[:id].to_i)
       # saved report is being viewed in report accordion
-      add_flash(_("%s no longer exists") % "Saved Report", :error)
+      add_flash(_("Saved Report no longer exists"), :error)
     else
       savedreports.push(params[:id]) if savedreports.blank?
       @report = nil
       r = MiqReportResult.find(savedreports[0])
       @sb[:miq_report_id] = r.miq_report_id
       process_saved_reports(savedreports, "destroy")  unless savedreports.empty?
-      add_flash(_("The selected %s was deleted") % "Saved Report") if @flash_array.nil?
+      add_flash(_("The selected Saved Report was deleted")) if @flash_array.nil?
     end
     self.x_node = "xx-#{to_cid(@sb[:miq_report_id])}" if x_active_tree == :savedreports_tree &&
                                                          x_node.split('-').first == "rr"
@@ -119,13 +121,15 @@ module ReportController::SavedReports
     @sortcol = session["#{x_active_tree}_sortcol".to_sym].nil? ? 0 : session["#{x_active_tree}_sortcol".to_sym].to_i
     @sortdir = session["#{x_active_tree}_sortdir".to_sym].nil? ? "DESC" : session["#{x_active_tree}_sortdir".to_sym]
     @no_checkboxes = !role_allows(:feature => "miq_report_saved_reports_admin", :any => true)
+
     # show all saved reports
-    @view, @pages = get_view(MiqReportResult, :association => "all", :where_clause => set_saved_reports_condition)
+    @view, @pages = get_view(MiqReportResult, :association => "all",
+                                              :named_scope => :with_current_user_groups_and_report)
 
     # build_savedreports_tree
     @sb[:saved_reports] = nil
     @right_cell_div     = "savedreports_list"
-    @right_cell_text    = _("All %s") % "Saved Reports"
+    @right_cell_text    = _("All Saved Reports")
 
     @current_page = @pages[:current] unless @pages.nil? # save the current page number
     session["#{x_active_tree}_sortcol".to_sym] = @sortcol
@@ -137,30 +141,5 @@ module ReportController::SavedReports
   # Build the main Saved Reports tree
   def build_savedreports_tree
     TreeBuilderReportSavedReports.new('savedreports_tree', 'savedreports', @sb)
-  end
-
-  def set_saved_reports_condition(rep_id = nil)
-    cond = []
-
-    # Replaced this code as all saved, requested, scheduled reports have miq_report_id set, others don't
-    # cond[0] = "(report_source=? OR report_source=? OR report_source=?)"
-    # cond.push("Saved by user")
-    # cond.push("Requested by user")
-    # cond.push("Scheduled")
-
-    if rep_id.nil?
-      cond[0] = "miq_report_id IS NOT NULL"
-    else
-      cond[0] = "miq_report_id=?"
-      cond.push(rep_id)
-    end
-
-    # Admin users can see all saved reports
-    unless admin_user?
-      cond[0] << " AND miq_group_id IN (?)"
-      cond.push(current_user.miq_groups.collect(&:id))
-    end
-
-    cond
   end
 end

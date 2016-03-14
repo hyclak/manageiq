@@ -1,47 +1,47 @@
-require "spec_helper"
-
 describe ExtManagementSystem do
   it ".model_name_from_emstype" do
     described_class.leaf_subclasses.each do |klass|
-      described_class.model_name_from_emstype(klass.ems_type).should == klass.name
+      expect(described_class.model_name_from_emstype(klass.ems_type)).to eq(klass.name)
     end
-    described_class.model_name_from_emstype('foo').should be_nil
+    expect(described_class.model_name_from_emstype('foo')).to be_nil
   end
 
-  let(:all_types) do
-    %w(
-      ec2
-      foreman_configuration
-      foreman_provisioning
-      gce
-      kubernetes
-      openshift
-      atomic
-      openshift_enterprise
-      atomic_enterprise
-      openstack
-      openstack_infra
-      rhevm
-      scvmm
-      vmwarews
-      azure
-    )
+  let(:all_types_and_descriptions) do
+    {
+      "ansible_tower_configuration" => "Ansible Tower Configuration",
+      "atomic"                      => "Atomic",
+      "atomic_enterprise"           => "Atomic Enterprise",
+      "azure"                       => "Azure",
+      "ec2"                         => "Amazon EC2",
+      "foreman_configuration"       => "Foreman Configuration",
+      "foreman_provisioning"        => "Foreman Provisioning",
+      "gce"                         => "Google Compute Engine",
+      "hawkular"                    => "Hawkular",
+      "kubernetes"                  => "Kubernetes",
+      "openshift"                   => "OpenShift Origin",
+      "openshift_enterprise"        => "OpenShift Enterprise",
+      "openstack"                   => "OpenStack",
+      "openstack_infra"             => "OpenStack Platform Director",
+      "rhevm"                       => "Red Hat Enterprise Virtualization Manager",
+      "scvmm"                       => "Microsoft System Center VMM",
+      "vmwarews"                    => "VMware vCenter",
+    }
   end
 
   it ".types" do
-    described_class.types.should match_array(all_types)
+    expect(described_class.types).to match_array(all_types_and_descriptions.keys)
   end
 
   it ".supported_types" do
-    described_class.supported_types.should match_array(all_types)
+    expect(described_class.supported_types).to match_array(all_types_and_descriptions.keys)
+  end
+
+  it ".supported_types_and_descriptions_hash" do
+    expect(described_class.supported_types_and_descriptions_hash).to eq(all_types_and_descriptions)
   end
 
   it ".ems_infra_discovery_types" do
-    expected_types = [
-      "scvmm",
-      "rhevm",
-      "virtualcenter"
-    ]
+    expected_types = %w(scvmm rhevm virtualcenter)
 
     expect(described_class.ems_infra_discovery_types).to match_array(expected_types)
   end
@@ -49,6 +49,47 @@ describe ExtManagementSystem do
   it ".ems_cloud_discovery_types" do
     expected_types = {"azure" => "azure", "amazon" => "ec2"}
     expect(described_class.ems_cloud_discovery_types).to eq(expected_types)
+  end
+
+  context "#ipaddress / #ipaddress=" do
+    it "will delegate to the default endpoint" do
+      ems = FactoryGirl.build(:ems_vmware, :ipaddress => "1.2.3.4")
+      expect(ems.default_endpoint.ipaddress).to eq "1.2.3.4"
+    end
+
+    it "with nil" do
+      ems = FactoryGirl.build(:ems_vmware, :ipaddress => nil)
+      expect(ems.default_endpoint.ipaddress).to be_nil
+    end
+  end
+
+  context "#hostname / #hostname=" do
+    it "will delegate to the default endpoint" do
+      ems = FactoryGirl.build(:ems_vmware, :hostname => "example.org")
+      expect(ems.default_endpoint.hostname).to eq "example.org"
+    end
+
+    it "with nil" do
+      ems = FactoryGirl.build(:ems_vmware, :hostname => nil)
+      expect(ems.default_endpoint.hostname).to be_nil
+    end
+  end
+
+  context "#port, #port=" do
+    it "will delegate to the default endpoint" do
+      ems = FactoryGirl.build(:ems_vmware, :port => 1234)
+      expect(ems.default_endpoint.port).to eq 1234
+    end
+
+    it "will delegate a string to the default endpoint" do
+      ems = FactoryGirl.build(:ems_vmware, :port => "1234")
+      expect(ems.default_endpoint.port).to eq 1234
+    end
+
+    it "with nil" do
+      ems = FactoryGirl.build(:ems_vmware, :port => nil)
+      expect(ems.default_endpoint.port).to be_nil
+    end
   end
 
   context "with two small envs" do
@@ -59,15 +100,15 @@ describe ExtManagementSystem do
 
     it "refresh_all_ems_timer will refresh for all emses in zone1" do
       @ems1 = @zone1.ext_management_systems.first
-      MiqServer.stub(:my_server).and_return(@zone1.miq_servers.first)
-      described_class.should_receive(:refresh_ems).with([@ems1.id], true)
+      allow(MiqServer).to receive(:my_server).and_return(@zone1.miq_servers.first)
+      expect(described_class).to receive(:refresh_ems).with([@ems1.id], true)
       described_class.refresh_all_ems_timer
     end
 
     it "refresh_all_ems_timer will refresh for all emses in zone2" do
       @ems2 = @zone2.ext_management_systems.first
-      MiqServer.stub(:my_server).and_return(@zone2.miq_servers.first)
-      described_class.should_receive(:refresh_ems).with([@ems2.id], true)
+      allow(MiqServer).to receive(:my_server).and_return(@zone2.miq_servers.first)
+      expect(described_class).to receive(:refresh_ems).with([@ems2.id], true)
       described_class.refresh_all_ems_timer
     end
   end
@@ -79,40 +120,40 @@ describe ExtManagementSystem do
     end
 
     it "#total_vms_on" do
-      @ems.total_vms_on.should == 5
+      expect(@ems.total_vms_on).to eq(5)
     end
 
     it "#total_vms_off" do
-      @ems.total_vms_off.should == 0
+      expect(@ems.total_vms_off).to eq(0)
 
       @ems.vms.each { |v| v.update_attributes(:raw_power_state => "poweredOff") }
-      @ems.total_vms_off.should == 5
+      expect(@ems.total_vms_off).to eq(5)
     end
 
     it "#total_vms_unknown" do
-      @ems.total_vms_unknown.should == 0
+      expect(@ems.total_vms_unknown).to eq(0)
 
       @ems.vms.each { |v| v.update_attributes(:raw_power_state => "unknown") }
-      @ems.total_vms_unknown.should == 5
+      expect(@ems.total_vms_unknown).to eq(5)
     end
 
     it "#total_vms_never" do
-      @ems.total_vms_never.should == 0
+      expect(@ems.total_vms_never).to eq(0)
 
       @ems.vms.each { |v| v.update_attributes(:raw_power_state => "never") }
-      @ems.total_vms_never.should == 5
+      expect(@ems.total_vms_never).to eq(5)
     end
 
     it "#total_vms_suspended" do
-      @ems.total_vms_suspended.should == 0
+      expect(@ems.total_vms_suspended).to eq(0)
 
       @ems.vms.each { |v| v.update_attributes(:raw_power_state => "suspended") }
-      @ems.total_vms_suspended.should == 5
+      expect(@ems.total_vms_suspended).to eq(5)
     end
 
     %w(total_vms_on total_vms_off total_vms_unknown total_vms_never total_vms_suspended).each do |vcol|
       it "should have virtual column #{vcol} " do
-        described_class.should have_virtual_column "#{vcol}", :integer
+        expect(described_class).to have_virtual_column "#{vcol}", :integer
       end
     end
   end

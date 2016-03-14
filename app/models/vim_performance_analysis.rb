@@ -80,7 +80,7 @@ module VimPerformanceAnalysis
         elsif topts[:compute_tags]
           search_options[:tag_filters] = {"managed" => topts[:compute_tags]}
         end
-        @compute, _attrs = Rbac.search(search_options)
+        @compute = Rbac.filtered(nil, search_options)
 
         MiqPreloader.preload(@compute, :storages)
         stores = @compute.collect { |c| storages_for_compute_target(c) }.flatten.uniq
@@ -483,7 +483,7 @@ module VimPerformanceAnalysis
 
     rel
       .where("timestamp > ? and timestamp <= ?", start_time.utc, end_time.utc)
-      .where(:resource_type => obj.class.base_class.name, :resource_id => obj.id)
+      .where(:resource => obj)
       .order("timestamp")
       .select(options[:select])
       .to_a
@@ -527,7 +527,7 @@ module VimPerformanceAnalysis
     # puts "find_child_perf_for_time_period: cond: #{cond.inspect}"
 
     if interval_name == "daily"
-      VimPerformanceDaily.find(:all, :conditions => cond, :ext_options => options[:ext_options], :select => options[:select])
+      VimPerformanceDaily.find_entries(options[:ext_options]).where(cond).select(options[:select])
     else
       klass.where(cond).select(options[:select]).to_a
     end
@@ -645,7 +645,7 @@ module VimPerformanceAnalysis
 
   def self.get_daily_perf(obj, start_time, end_time, options)
     cond = ["resource_type = ? and resource_id = ? and (timestamp > ? and timestamp <= ?)", obj.class.base_class.name, obj.id, start_time.utc, end_time.utc]
-    results = VimPerformanceDaily.find(:all, :conditions => cond, :order => "timestamp", :ext_options => options)
+    results = VimPerformanceDaily.find_entries(options).where(cond).order("timestamp")
 
     # apply time profile to returned records if one was specified
     results.each { |rec| rec.apply_time_profile(options[:time_profile]) if rec.respond_to?(:apply_time_profile) } unless options[:time_profile].nil?

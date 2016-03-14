@@ -7,6 +7,7 @@ require 'active_support/core_ext/class/subclasses'
 
 class OpenstackEventMonitor
   DEFAULT_AMQP_PORT = 5672
+  DEFAULT_AMQP_HEARTBEAT = 30
 
   def self.new(options = {})
     # plugin initializer
@@ -14,7 +15,7 @@ class OpenstackEventMonitor
   end
 
   def self.available?(options)
-    !event_monitor_class(options).kind_of? OpenstackNullEventMonitor
+    event_monitor_class(options) != OpenstackNullEventMonitor
   end
 
   DEFAULT_PLUGIN_PRIORITY = 0

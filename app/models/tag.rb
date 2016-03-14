@@ -1,8 +1,10 @@
-class Tag < ActiveRecord::Base
+class Tag < ApplicationRecord
   has_many :taggings, :dependent => :destroy
   has_one :classification
   virtual_has_one :category,       :class_name => "Classification"
   virtual_has_one :categorization, :class_name => "Hash"
+
+  before_destroy :remove_from_managed_filters
 
   def self.to_tag(name, options = {})
     File.join(Tag.get_namespace(options), name)
@@ -11,7 +13,7 @@ class Tag < ActiveRecord::Base
   def self.add(list, options = {})
     ns = Tag.get_namespace(options)
     Tag.parse(list).each do |name|
-      Tag.find_or_create_by_name(File.join(ns, name))
+      Tag.find_or_create_by(:name => find_by_name(File.join(ns, name)))
     end
   end
 
@@ -58,6 +60,9 @@ class Tag < ActiveRecord::Base
   def self.parse(list)
     unless list.kind_of? Array
       tag_names = []
+
+      # don't mangle the caller's copy
+      list = list.dup
 
       # first, pull out the quoted tags
       list.gsub!(/\"(.*?)\"\s*/) { tag_names << $1; "" }
@@ -139,6 +144,10 @@ class Tag < ActiveRecord::Base
   end
 
   private
+
+  def remove_from_managed_filters
+    MiqGroup.remove_tag_from_all_managed_filters(name)
+  end
 
   def name_path
     @name_path ||= name.sub(%r{^/[^/]*/}, "")

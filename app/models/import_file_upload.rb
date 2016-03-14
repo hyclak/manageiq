@@ -1,4 +1,4 @@
-class ImportFileUpload < ActiveRecord::Base
+class ImportFileUpload < ApplicationRecord
   has_one :binary_blob, :as => :resource, :dependent => :destroy
 
   def policy_import_data
@@ -14,7 +14,7 @@ class ImportFileUpload < ActiveRecord::Base
       {
         :id          => index,
         :name        => dialog["label"],
-        :status_icon => status_icon,
+        :status_icon => ActionController::Base.helpers.image_path("16/#{status_icon}.png"),
         :status      => status
       }
     end
@@ -22,24 +22,22 @@ class ImportFileUpload < ActiveRecord::Base
     service_dialogs.to_json
   end
 
-  def widget_json
+  def widget_list
     sorted_widgets = uploaded_yaml_content.sort_by do |widget_contents|
       widget_contents["MiqWidget"]["title"].downcase
     end
 
-    widgets = sorted_widgets.collect.with_index do |widget, index|
+    sorted_widgets.collect.with_index do |widget, index|
       status_icon = MiqWidget.exists?(:title => widget["MiqWidget"]["title"]) ? "checkmark" : "equal-green"
       status = determine_status(status_icon)
 
       {
         :id          => index,
         :name        => widget["MiqWidget"]["title"],
-        :status_icon => status_icon,
+        :status_icon => ActionController::Base.helpers.image_path("16/#{status_icon}.png"),
         :status      => status
       }
     end
-
-    widgets.to_json
   end
 
   def store_binary_data_as_yml(binary_data, name)

@@ -246,6 +246,19 @@ class MiqVimInventory < MiqVimClientBase
     end
 
     #
+    # Traverse Datacenter to Datastore folder.
+    #
+    datacenterDsFolderTs = VimHash.new("TraversalSpec") do |ts|
+      ts.name      = "dcTodf"
+      ts.type      = "Datacenter"
+      ts.path      = "datastoreFolder"
+      ts.skip      = "false"
+      ts.selectSet = VimArray.new("ArrayOfSelectionSpec") do |ssa|
+        ssa << VimHash.new("SelectionSpec") { |ss| ss.name = "folderTraversalSpec" }
+      end
+    end
+
+    #
     # Traverse Datacenter to Datastore.
     #
     datacenterDsTs = VimHash.new("TraversalSpec") do |ts|
@@ -253,6 +266,19 @@ class MiqVimInventory < MiqVimClientBase
       ts.type = "Datacenter"
       ts.path = "datastore"
       ts.skip = "false"
+    end
+
+    #
+    # Traverse Datacenter to Network folder
+    #
+    datacenterNetworkFolderTs = VimHash.new("TraversalSpec") do |ts|
+      ts.name = "dcTonf"
+      ts.type = "Datacenter"
+      ts.path = "networkFolder"
+      ts.skip = "false"
+      ts.selectSet = VimArray.new("ArrayOfSelectionSpec") do |ssa|
+        ssa << VimHash.new("SelectionSpec") { |ss| ss.name = "folderTraversalSpec" }
+      end
     end
 
     #
@@ -268,6 +294,8 @@ class MiqVimInventory < MiqVimClientBase
         ssa << datacenterHostTs
         ssa << datacenterVmTs
         ssa << datacenterDsTs
+        ssa << datacenterDsFolderTs
+        ssa << datacenterNetworkFolderTs
         ssa << computeResourceRpTs
         ssa << computeResourceHostTs
         ssa << resourcePoolTs
@@ -1592,6 +1620,269 @@ class MiqVimInventory < MiqVimClientBase
 
   def addDataStoreObj(dsObj)
     addObjHash(:Datastore, dsObj)
+  end
+
+  #
+  # For internal use.
+  # Must be called with cache lock held
+  # Returns with the cache lock held - must be unlocked by caller.
+  #
+  def dvPortgroups_locked
+    raise "dvPortgroups_locked: cache lock not held" unless @cacheLock.sync_locked?
+    return(@dvPortgroups) if @dvPortgroups
+
+    $vim_log.info "MiqVimInventory.dvPortgroups_locked: loading DV Portgroup cache for #{@connId}"
+    begin
+      @cacheLock.sync_lock(:EX) if (unlock = @cacheLock.sync_shared?)
+
+      ra = getMoPropMulti(inventoryHash_locked['DistributedVirtualPortgroup'], @propMap[:DistributedVirtualPortgroup][:props])
+
+      @dvPortgroups      = {}
+      @dvPortgroupsByMor = {}
+      ra.each do |dvpObj|
+        addDVPObj(dvpObj)
+      end
+    ensure
+      @cacheLock.sync_unlock if unlock
+    end
+    $vim_log.info "MiqVimInventory.dvPortgroups_locked: loaded DV Portgroup cache for #{@connId}"
+
+    @dvPortgroups
+  end # def dvPortgroups_locked
+  protected :dvPortgroups_locked
+
+  #
+  # For internal use.
+  # Must be called with cache lock held
+  # Returns with the cache lock held - must be unlocked by caller.
+  #
+  def dvPortgroupsByMor_locked
+    raise "dvPortgroupsByMor_locked: cache lock not held" unless @cacheLock.sync_locked?
+    return(@dvPortgroupsByMor) if @dvPortgroupsByMor
+    dvPortgroups_locked
+    @dvPortgroupsByMor
+  end # def dvPortgroupsByMor_locked
+  protected :dvPortgroupsByMor_locked
+
+  #
+  # Public accessor
+  #
+  def dvPortgroups(selSpec = nil)
+    dvp = nil
+    @cacheLock.synchronize(:SH) do
+      dvp = if selSpec.nil?
+              dupObj(dvPortgroups_locked)
+            else
+              applySelector(dvPortgroups_locked, selSpec)
+            end
+    end
+    assert_no_locks
+    dvp
+  end # def dvPortgroups
+
+  #
+  # Public accessor
+  #
+  def dvPortgroupsByMor(selSpec = nil)
+    dvp = nil
+    @cacheLock.synchronize(:SH) do
+      dvp = if selSpec.nil?
+              dupObj(dvPortgroupsByMor_locked)
+            else
+              applySelector(dvPortgroupsByMor_locked, selSpec)
+            end
+    end
+    assert_no_locks
+    dvp
+  end # def dvPortgroupsByMor
+
+  #
+  # Return a single storagePod object, given its MOR
+  #
+  def dvPortgroupByMor(dvpMor, selSpec = nil)
+    @cacheLock.synchronize(:SH) do
+      return(dupObj(dvPortgroupsByMor_locked[dvpMor])) if selSpec.nil?
+      return(applySelector(dvPortgroupsByMor_locked[dvpMor], selSpec))
+    end
+  end
+
+  def addDVPObj(dvpObj)
+    addObjHash(:DistributedVirtualPortgroup, dvpObj)
+  end
+
+  #
+  # For internal use.
+  # Must be called with cache lock held
+  # Returns with the cache lock held - must be unlocked by caller.
+  #
+  def dvSwitches_locked
+    raise "dvSwitches_locked: cache lock not held" unless @cacheLock.sync_locked?
+    return(@dvSwithces) if @dvSwitches
+
+    $vim_log.info "MiqVimInventory.dvSwitches_locked: loading DV Switch cache for #{@connId}"
+    begin
+      @cacheLock.sync_lock(:EX) if (unlock = @cacheLock.sync_shared?)
+
+      ra = getMoPropMulti(inventoryHash_locked['DistributedVirtualSwitch'], @propMap[:DistributedVirtualSwitch][:props])
+
+      @dvSwitches      = {}
+      @dvSwitchesByMor = {}
+      ra.each do |dvsObj|
+        addDVSObj(dvsObj)
+      end
+    ensure
+      @cacheLock.sync_unlock if unlock
+    end
+    $vim_log.info "MiqVimInventory.dvSwitches_locked: loaded DV Switch cache for #{@connId}"
+
+    @dvSwitches
+  end # def dvSwitches_locked
+  protected :dvSwitches_locked
+
+  #
+  # For internal use.
+  # Must be called with cache lock held
+  # Returns with the cache lock held - must be unlocked by caller.
+  #
+  def dvSwitchesByMor_locked
+    raise "dvSwitchesByMor_locked: cache lock not held" unless @cacheLock.sync_locked?
+    return(@dvSwitchesByMor) if @dvSwitchesByMor
+    dvSwitches_locked
+    @dvSwitchesByMor
+  end # def dvSwitchesByMor_locked
+  protected :dvSwitchesByMor_locked
+
+  #
+  # Public accessor
+  #
+  def dvSwitches(selSpec = nil)
+    dvs = nil
+    @cacheLock.synchronize(:SH) do
+      dvs = if selSpec.nil?
+              dupObj(dvSwitches_locked)
+            else
+              applySelector(dvSwitches_locked, selSpec)
+            end
+    end
+    assert_no_locks
+    dvs
+  end # def dvSwitches
+
+  #
+  # Public accessor
+  #
+  def dvSwitchesByMor(selSpec = nil)
+    dvs = nil
+    @cacheLock.synchronize(:SH) do
+      dvs = if selSpec.nil?
+              dupObj(dvSwitchesByMor_locked)
+            else
+              applySelector(dvSwitchesByMor_locked, selSpec)
+            end
+    end
+    assert_no_locks
+    dvs
+  end # def dvSwitchesByMor
+
+  #
+  # Return a single DV Switch object, given its MOR
+  #
+  def dvSwitchByMor(dvsMor, selSpec = nil)
+    @cacheLock.synchronize(:SH) do
+      return(dupObj(dvSwitchesByMor_locked[dvsMor])) if selSpec.nil?
+      return(applySelector(dvSwitchesByMor_locked[dvsMor], selSpec))
+    end
+  end
+
+  def addDVSObj(dvsObj)
+    addObjHash(:DistributedVirtualSwitch, dvsObj)
+  end
+  #
+  # For internal use.
+  # Must be called with cache lock held
+  # Returns with the cache lock held - must be unlocked by caller.
+  #
+  def storagePods_locked
+    raise "storagePods_locked: cache lock not held" unless @cacheLock.sync_locked?
+    return(@storagePods) if @storagePods
+
+    $vim_log.info "MiqVimInventory.storagePods_locked: loading Datastore cache for #{@connId}"
+    begin
+      @cacheLock.sync_lock(:EX) if (unlock = @cacheLock.sync_shared?)
+
+      ra = getMoPropMulti(inventoryHash_locked['StoragePod'], @propMap[:StoragePod][:props])
+
+      @storagePods      = {}
+      @storagePodsByMor = {}
+      ra.each do |dsObj|
+        addStoragePodObj(dsObj)
+      end
+    ensure
+      @cacheLock.sync_unlock if unlock
+    end
+    $vim_log.info "MiqVimInventory.dataStores_locked: loaded Datastore cache for #{@connId}"
+
+    @storagePods
+  end # def storagePods_locked
+  protected :storagePods_locked
+
+  #
+  # For internal use.
+  # Must be called with cache lock held
+  # Returns with the cache lock held - must be unlocked by caller.
+  #
+  def storagePodsByMor_locked
+    raise "storagePodsByMor_locked: cache lock not held" unless @cacheLock.sync_locked?
+    return(@storagePodsByMor) if @storagePodsByMor
+    storagePods_locked
+    @storagePodsByMor
+  end # def storagePodsByMor_locked
+  protected :storagePodsByMor_locked
+
+  #
+  # Public accessor
+  #
+  def storagePods(selSpec = nil)
+    sp = nil
+    @cacheLock.synchronize(:SH) do
+      if selSpec.nil?
+        sp = dupObj(storagePods_locked)
+      else
+        sp = applySelector(storagePods_locked, selSpec)
+      end
+    end
+    assert_no_locks
+    sp
+  end # def storagePods
+
+  #
+  # Public accessor
+  #
+  def storagePodsByMor(selSpec = nil)
+    sp = nil
+    @cacheLock.synchronize(:SH) do
+      if selSpec.nil?
+        sp = dupObj(storagePodsByMor_locked)
+      else
+        sp = applySelector(storagePodsByMor_locked, selSpec)
+      end
+    end
+    assert_no_locks
+    sp
+  end # def storagePodsByMor
+
+  #
+  # Return a single storagePod object, given its MOR
+  #
+  def storagePodByMor(spMor, selSpec = nil)
+    @cacheLock.synchronize(:SH) do
+      return(dupObj(storagePodsByMor_locked[spMor])) if selSpec.nil?
+      return(applySelector(storagePodsByMor_locked[spMor], selSpec))
+    end
+  end
+
+  def addStoragePodObj(spObj)
+    addObjHash(:StoragePod, spObj)
   end
 
   #

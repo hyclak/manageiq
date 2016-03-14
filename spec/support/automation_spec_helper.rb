@@ -21,10 +21,10 @@ module AutomationSpecHelper
 
   def assert_method_executed(uri, value, user)
     ws = MiqAeEngine.instantiate(uri, user)
-    ws.should_not be_nil
+    expect(ws).not_to be_nil
     roots = ws.roots
-    roots.should have(1).item
-    roots.first.attributes['method_executed'].should == value
+    expect(roots.size).to eq(1)
+    expect(roots.first.attributes['method_executed']).to eq(value)
   end
 
   def create_ae_model(attrs = {})
@@ -90,5 +90,17 @@ module AutomationSpecHelper
     q.state = 'dequeue'
     q.save
     q.deliver
+  end
+
+  def add_call_method
+    aec = MiqAeClass.find_by_fqname('/ManageIQ/System/Request')
+    aei = aec.ae_instances.detect { |ins| ins.name == 'Call_Method' } if aec
+    return if aei
+    aef = aec.ae_fields.detect { |fld| fld.name == 'meth1' }
+    aei = MiqAeInstance.new('name' => 'Call_Method')
+    aev = MiqAeValue.new(:ae_field => aef, :value =>  "${/#namespace}/${/#class}.${/#method}")
+    aei.ae_values << aev
+    aec.ae_instances << aei
+    aec.save
   end
 end

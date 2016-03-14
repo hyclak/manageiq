@@ -1,4 +1,3 @@
-require "spec_helper"
 require_migration
 
 describe AddPersistentVolumesToContainerVolumes do
@@ -21,8 +20,8 @@ describe AddPersistentVolumesToContainerVolumes do
 
       migrate
 
-      ContainerVolume.find(container_volume.id).should_not respond_to(:parent_type)
-      ContainerVolume.exists?(persistent_volume.id).should be false
+      expect(container_volume_stub.find(container_volume.id)).not_to respond_to(:parent_type)
+      expect(container_volume_stub.exists?(persistent_volume.id)).to be false
     end
   end
 end

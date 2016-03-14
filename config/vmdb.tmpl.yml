@@ -72,6 +72,8 @@ ems_refresh:
     get_shared_images: true
     get_public_images: false
     ignore_terminated_instances: true
+  ansible_tower_configuration:
+    :refresh_interval: 15.minutes
   foreman_configuration:
     :refresh_interval: 15.minutes
   foreman_provisioning:
@@ -134,7 +136,6 @@ log:
   level_scvmm_in_evm: error
   level_vim: warn
   level_vim_in_evm: error
-  path:
 log_depot:
   password:
   uri:
@@ -238,6 +239,9 @@ smtp:
 snapshots:
   :create_free_percent: 100
   :remove_free_percent: 100
+ssl:
+  :ssl_ca_file:
+  :ssl_ca_path:
 storage:
   inventory:
     :full_refresh_schedule: "38 * * * *"
@@ -308,6 +312,7 @@ workers:
         :duration: 10.seconds
         :capacity: 50
         :amqp_port: 5672
+        :amqp_heartbeat: 30
       :event_catcher_openstack_infra:
         :poll: 15.seconds
         :topics:
@@ -320,6 +325,7 @@ workers:
         :duration: 10.seconds
         :capacity: 50
         :amqp_port: 5672
+        :amqp_heartbeat: 30
       :event_catcher_amazon:
         :poll: 15.seconds
       :event_catcher_kubernetes:
@@ -380,9 +386,12 @@ workers:
           :queue_timeout: 120.minutes
           :restart_interval: 2.hours
         :ems_refresh_worker_amazon: {}
+        :ems_refresh_worker_ansible_tower_configuration: {}
         :ems_refresh_worker_azure: {}
         :ems_refresh_worker_foreman_configuration: {}
         :ems_refresh_worker_foreman_provisioning: {}
+        :ems_refresh_worker_google: {}
+        :ems_refresh_worker_hawkular: {}
         :ems_refresh_worker_kubernetes: {}
         :ems_refresh_worker_openshift: {}
         :ems_refresh_worker_atomic: {}
@@ -434,6 +443,7 @@ workers:
           :database: vmdb_production
           :username: root
         :exclude_tables:
+        - ar_internal_metadata
         - assigned_server_roles
         - audit_events
         - binary_blobs
@@ -488,10 +498,9 @@ workers:
         - miq_alerts
         - miq_databases
         - miq_enterprises
-        - miq_events
+        - miq_event_definitions
         - miq_globals
         - miq_groups
-        - miq_license_contents
         - miq_policies
         - miq_policy_contents
         - miq_product_features
@@ -511,10 +520,10 @@ workers:
         - miq_widget_contents
         - miq_workers
         - rss_feeds
+        - scan_items
         - schema_migrations
         - server_roles
         - sessions
-        - vim_performances
         - vim_performance_states
         - vim_performance_tag_values
         - vmdb_database_metrics
@@ -526,6 +535,7 @@ workers:
           :replication_trace: false
           :debug_sql: false
           :heartbeat_threshold: 300
+          :database_connection_timeout: 15
     :schedule_worker:
       :authentication_check_interval: 1.day
       :db_diagnostics_interval: 30.minutes
@@ -538,7 +548,7 @@ workers:
       :job_timeout_interval: 60.seconds
       :log_active_configuration_interval: 1.days
       :log_database_statistics_interval: 1.days
-      :memory_threshold: 250.megabytes
+      :memory_threshold: 300.megabytes
       :nice_delta: 3
       :orchestration_stack_retired_interval: 10.minutes
       :performance_collection_interval: 3.minutes
@@ -556,7 +566,6 @@ workers:
       :storage_file_collection_interval: 1.days
       :storage_file_collection_time_utc: 06:00
       :vm_retired_interval: 10.minutes
-      :vm_scan_interval: 10.minutes
     :smis_refresh_worker:
       :connection_pool_size: 5
       :memory_threshold: 1.gigabytes

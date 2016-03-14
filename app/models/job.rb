@@ -1,4 +1,4 @@
-class Job < ActiveRecord::Base
+class Job < ApplicationRecord
   include_concern 'StateMachine'
   include UuidMixin
   include ReportableMixin
@@ -31,13 +31,11 @@ class Job < ActiveRecord::Base
     job
   end
 
-  def self.current_job_timeout
+  def self.current_job_timeout(_timeout_adjustment = 1)
     DEFAULT_TIMEOUT
   end
 
-  def current_job_timeout
-    self.class.current_job_timeout
-  end
+  delegate :current_job_timeout, :to => :class
 
   def initialize_attributes
     self.name ||= "#{type} created on #{Time.now.utc}"
@@ -173,7 +171,7 @@ class Job < ActiveRecord::Base
         .where("state != 'finished' and (state != 'waiting_to_start' or dispatch_status = 'active')")
         .where("zone is null or zone = ?", MiqServer.my_zone)
         .each do |job|
-          next unless job.updated_on < job.current_job_timeout.seconds.ago
+          next unless job.updated_on < job.current_job_timeout(timeout_adjustment(job)).seconds.ago
 
           # Allow jobs to run longer if the MiqQueue task is still active.  (Limited to MiqServer for now.)
           if job.agent_class == "MiqServer"
@@ -185,6 +183,16 @@ class Job < ActiveRecord::Base
     rescue Exception
       _log.error("#{$!}")
     end
+  end
+
+  def self.timeout_adjustment(job)
+    timeout_adjustment = 1
+    vm = VmOrTemplate.find(job.target_id)
+    if vm.kind_of?(ManageIQ::Providers::Microsoft::InfraManager::Vm) ||
+       vm.kind_of?(ManageIQ::Providers::Microsoft::InfraManager::Template)
+      timeout_adjustment = 4
+    end
+    timeout_adjustment
   end
 
   def self.check_for_evm_snapshots(job_not_found_delay = 1.hour)
@@ -211,7 +219,7 @@ class Job < ActiveRecord::Base
     jobs = Marshal.load(jobs)
     job_guids = jobs.collect { |j| j[:taskid] }
     unless job_guids.empty?
-      Job.find(:all, :conditions => ["state != 'finished' and guid in (?)", job_guids]).each do |job|
+      Job.where(:guid => job_guids).where.not(:state => 'finished').each do |job|
         _log.debug("Job: guid: [#{job.guid}], job timeout extended due to work pending.")
         job.updated_on = Time.now.utc
         job.save

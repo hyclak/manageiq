@@ -1,4 +1,3 @@
-require "spec_helper"
 require "routing/shared_examples"
 
 describe "routes for HostController" do
@@ -93,6 +92,12 @@ describe "routes for HostController" do
   describe "#drift_to_txt" do
     it "routes with GET" do
       expect(get("/host/drift_to_txt")).to route_to("host#drift_to_txt")
+    end
+  end
+
+  describe "#filesystem_download" do
+    it 'routes with GET' do
+      expect(get("/#{controller_name}/filesystem_download")).to route_to("#{controller_name}#filesystem_download")
     end
   end
 
@@ -253,12 +258,6 @@ describe "routes for HostController" do
   describe "#timeline_data" do
     it "routes with GET" do
       expect(get("/host/timeline_data")).to route_to("host#timeline_data")
-    end
-  end
-
-  describe "#toggle_policy_profile" do
-    it "routes with POST" do
-      expect(post("/host/toggle_policy_profile")).to route_to("host#toggle_policy_profile")
     end
   end
 

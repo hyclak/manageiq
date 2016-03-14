@@ -1,5 +1,4 @@
-require "spec_helper"
-require "active_support/concurrency/latch"
+require "concurrent/atomic/event"
 
 describe VmdbDatabaseConnection do
   before :each do
@@ -21,49 +20,49 @@ describe VmdbDatabaseConnection do
   end
 
   it 'returns nil for wait_resource where there are no locks' do
-    continue = ActiveSupport::Concurrency::Latch.new
-    made_connection = ActiveSupport::Concurrency::Latch.new
+    continue = Concurrent::Event.new
+    made_connection = Concurrent::Event.new
 
     get_connection = Thread.new do
       VmdbDatabaseConnection.connection.transaction do
         # make an empty txn to ensure we've sent something to the db
       end
-      made_connection.release
-      continue.await # block until the main thread has found this connection.
+      made_connection.set
+      continue.wait # block until the main thread has found this connection.
     end
 
-    made_connection.await # wait until the thread has made a db connection
+    made_connection.wait # wait until the thread has made a db connection
 
     connections = VmdbDatabaseConnection.all
     no_locks = connections.detect { |conn| conn.vmdb_database_locks.empty? }
-    expect(no_locks).to be
+    expect(no_locks).to be_truthy
     expect(no_locks.wait_resource).to be_nil
 
-    continue.release
+    continue.set
     get_connection.join
   end
 
   it 'is blocked' do
     VmdbDatabaseConnection.connection_pool.disconnect!
-    locked_latch = ActiveSupport::Concurrency::Latch.new
-    continue_latch = ActiveSupport::Concurrency::Latch.new
+    locked_latch = Concurrent::Event.new
+    continue_latch = Concurrent::Event.new
 
     get_lock = Thread.new do
       VmdbDatabaseConnection.connection.transaction do
         VmdbDatabaseConnection.connection.execute('LOCK users IN EXCLUSIVE MODE')
-        locked_latch.release
-        continue_latch.await
+        locked_latch.set
+        continue_latch.wait
       end
     end
 
     wait_for_lock = Thread.new do
       VmdbDatabaseConnection.connection.transaction do
-        locked_latch.await # wait until `get_lock` has the lock
+        locked_latch.wait # wait until `get_lock` has the lock
         VmdbDatabaseConnection.connection.execute('LOCK users IN EXCLUSIVE MODE')
       end
     end
 
-    locked_latch.await # wait until `get_lock` has the lock
+    locked_latch.wait # wait until `get_lock` has the lock
     # spin until `wait_for_lock` is waiting to acquire the lock
     loop { break if wait_for_lock.status == "sleep" }
 
@@ -72,7 +71,7 @@ describe VmdbDatabaseConnection do
     give_up = 10.seconds.from_now
     until (blocked_conn = connections.detect(&:blocked_by))
       if Time.current > give_up
-        continue_latch.release
+        continue_latch.set
         get_lock.join
         wait_for_lock.join
         raise "Lock is not blocking"
@@ -81,10 +80,10 @@ describe VmdbDatabaseConnection do
     end
 
     blocked_by = connections.detect { |conn| conn.spid == blocked_conn.blocked_by }
-    expect(blocked_by).to be
+    expect(blocked_by).to be_truthy
     expect(blocked_conn.spid).not_to eq(blocked_by.spid)
 
-    continue_latch.release
+    continue_latch.set
     get_lock.join
     wait_for_lock.join
   end
@@ -96,7 +95,7 @@ describe VmdbDatabaseConnection do
 
   it 'wait_time_ms defaults to 0 on nil query_start' do
     conn = VmdbDatabaseConnection.first
-    conn.stub(:query_start => nil)
+    allow(conn).to receive_messages(:query_start => nil)
     expect(conn.wait_time_ms).to eq 0
   end
 
@@ -119,6 +118,51 @@ describe VmdbDatabaseConnection do
     it "has a #{field}" do
       setting = VmdbDatabaseConnection.all.first
       expect(setting).to respond_to(field)
+    end
+  end
+
+  describe ".log_statistics" do
+    before do
+      @buffer = StringIO.new
+      class << @buffer
+        alias_method :info, :write
+        alias_method :warn, :write
+      end
+    end
+
+    it "normal" do
+      described_class.log_statistics(@buffer)
+      lines = @buffer.string.lines
+      expect(lines.shift).to eq "MIQ(VmdbDatabaseConnection.log_statistics) <<-ACTIVITY_STATS_CSV\n"
+      expect(lines.pop).to eq "ACTIVITY_STATS_CSV"
+
+      header, *rows = CSV.parse lines.join
+      expect(header).to eq %w(
+        session_id
+        xact_start
+        last_request_start_time
+        command
+        task_state
+        login
+        application
+        request_id
+        net_address
+        host_name
+        client_port
+        wait_time_ms
+        blocked_by
+      )
+
+      expect(rows.length).to be > 0
+      rows.each do |row|
+        expect(row.first).to be_truthy
+      end
+    end
+
+    it "exception" do
+      allow(described_class).to receive(:all).and_raise("FAILURE")
+      described_class.log_statistics(@buffer)
+      expect(@buffer.string.lines.first).to eq("MIQ(VmdbDatabaseConnection.log_statistics) Unable to log stats, 'FAILURE'")
     end
   end
 end

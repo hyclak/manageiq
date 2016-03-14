@@ -1,10 +1,8 @@
 require 'io/wait'
 
-class MiqWorker < ActiveRecord::Base
+class MiqWorker < ApplicationRecord
   include UuidMixin
   include ReportableMixin
-
-  before_validation :set_command_line, :on => :create
 
   before_destroy :log_destroy_of_worker_messages
 
@@ -32,13 +30,15 @@ class MiqWorker < ActiveRecord::Base
   STATUSES_STOPPED  = [STATUS_STOPPED, STATUS_KILLED, STATUS_ABORTED]
   STATUSES_CURRENT_OR_STARTING = STATUSES_CURRENT + STATUSES_STARTING
   STATUSES_ALIVE    = STATUSES_CURRENT_OR_STARTING + [STATUS_STOPPING]
+  PROCESS_INFO_FIELDS = %i(priority memory_usage percent_memory percent_cpu memory_size cpu_time proportional_set_size)
 
+  PROCESS_TITLE_PREFIX = "MIQ:".freeze
   def self.atStartup
     # Delete and Kill all workers that were running previously
     clean_all_workers
 
     # Clean queue of any worker startup entries
-    MiqQueue.destroy_all(:method_name => "start_event_monitor", :server_guid => MiqServer.my_guid)
+    MiqQueue.where(:method_name => "start_event_monitor", :server_guid => MiqServer.my_guid).destroy_all
   end
 
   def self.atShutdown
@@ -182,7 +182,7 @@ class MiqWorker < ActiveRecord::Base
   # Grab all the classes in the hierarchy below ActiveRecord::Base
   def self.path_to_my_worker_settings
     @path_to_my_worker_settings ||=
-      ancestors.grep(Class).select { |c| c < ActiveRecord::Base }.reverse.collect(&:settings_name)
+      ancestors.grep(Class).select { |c| c <= MiqWorker }.reverse.collect(&:settings_name)
   end
 
   def self.fetch_worker_settings_from_server(miq_server, options = {})
@@ -317,16 +317,45 @@ class MiqWorker < ActiveRecord::Base
     )
   end
 
+  def self.before_fork
+    preload_for_worker_role if respond_to?(:preload_for_worker_role)
+  end
+
+  def self.after_fork
+    close_pg_sockets_inherited_from_parent
+    DRb.stop_service
+  end
+
+  # When we fork, the children inherits the parent's file descriptors
+  # so we need to close any inherited raw pg sockets in the child.
+  def self.close_pg_sockets_inherited_from_parent
+    owner_to_pool = ActiveRecord::Base.connection_handler.instance_variable_get(:@owner_to_pool)
+    owner_to_pool[Process.ppid].values.compact.each do |pool|
+      pool.connections.each do |conn|
+        socket = conn.raw_connection.socket
+        _log.info "Closing socket: #{socket}"
+        IO.for_fd(socket).close
+      end
+    end
+  end
+
   def start
+    self.class.before_fork
+    pid = fork(:cow_friendly => true) do
+      self.class.after_fork
+      self.class::Runner.start_worker(worker_options)
+      exit!
+    end
+
+    Process.detach(pid)
+    self.pid = pid
+    save
+
     msg = "Worker started: ID [#{id}], PID [#{pid}], GUID [#{guid}]"
     MiqEvent.raise_evm_event_queue(miq_server, "evm_worker_start", :event_details => msg, :type => self.class.name)
 
-    ENV['MIQ_GUID'] = guid
-    self.pid = Kernel.spawn(command_line, :out => "/dev/null", :err => [Rails.root.join("log", "evm.log"), "a"])
-    Process.detach(pid)
-    save
-
-    _log.info("#{msg}")
+    _log.info(msg)
+    self
   end
 
   def stop
@@ -410,13 +439,13 @@ class MiqWorker < ActiveRecord::Base
     end
 
     # Ensure the hash only contains the values we want to store in the table
-    pinfo.delete_if { |k, _v| ![:priority, :memory_usage, :percent_memory, :percent_cpu, :memory_size, :cpu_time].include?(k) }
+    pinfo.keep_if { |k, _v| self.class::PROCESS_INFO_FIELDS.include?(k) }
     pinfo[:os_priority] = pinfo.delete(:priority)
-    update_attributes(pinfo)
+    update_attributes!(pinfo)
   end
 
   def log_status(level = :info)
-    _log.send(level, "[#{friendly_name}] Worker ID [#{id}], PID [#{pid}], GUID [#{guid}], Last Heartbeat [#{last_heartbeat}], Process Info: Memory Usage [#{memory_usage}], Memory Size [#{memory_size}], Memory % [#{percent_memory}], CPU Time [#{cpu_time}], CPU % [#{percent_cpu}], Priority [#{os_priority}]")
+    _log.send(level, "[#{friendly_name}] Worker ID [#{id}], PID [#{pid}], GUID [#{guid}], Last Heartbeat [#{last_heartbeat}], Process Info: Memory Usage [#{memory_usage}], Memory Size [#{memory_size}], Proportional Set Size: [#{proportional_set_size}], Memory % [#{percent_memory}], CPU Time [#{cpu_time}], CPU % [#{percent_cpu}], Priority [#{os_priority}]")
   end
 
   def current_timeout
@@ -432,9 +461,7 @@ class MiqWorker < ActiveRecord::Base
     normalized_type.titleize
   end
 
-  def normalized_type
-    self.class.normalized_type
-  end
+  delegate :normalized_type, :to => :class
 
   def format_full_log_msg
     "Worker [#{self.class}] with ID: [#{id}], PID: [#{pid}], GUID: [#{guid}]"
@@ -479,6 +506,10 @@ class MiqWorker < ActiveRecord::Base
     end
   end
 
+  def worker_options
+    {:guid => guid}
+  end
+
   protected
 
   def self.normalized_type
@@ -496,28 +527,5 @@ class MiqWorker < ActiveRecord::Base
   def self.nice_increment
     delta = worker_settings[:nice_delta]
     delta.kind_of?(Integer) ? delta.to_s : "+10"
-  end
-
-  def self.build_command_line(*params)
-    params = params.first || {}
-    raise ArgumentError, "params must contain :guid" unless params.key?(:guid)
-
-    rr = File.expand_path(Rails.root)
-
-    cl = "#{nice_prefix} #{Gem.ruby}"
-    cl << " " << File.join(rr, "bin/rails runner")
-    cl << " " << File.join(rr, "lib/workers/bin/worker.rb #{self::Runner}")
-    cl << " " << name
-    params.each { |k, v| cl << " --#{k} \"#{v}\"" unless v.blank? }
-
-    cl
-  end
-
-  def command_line_params
-    {:guid => guid}
-  end
-
-  def set_command_line
-    self.command_line = self.class.build_command_line(command_line_params)
   end
 end

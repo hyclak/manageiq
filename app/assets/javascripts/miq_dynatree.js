@@ -433,19 +433,19 @@ function miqOnCheckCUFilters(tree_name, key, checked) {
 }
 
 function miqMenuChangeRow(action, elem) {
-  var grid = $('#folder_grid .list-group');
-  var selected = grid.find('.list-group-item.active');
+  var grid = $('#folder_grid .panel-group');
+  var selected = grid.find('.panel-heading.active').parent();
 
   switch (action) {
     case "activate":
-      grid.find('.list-group-item.active').removeClass('active');
+      grid.find('.panel-heading.active').removeClass('active');
       $(elem).addClass('active');
       break;
 
     case "edit":
       // quick and dirty edit - FIXME use a $modal when converted to angular
       var text = $(elem).text().trim();
-      text = prompt("New name?", text);
+      text = prompt(__("New name?"), text);
       if (text) // ! cancel
         $(elem).text(text);
       break;
@@ -465,11 +465,11 @@ function miqMenuChangeRow(action, elem) {
       break;
 
     case "add":
-      var count = grid.find('.list-group-item').length;
+      var count = grid.find('.panel-heading').length;
 
-      elem = $('<li>').addClass('list-group-item');
+      elem = $('<div>').addClass('panel-heading');
       elem.attr('id', "folder" + count);
-      elem.text("New Folder");
+      elem.text(__("New Folder"));
       elem.on('click', function() {
         return miqMenuChangeRow('activate', this);
       });
@@ -489,7 +489,7 @@ function miqMenuChangeRow(action, elem) {
       if (! selected.length)
         break;
 
-      var selected_id = selected.attr('id').split('|-|');
+      var selected_id = selected.children()[0].id.split('|-|');
       if (selected_id.length == 1) {
         selected.remove();
       } else {
@@ -499,7 +499,7 @@ function miqMenuChangeRow(action, elem) {
       break;
 
     case "serialize":
-      var items = grid.find('.list-group-item').toArray().map(function(elem) {
+      var items = grid.find('.panel-heading').toArray().map(function(elem) {
         return {
           id: $(elem).attr('id'),
           text: $(elem).text().trim(),
@@ -516,10 +516,10 @@ function miqMenuChangeRow(action, elem) {
 }
 
 function miqSetAETreeNodeSelectionClass(id, prevId, bValidNode) {
-  if (prevId) {
+  if (prevId && $('#' + prevId).length) {
     miqDynatreeNodeRemoveClass("automate_tree", prevId);
   }
-  if (bValidNode == "true") {
+  if (bValidNode == "true" && $('#' + id).length) {
     miqDynatreeNodeAddClass("automate_tree", id, "ae-valid-node");
   }
 }

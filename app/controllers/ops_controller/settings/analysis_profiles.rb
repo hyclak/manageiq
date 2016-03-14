@@ -158,7 +158,7 @@ module OpsController::Settings::AnalysisProfiles
 
   # Build the audit object when a record is created, including all of the new fields
   def ap_build_created_audit_set(scanitemset)
-    msg = "[#{scanitemset.name}] Record created ("
+    msg = _("[%{name}] Record created (") % {:name => scanitemset.name}
     event = "scanitemset_record_add"
     i = 0
     @edit[:new].each_key do |k|
@@ -176,7 +176,7 @@ module OpsController::Settings::AnalysisProfiles
 
   # Build the audit object when a record is saved, including all of the changed fields
   def ap_build_saved_audit(scanitemset)
-    msg = "[#{scanitemset.name}] Record updated ("
+    msg = _("[%{name}] Record updated (") % {:name => scanitemset.name}
     event = "scanitemset_record_update"
     i = 0
     @edit[:new].each_key do |k|
@@ -219,7 +219,7 @@ module OpsController::Settings::AnalysisProfiles
         if @scan
           add_flash(_("Edit of %{model} \"%{name}\" was cancelled by the user") % {:model => ui_lookup(:model => "ScanItemSet"), :name => @scan.name})
         else
-          add_flash(_("Add of new %s was cancelled by the user") % ui_lookup(:model => "ScanItemSet"))
+          add_flash(_("Add of new %{model} was cancelled by the user") % {:model => ui_lookup(:model => "ScanItemSet")})
         end
         get_node_info(x_node)
         #       @scan = @edit[:scan] = nil
@@ -259,7 +259,7 @@ module OpsController::Settings::AnalysisProfiles
               # scanitemset.add_member()
             rescue StandardError => bang
               title = params[:button] == "add" ? "add" : "update"
-              add_flash(_("Error during '%s': ") % title << bang.message, :error)
+              add_flash(_("Error during '%{title}': %{message}") % {:title => title, :message => bang.message}, :error)
             end
             if params[:button] == "save"
               AuditEvent.success(ap_build_saved_audit(scanitemset))
@@ -409,13 +409,15 @@ module OpsController::Settings::AnalysisProfiles
       ap_process_scanitemsets(scanitemsets, "destroy")  unless scanitemsets.empty?
     else # showing 1 scanitemset, delete it
       if params[:id].nil? || ScanItemSet.find_by_id(params[:id]).nil?
-        add_flash(_("%s no longer exists") % ui_lookup(:model => "ScanItemSet"), :error)
+        add_flash(_("%{model} no longer exists") % {:model => ui_lookup(:model => "ScanItemSet")}, :error)
       else
         scanitemsets.push(params[:id])
       end
       @single_delete = true
       ap_process_scanitemsets(scanitemsets, "destroy")  unless scanitemsets.empty?
-      add_flash(_("The selected %s was deleted") % ui_lookup(:models => "ScanItemSet")) if @flash_array.nil?
+      if @flash_array.nil?
+        add_flash(_("The selected %{model} was deleted") % {:model => ui_lookup(:models => "ScanItemSet")})
+      end
     end
     self.x_node = "xx-sis"
     get_node_info(x_node)
@@ -509,7 +511,9 @@ module OpsController::Settings::AnalysisProfiles
             # resetting flash_array to not show a message for each memmber that is saved for a scanitemset
             @flash_array = []
           rescue StandardError => bang
-            add_flash(_("%{model} \"%{name}\": Error during '%{task}': ") % {:model => ui_lookup(:model => "ScanItemSet"), :name => scanitem.name, :task => "update"} << bang.message,
+            add_flash(_("%{model} \"%{name}\": Error during '%{task}': %{message}") %
+                        {:model => ui_lookup(:model => "ScanItemSet"),
+                         :name  => scanitem.name, :task => "update", :message => bang.message},
                       :error)
           end
         end
@@ -575,7 +579,7 @@ module OpsController::Settings::AnalysisProfiles
 
   def ap_get_form_vars_file
     unless params[:entry]['fname'].present?
-      add_flash(_("%s is required") % "File Entry", :error)
+      add_flash(_("File Entry is required"), :error)
       return
     end
     item_type = params[:item]['type1']
@@ -609,7 +613,7 @@ module OpsController::Settings::AnalysisProfiles
         :key   => params[:entry]['kname'],
         :value => params[:entry]['value'],
       }
-      add_flash(_("%s is required") % "Registry Entry", :error)
+      add_flash(_("Registry Entry is required"), :error)
       return
     end
     session[:reg_data] = {}
@@ -667,7 +671,7 @@ module OpsController::Settings::AnalysisProfiles
       # session[:nteventlog_data][:rec_count] = params[:entry]["rec_count"].to_i
       session[:nteventlog_data][:num_days] = params[:entry]["num_days"].to_i
       session[:nteventlog_data][:source] = params[:entry]["source"]
-      add_flash(_("%s is required") % "Event log name", :error)
+      add_flash(_("Event log name is required"), :error)
       return
     else
       session[:nteventlog_data] = {}
@@ -720,19 +724,27 @@ module OpsController::Settings::AnalysisProfiles
       ap_get_form_vars_category if @sb[:ap_active_tab] == "category"
       if @edit[:new]["category"]
         @edit[:new]["category"][:name]        = "#{params[:name]}_category"             if params[:name]
-        @edit[:new]["category"][:description] = "#{params[:description]} category Scan" if params[:description]
+        if params[:description]
+          @edit[:new]["category"][:description] = _("%{description} category Scan") %
+                                                  {:description => params[:description]}
+        end
       end
 
       ap_get_form_vars_file if @sb[:ap_active_tab] == "file" && params[:item] && params[:item]["type1"]
       if @edit[:new]["file"]
         @edit[:new]["file"][:name]        = "#{params[:name]}_file"             if params[:name]
-        @edit[:new]["file"][:description] = "#{params[:description]} file Scan" if params[:description]
+        if params[:description]
+          @edit[:new]["file"][:description] = "%{description} file Scan" % {:description => params[:description]}
+        end
       end
 
       ap_get_form_vars_registry if @sb[:ap_active_tab] == "registry"
       if @edit[:new]["registry"]
         @edit[:new]["registry"][:name]        = "#{params[:name]}_registry"             if params[:name]
-        @edit[:new]["registry"][:description] = "#{params[:description]} registry Scan" if params[:description]
+        if params[:description]
+          @edit[:new]["registry"][:description] = _("%{description} registry Scan") %
+                                                  {:description => params[:description]}
+        end
       end
 
       ap_get_form_vars_event_log if @sb[:ap_active_tab] == "event_log"

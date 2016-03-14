@@ -1,5 +1,3 @@
-require "spec_helper"
-
 describe "JobProxyDispatcherVmStorage2Hosts" do
   require File.expand_path(File.join(File.dirname(__FILE__), 'job_proxy_dispatcher/job_proxy_dispatcher_helper'))
   include JobProxyDispatcherHelper
@@ -7,7 +5,7 @@ describe "JobProxyDispatcherVmStorage2Hosts" do
     before(:each) do
       @server1 = EvmSpecHelper.local_miq_server(:is_master => true)
       @server2 = FactoryGirl.create(:miq_server, :zone => @server1.zone)
-      MiqServer.any_instance.stub(:is_vix_disk? => true)
+      allow_any_instance_of(MiqServer).to receive_messages(:is_vix_disk? => true)
     end
 
     context "with hosts with a miq_proxy, vmware vms on storages" do
@@ -19,7 +17,7 @@ describe "JobProxyDispatcherVmStorage2Hosts" do
       context "with vm's repository host as the last host, " do
         before(:each) do
           @repo_host = @hosts.last
-          @vm.stub(:myhost => @repo_host)
+          allow(@vm).to receive_messages(:myhost => @repo_host)
         end
 
         context "with a host-less vm and it's storage having hosts, " do
@@ -29,7 +27,7 @@ describe "JobProxyDispatcherVmStorage2Hosts" do
             vm_storage.save
           end
           it "should return storage's hosts" do
-            @vm.storage2hosts.should == @vm.storage.hosts
+            expect(@vm.storage2hosts).to eq(@vm.storage.hosts)
           end
         end
 
@@ -41,7 +39,7 @@ describe "JobProxyDispatcherVmStorage2Hosts" do
           end
 
           it "should return repo host" do
-            @vm.storage2hosts.should == [@repo_host]
+            expect(@vm.storage2hosts).to eq([@repo_host])
           end
         end
 
@@ -55,7 +53,7 @@ describe "JobProxyDispatcherVmStorage2Hosts" do
           end
 
           it "should return storage's hosts" do
-            @vm.storage2hosts.should == @vm.storage.hosts
+            expect(@vm.storage2hosts).to eq(@vm.storage.hosts)
           end
         end
 
@@ -69,7 +67,7 @@ describe "JobProxyDispatcherVmStorage2Hosts" do
           end
 
           it "should return repo host" do
-            @vm.storage2hosts.should == [@repo_host]
+            expect(@vm.storage2hosts).to eq([@repo_host])
           end
         end
 
@@ -86,7 +84,7 @@ describe "JobProxyDispatcherVmStorage2Hosts" do
           end
 
           it "should exlude non-vmware hosts" do
-            @vm.storage2hosts.should be_empty
+            expect(@vm.storage2hosts).to be_empty
           end
         end
       end

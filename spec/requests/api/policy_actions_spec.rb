@@ -7,19 +7,7 @@
 # Policy Action subcollection:
 #   /api/policies/:id/policy_actions
 #
-require 'spec_helper'
-
 describe ApiController do
-  include Rack::Test::Methods
-
-  before(:each) do
-    init_api_spec_env
-  end
-
-  def app
-    Vmdb::Application
-  end
-
   let(:miq_action_guid_list) { MiqAction.pluck(:guid) }
 
   def create_actions(count)

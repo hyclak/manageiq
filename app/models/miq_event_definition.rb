@@ -1,6 +1,4 @@
-class MiqEventDefinition < ActiveRecord::Base
-  default_scope { where conditions_for_my_region_default_scope }
-
+class MiqEventDefinition < ApplicationRecord
   include UuidMixin
 
   validates_presence_of     :name
@@ -19,8 +17,6 @@ class MiqEventDefinition < ActiveRecord::Base
   serialize :definition
 
   attr_accessor :reserved
-
-  FIXTURE_DIR = File.join(Rails.root, "db/fixtures")
 
   def self.all_events
     where(:event_type => "Default")

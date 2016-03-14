@@ -281,14 +281,14 @@ class JobProxyDispatcher
     end
 
     if @vm.storage.nil?
-      unless ['Amazon', 'OpenStack'].include?(@vm.vendor)
+      unless %w(amazon openstack).include?(@vm.vendor)
         msg = "Vm [#{@vm.path}] is not located on a storage, aborting job [#{job.guid}]."
         queue_signal(job, {:args => [:abort, msg, "error"]})
         return []
       end
     else
-      unless ["VSAN", "VMFS", "NAS", "NFS", "ISCSI", "DIR", "FCP"].include?(@vm.storage.store_type)
-        msg = "Vm storage type [#{@vm.storage.store_type}] not supported [#{job.target_id}], aborting job [#{job.guid}]."
+      unless %w(VSAN VMFS NAS NFS ISCSI DIR FCP CSVFS NTFS).include?(@vm.storage.store_type)
+        msg = "Vm storage type [#{@vm.storage.store_type}] unsupported [#{job.target_id}], aborting job [#{job.guid}]."
         queue_signal(job, {:args => [:abort, msg, "error"]})
         return []
       end

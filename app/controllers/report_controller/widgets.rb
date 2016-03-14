@@ -44,7 +44,7 @@ module ReportController::Widgets
     when "cancel"
       @widget = MiqWidget.find_by_id(session[:edit][:widget_id]) if session[:edit] && session[:edit][:widget_id]
       if !@widget || @widget.id.blank?
-        add_flash(_("Add of new %s was cancelled by the user") % ui_lookup(:model => "MiqWidget"))
+        add_flash(_("Add of new %{model} was cancelled by the user") % {:model => ui_lookup(:model => "MiqWidget")})
       else
         add_flash(_("Edit of %{model} \"%{name}\" was cancelled by the user") % {:model => ui_lookup(:model => "MiqWidget"), :name => @widget.name})
       end
@@ -97,7 +97,7 @@ module ReportController::Widgets
     assert_privileges("widget_delete")
     widgets = find_checked_items
     if !params[:id].nil? && MiqWidget.find_by_id(params[:id]).nil?
-      add_flash(_("%s no longer exists") % ui_lookup(:models => "MiqWidget"),
+      add_flash(_("%{model} no longer exists") % {:model => ui_lookup(:models => "MiqWidget")},
                 :error)
     else
       widgets.push(params[:id]) if params[:id]
@@ -106,10 +106,10 @@ module ReportController::Widgets
     process_widgets(widgets, "destroy") unless widgets.empty?
     unless flash_errors?
       if widgets.length > 1
-        add_flash(_("The selected %s were deleted") % ui_lookup(:models => "MiqWidget"),
+        add_flash(_("The selected %{models} were deleted") % {:models => ui_lookup(:models => "MiqWidget")},
                   :info, true)
       else
-        add_flash(_("The selected %s was deleted") % ui_lookup(:model => "MiqWidget"),
+        add_flash(_("The selected %{models} was deleted") % {:models => ui_lookup(:model => "MiqWidget")},
                   :info, true)
       end
     end
@@ -124,7 +124,7 @@ module ReportController::Widgets
     begin
       w.queue_generate_content
     rescue StandardError => bang
-      add_flash(_("Widget content generation error: ") << bang.message, :error)
+      add_flash(_("Widget content generation error: %{message}") % {:message => bang.message}, :error)
     else
       add_flash(_("Content generation for this Widget has been initiated"))
     end
@@ -237,15 +237,14 @@ module ReportController::Widgets
         @view, @pages = get_view(MiqWidget, :where_clause => ["content_type=?", nodeid])
       else
         # get all widgets for passed in report id
-        # @view, @pages = get_view(MiqWidget, :where_clause=>["content_type=? AND resource_id=?",nodeid, rep_id])
-        @widget_nodes = MiqWidget.all(:conditions => ["content_type = ? AND resource_id = ?", "report", rep_id])
+        @widget_nodes = MiqWidget.where(:content_type => "report", :resource_id => rep_id)
       end
     end
 
     if x_active_tree == :widgets_tree
       # dont need to set these for report show screen
       @right_cell_div     = "widget_list"
-      @right_cell_text ||= _("All %s") % "MiqWidget"
+      @right_cell_text ||= _("All Widgets")
     end
 
     @current_page = @pages[:current] unless @pages.nil? # save the current page number
@@ -259,7 +258,7 @@ module ReportController::Widgets
     @sb[:nodes] = x_node.split('-')
     if @sb[:nodes].length == 1
       get_all_widgets
-      @right_cell_text = _("All %s") % ui_lookup(:models => "MiqWidget")
+      @right_cell_text = _("All %{models}") % {:models => ui_lookup(:models => "MiqWidget")}
       @right_cell_div  = "widget_list"
     elsif @sb[:nodes].length == 2
       # If a folder node is selected
@@ -295,7 +294,7 @@ module ReportController::Widgets
         end
       elsif @widget.visibility && @widget.visibility[:groups]
         @sb[:groups] = []
-        MiqGroup.all.sort_by(&:description).each do |r|
+        MiqGroup.non_tenant_groups.sort_by(&:description).each do |r|
           @sb[:groups].push(r.description) if @widget.visibility[:groups].include?(r.description)
         end
       end
@@ -351,7 +350,7 @@ module ReportController::Widgets
       .collect { |r| {r.name => to_cid(r.id)} }
 
     @edit[:sorted_groups] =
-      MiqGroup.all.sort_by { |g| g.description.downcase }
+      MiqGroup.non_tenant_groups.sort_by { |g| g.description.downcase }
       .collect { |g| {g.description => to_cid(g.id)} }
 
     # Schedule Box - create new sched for copy/new, use existing for edit
@@ -722,24 +721,24 @@ module ReportController::Widgets
   # Validate widget entries before updating record
   def widget_validate_entries
     if ["r", "c"].include?(@sb[:wtype]) && (!@edit[:new][:repfilter] || @edit[:new][:repfilter] == "")
-      add_flash(_("%s must be selected") % "A Report", :error)
+      add_flash(_("A Report must be selected"), :error)
     end
     if %w(role group).include? @edit[:new][:visibility_typ]
       typ = @edit[:new][:visibility_typ]
       if @edit[:new][typ.pluralize.to_sym].blank?
-        add_flash(_("A %s must be selected") % typ.titleize, :error)
+        add_flash(_("A %{type} must be selected") % {:type => typ.titleize}, :error)
       end
     end
     if @sb[:wtype] == "r" && @edit[:new][:pivotby1] == "<<< Nothing >>>"
-      add_flash(_("%s must be selected") % "At least one Column", :error)
+      add_flash(_("At least one Column must be selected"), :error)
     end
     if @sb[:wtype] == "m"
       if @edit[:new][:shortcuts].empty?
-        add_flash(_("%s must be selected") % "At least one Shortcut", :error)
+        add_flash(_("At least one Shortcut must be selected"), :error)
       else
         @edit[:new][:shortcuts].each do |s|
           if s.last.blank?
-            add_flash(_("%s is required") % "Shortcut description", :error)
+            add_flash(_("Shortcut description is required"), :error)
           end
         end
       end

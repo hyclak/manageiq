@@ -1,4 +1,4 @@
-ManageIQ.angularApplication.controller('hostFormController', ['$http', '$scope', '$attrs', 'hostFormId', 'miqService', function($http, $scope, $attrs, hostFormId, miqService) {
+ManageIQ.angular.app.controller('hostFormController', ['$http', '$scope', '$attrs', 'hostFormId', 'miqService', function($http, $scope, $attrs, hostFormId, miqService) {
   var init = function() {
     $scope.hostModel = {
       name: '',
@@ -30,7 +30,7 @@ ManageIQ.angularApplication.controller('hostFormController', ['$http', '$scope',
     $scope.formFieldsUrl = $attrs.formFieldsUrl;
     $scope.createUrl = $attrs.createUrl;
     $scope.updateUrl = $attrs.updateUrl;
-    ManageIQ.angularApplication.$scope = $scope;
+    ManageIQ.angular.scope = $scope;
 
     if (hostFormId == 'new') {
       $scope.newRecord = true;
@@ -142,7 +142,7 @@ ManageIQ.angularApplication.controller('hostFormController', ['$http', '$scope',
     $scope.hostModel = angular.copy( $scope.modelCopy );
     $scope.angularForm.$setUntouched(true);
     $scope.angularForm.$setPristine(true);
-    miqService.miqFlash("warn", "All changes have been reset");
+    miqService.miqFlash("warn", __("All changes have been reset"));
   };
 
   var setFormToValid = function() {

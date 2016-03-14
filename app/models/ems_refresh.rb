@@ -3,6 +3,7 @@ module EmsRefresh
   extend EmsRefresh::SaveInventoryCloud
   extend EmsRefresh::SaveInventoryInfra
   extend EmsRefresh::SaveInventoryContainer
+  extend EmsRefresh::SaveInventoryMiddleware
   extend EmsRefresh::SaveInventoryHelper
   extend EmsRefresh::SaveInventoryProvisioning
   extend EmsRefresh::SaveInventoryConfiguration
@@ -57,7 +58,7 @@ module EmsRefresh
   end
 
   def self.refresh(target, id = nil)
-    EmsRefresh.init_console if MiqEnvironment::Process.is_rails_console?
+    EmsRefresh.init_console if defined?(Rails::Console)
 
     # Handle targets passed as a single class/id pair, an array of class/id pairs, or an array of references
     targets = get_ar_objects(target, id)
@@ -221,8 +222,8 @@ module EmsRefresh
     locs, names = hashes.partition { |h| h[:location] }
     locs.collect!  { |h| h[:location] }
     names.collect! { |h| h[:name] }
-    locs  = Storage.where("location IN (?)", locs) unless locs.empty?
-    names = Storage.where("location IS NULL AND name IN (?)", names) unless names.empty?
+    locs  = Storage.where(:location => locs) unless locs.empty?
+    names = Storage.where(:location => nil, :name => names) unless names.empty?
 
     hashes.each do |h|
       found = if h[:location]

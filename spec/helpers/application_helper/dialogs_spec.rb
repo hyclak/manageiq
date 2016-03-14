@@ -1,8 +1,6 @@
-require "spec_helper"
-
 describe ApplicationHelper::Dialogs do
   let(:dialog_field) do
-    active_record_instance_double(
+    double(
       "DialogField",
       :id                   => "100",
       :read_only            => read_only,
@@ -285,8 +283,7 @@ describe ApplicationHelper::Dialogs do
           expect(helper.drop_down_options(dialog_field, "url")).to eq(
             :class                 => "dynamic-drop-down-100 selectpicker",
             "data-miq_sparkle_on"  => true,
-            "data-miq_sparkle_off" => true,
-            "data-miq_observe"     => '{"url":"url","auto_refresh":true,"field_id":"100","trigger":"true"}'
+            "data-miq_sparkle_off" => true
           )
         end
       end
@@ -298,8 +295,7 @@ describe ApplicationHelper::Dialogs do
           expect(helper.drop_down_options(dialog_field, "url")).to eq(
             :class                 => "dynamic-drop-down-100 selectpicker",
             "data-miq_sparkle_on"  => true,
-            "data-miq_sparkle_off" => true,
-            "data-miq_observe"     => '{"url":"url"}'
+            "data-miq_sparkle_off" => true
           )
         end
       end
@@ -308,7 +304,7 @@ describe ApplicationHelper::Dialogs do
 
   describe "#radio_options" do
     let(:dialog_field) do
-      active_record_instance_double(
+      double(
         "DialogField",
         :default_value        => "some_value",
         :name                 => "field_name",

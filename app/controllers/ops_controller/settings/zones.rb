@@ -7,7 +7,7 @@ module OpsController::Settings::Zones
       @edit = nil
       @zone = Zone.find_by_id(session[:edit][:zone_id]) if session[:edit] && session[:edit][:zone_id]
       add_flash((@zone && @zone.id) ? _("Edit of %{model} \"%{name}\" was cancelled by the user") % {:model => ui_lookup(:table => "miq_zone"), :name => @zone.name} :
-          _("Add of new %s was cancelled by the user") % ui_lookup(:table => "miq_zone"))
+          _("Add of new %{table} was cancelled by the user") % {:table => ui_lookup(:table => "miq_zone")})
       get_node_info(x_node)
       replace_right_cell(@nodetype)
     when "save", "add"
@@ -16,10 +16,10 @@ module OpsController::Settings::Zones
       return unless load_edit("zone_edit__#{id}", "replace_cell__explorer")
       @zone = @edit[:zone_id] ? Zone.find_by_id(@edit[:zone_id]) : Zone.new
       if @edit[:new][:name] == ""
-        add_flash(_("%s is required") % "Zone name", :error)
+        add_flash(_("Zone name is required"), :error)
       end
       if @edit[:new][:description] == ""
-        add_flash(_("%s is required") % "Description", :error)
+        add_flash(_("Description is required"), :error)
       end
       if @flash_array
         render :update do |page|
@@ -61,7 +61,6 @@ module OpsController::Settings::Zones
     assert_privileges("zone_delete")
     zone = Zone.find(params[:id])
     zonename = zone.name
-    audit = {:event => "zone_record_delete", :message => "[#{zone.name}] Record deleted", :target_id => zone.id, :target_class => "Zone", :userid => session[:userid]}
     begin
       zone.destroy
     rescue StandardError => bang
@@ -122,11 +121,11 @@ module OpsController::Settings::Zones
     valid = true
     @edit[:errors] = []
     if !zone.authentication_password.blank? && zone.authentication_userid.blank?
-      @edit[:errors].push("Username must be entered if Password is entered")
+      @edit[:errors].push(_("Username must be entered if Password is entered"))
       valid = false
     end
     if @edit[:new][:password] != @edit[:new][:verify]
-      @edit[:errors].push("Password and Verify Password fields do not match")
+      @edit[:errors].push(_("Password and Verify Password fields do not match"))
       valid = false
     end
     valid

@@ -1,4 +1,4 @@
-class MiqSchedule < ActiveRecord::Base
+class MiqSchedule < ApplicationRecord
   validates_uniqueness_of :name, :scope => [:userid, :towhat]
   validates_presence_of   :name, :description, :towhat, :run_at
   validate                :validate_run_at, :validate_file_depot
@@ -20,14 +20,13 @@ class MiqSchedule < ActiveRecord::Base
   }
 
   scope :updated_since, lambda { |time|
-    {:conditions => ["updated_at > ?", time]}
+    where("updated_at > ?", time)
   }
 
   serialize :sched_action
   serialize :filter
   serialize :run_at
 
-  FIXTURE_DIR = File.join(Rails.root, "db/fixtures")
   SYSTEM_SCHEDULE_CLASSES = ["MiqReport", "MiqAlert", "MiqWidget"]
   VALID_INTERVAL_UNITS = ['minutely', 'hourly', 'daily', 'weekly', 'monthly', 'once']
   ALLOWED_CLASS_METHOD_ACTIONS = ["db_backup", "db_gc"]
@@ -112,7 +111,7 @@ class MiqSchedule < ActiveRecord::Base
     # Let RBAC evaluate the filter's MiqExpression, and return the first value (the target ids)
     my_filter = get_filter
     return [] if my_filter.nil?
-    Rbac.search(:class => towhat, :filter => my_filter).first
+    Rbac.filtered(towhat, :filter => my_filter)
   end
 
   def get_targets
@@ -125,8 +124,7 @@ class MiqSchedule < ActiveRecord::Base
       return []
     end
 
-    targets, attrs = Rbac.search(:class => towhat, :filter => my_filter, :results_format => :objects)
-    targets
+    Rbac.filtered(towhat, :filter => my_filter)
   end
 
   def get_filter

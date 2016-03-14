@@ -1,5 +1,3 @@
-require "spec_helper"
-
 describe ManageIQ::Providers::Redhat::InfraManager::Provision do
   context "::StateMachine" do
     before do
@@ -9,72 +7,108 @@ describe ManageIQ::Providers::Redhat::InfraManager::Provision do
       options  = {:src_vm_id => template.id}
 
       @task = FactoryGirl.create(:miq_provision_redhat, :source => template, :destination => vm, :state => 'pending', :status => 'Ok', :options => options)
-      @task.stub(:miq_request => double("MiqRequest").as_null_object)
-      @task.stub(:dest_cluster => FactoryGirl.create(:ems_cluster, :ext_management_system => ems))
+      allow(@task).to receive_messages(:miq_request => double("MiqRequest").as_null_object)
+      allow(@task).to receive_messages(:dest_cluster => FactoryGirl.create(:ems_cluster, :ext_management_system => ems))
     end
 
+    include_examples "common rhev state machine methods"
+
     it "#create_destination" do
-      @task.should_receive(:determine_placement)
+      expect(@task).to receive(:determine_placement)
 
       @task.create_destination
     end
 
     it "#determine_placement" do
-      @task.stub(:placement)
+      allow(@task).to receive(:placement)
 
-      @task.should_receive(:prepare_provision)
+      expect(@task).to receive(:prepare_provision)
 
       @task.determine_placement
     end
 
     it "#start_clone_task" do
-      @task.stub(:update_and_notify_parent)
-      @task.stub(:log_clone_options)
-      @task.stub(:start_clone)
+      allow(@task).to receive(:update_and_notify_parent)
+      allow(@task).to receive(:log_clone_options)
+      allow(@task).to receive(:start_clone)
 
-      @task.should_receive(:poll_clone_complete)
+      expect(@task).to receive(:poll_clone_complete)
 
       @task.start_clone_task
     end
 
     context "#poll_clone_complete" do
       it "cloning" do
-        @task.should_receive(:clone_complete?).and_return(false)
-        @task.should_receive(:requeue_phase)
+        expect(@task).to receive(:clone_complete?).and_return(false)
+        expect(@task).to receive(:requeue_phase)
 
         @task.poll_clone_complete
       end
 
       it "clone complete" do
-        @task.should_receive(:clone_complete?).and_return(true)
-        EmsRefresh.should_receive(:queue_refresh)
-        @task.should_receive(:poll_destination_in_vmdb)
+        expect(@task).to receive(:clone_complete?).and_return(true)
+        expect(EmsRefresh).to receive(:queue_refresh)
+        expect(@task).to receive(:poll_destination_in_vmdb)
 
         @task.poll_clone_complete
       end
     end
 
-    it "#customize_destination" do
-      @task.stub(:get_provider_destination).and_return(nil)
-      @task.stub(:update_and_notify_parent)
+    context "#autostart_destination" do
+      it "with use_cloud_init" do
+        expect(@task).to receive(:phase_context).and_return(:boot_with_cloud_init => true)
+        expect(@task).to receive(:get_option).with(:vm_auto_start).and_return(true)
+        allow(@task).to receive(:for_destination)
+        expect(@task).to receive(:update_and_notify_parent)
 
-      @task.should_receive(:configure_container)
-      @task.should_receive(:configure_cloud_init)
-      @task.should_receive(:poll_destination_powered_off_in_provider)
+        rhevm_vm = double("RHEVM VM")
+        expect(@task).to receive(:get_provider_destination).and_return(rhevm_vm)
 
-      @task.customize_destination
+        xml = double("XML")
+        expect(xml).to receive(:use_cloud_init).with(true)
+        expect(rhevm_vm).to receive(:start).and_yield(xml)
+
+        expect(@task).to receive(:post_create_destination)
+
+        @task.autostart_destination
+      end
+
+      it "without use_cloud_init" do
+        expect(@task).to receive(:phase_context).and_return({})
+        expect(@task).to receive(:get_option).with(:vm_auto_start).and_return(true)
+        allow(@task).to receive(:for_destination)
+        expect(@task).to receive(:update_and_notify_parent)
+
+        rhevm_vm = double("RHEVM VM")
+        expect(@task).to receive(:get_provider_destination).and_return(rhevm_vm)
+
+        xml = double("XML")
+        expect(xml).not_to receive(:use_cloud_init)
+        expect(rhevm_vm).to receive(:start).and_yield(xml)
+
+        expect(@task).to receive(:post_create_destination)
+
+        @task.autostart_destination
+      end
+    end
+
+    it "#configure_destination" do
+      expect(@task).to receive(:configure_cloud_init)
+      expect(@task).to receive(:poll_destination_powered_off_in_provider)
+      @task.configure_destination
     end
 
     it "#poll_destination_powered_off_in_provider" do
-      ManageIQ::Providers::Redhat::InfraManager::Vm.any_instance.should_receive(:with_provider_object).and_return(:state => "up")
-      @task.should_receive(:requeue_phase)
+      expect_any_instance_of(ManageIQ::Providers::Redhat::InfraManager::Vm)
+        .to receive(:with_provider_object).and_return(:state => "up")
+      expect(@task).to receive(:requeue_phase)
 
       @task.poll_destination_powered_off_in_provider
     end
 
     context "#poll_destination_powered_on_in_provider" do
       it "requeues if the VM didn't start" do
-        ManageIQ::Providers::Redhat::InfraManager::Vm.any_instance.stub(:with_provider_object => {:state => "down"})
+        allow_any_instance_of(ManageIQ::Providers::Redhat::InfraManager::Vm).to receive_messages(:with_provider_object => {:state => "down"})
         expect(@task).to receive(:requeue_phase)
 
         @task.poll_destination_powered_on_in_provider
@@ -83,7 +117,7 @@ describe ManageIQ::Providers::Redhat::InfraManager::Provision do
       end
 
       it "moves on if the vm started" do
-        ManageIQ::Providers::Redhat::InfraManager::Vm.any_instance.stub(:with_provider_object => {:state => "up"})
+        allow_any_instance_of(ManageIQ::Providers::Redhat::InfraManager::Vm).to receive_messages(:with_provider_object => {:state => "up"})
         expect(@task).to receive(:poll_destination_powered_off_in_provider)
 
         @task.poll_destination_powered_on_in_provider

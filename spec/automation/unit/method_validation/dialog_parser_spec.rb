@@ -1,4 +1,3 @@
-require "spec_helper"
 include ServiceTemplateHelper
 
 describe "DialogParser Automate Method" do
@@ -91,7 +90,13 @@ describe "DialogParser Automate Method" do
     it "with no dialogs set" do
       @root_stp.options = @root_stp.options.merge(:dialog => {})
       @root_stp.save
-      expect { run_automate_method }.to raise_exception
+      expect { run_automate_method }.not_to raise_exception
+    end
+
+    it "with blank dialog set" do
+      @root_stp.options = @root_stp.options.merge(:dialog => {:dialog_text_box => ""})
+      @root_stp.save
+      expect { run_automate_method }.not_to raise_exception
     end
   end
 end

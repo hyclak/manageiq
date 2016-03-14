@@ -6,11 +6,7 @@
 # - Delete service template             /api/service_templates/:id    DELETE
 # - Delete multiple service templates   /api/service_templates        action "delete"
 #
-require 'spec_helper'
-
 describe ApiController do
-  include Rack::Test::Methods
-
   let(:dialog1)    { FactoryGirl.create(:dialog, :label => "ServiceDialog1") }
   let(:dialog2)    { FactoryGirl.create(:dialog, :label => "ServiceDialog2") }
 
@@ -19,14 +15,6 @@ describe ApiController do
 
   let(:picture)    { FactoryGirl.create(:picture, :extension => "jpg") }
   let(:template)   { FactoryGirl.create(:service_template, :name => "ServiceTemplate") }
-
-  before(:each) do
-    init_api_spec_env
-  end
-
-  def app
-    Vmdb::Application
-  end
 
   describe "Service Templates query" do
     before do
@@ -56,14 +44,14 @@ describe ApiController do
       run_get service_templates_url(template.id), :attributes => "picture"
 
       expect_result_to_have_keys(%w(id href picture))
-      expect_result_to_match_hash(@result, "id" => template.id, "href" => service_templates_url(template.id))
+      expect_result_to_match_hash(response_hash, "id" => template.id, "href" => service_templates_url(template.id))
     end
 
     it "allows queries of the related picture and image_href" do
       run_get service_templates_url(template.id), :attributes => "picture,picture.image_href"
 
       expect_result_to_have_keys(%w(id href picture))
-      expect_result_to_match_hash(@result["picture"],
+      expect_result_to_match_hash(response_hash["picture"],
                                   "id"          => picture.id,
                                   "resource_id" => template.id,
                                   "image_href"  => /^http:.*#{picture.image_href}$/)

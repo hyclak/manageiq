@@ -17,11 +17,12 @@ class AlertController < ApplicationController
     @rss_roles = ["<All>"]
     RssFeed.roles.sort.each { |r| @rss_roles.push(r.titleize) }
     @breadcrumbs = []
-    @rss_role = params[:role].nil? ? "<All>" : params[:role]
-    if @rss_role == "<All>"
-      drop_breadcrumb(:name => "All RSS Feeds", :url => "/alert/show_list")
+    if params[:role].nil?
+      @rss_role = "<All>"
+      drop_breadcrumb(:name => _("All RSS Feeds"), :url => "/alert/show_list")
     else
-      drop_breadcrumb(:name => @rss_role + " RSS Feeds", :url => "/alert/show_list")
+      @rss_role = params[:role]
+      drop_breadcrumb(:name => _("%{name} RSS Feeds") % {:name => @rss_role}, :url => "/alert/show_list")
     end
   end
 
@@ -37,13 +38,13 @@ class AlertController < ApplicationController
     feed = params[:feed] if params[:feed]
     feed_record = RssFeed.find_by_name(feed)
     if feed_record.nil?
-      raise "Requested feed is invalid"
+      raise _("Requested feed is invalid")
     end
-    proto = request.env["HTTP_REFERER"] ? request.env["HTTP_REFERER"].split("://")[0] : nil   # Get protocol from the request
-    proto = nil unless [nil, "http", "https"].include?(proto)                                   # Make sure it's http or https
-    proto ||= session[:req_protocol]                                                          # If nil, use previously discovered value
-    session[:req_protocol] ||= proto                                                          # Save protocol in session
-    feed_data = feed_record.generate(request.env["HTTP_HOST"], local, proto)
+    proto = request.referer && request.referer.split("://")[0]   # Get protocol from the request
+    proto = nil unless [nil, "http", "https"].include?(proto)    # Make sure it's http or https
+    proto ||= session[:req_protocol]                             # If nil, use previously discovered value
+    session[:req_protocol] ||= proto                             # Save protocol in session
+    feed_data = feed_record.generate(request.host_with_port, local, proto)
 
     return feed_data if local
     render feed_data unless local
@@ -61,7 +62,7 @@ class AlertController < ApplicationController
   end
 
   def get_session_data
-    @title      = "RSS"
+    @title      = _("RSS")
     @layout     = "rss"
     @lastaction = session[:alert_lastaction]
   end

@@ -1,5 +1,3 @@
-require "spec_helper"
-
 describe EmsEventHelper do
   context "fb12322 - MiqAeEvent.build_evm_event blows up expecting inputs[:policy] to be an instance of MiqPolicy, but it is a hash of { :vmdb_class => 'MiqPolicy', :vmdb_id => 42}" do
     before(:each) do
@@ -131,10 +129,10 @@ describe EmsEventHelper do
       inputs = {:ae_message => 'create', :ae_hash => {"kevin" => "1", "q" => "1"}, :vm => @vm}
       aevent = MiqAeEvent.build_evm_event("vm_start", inputs)
 
-      aevent[:vm_id].should == @vm.id
-      aevent["VmOrTemplate::vm"].should == @vm.id
-      aevent[:ae_hash]["kevin"].should == "1"
-      aevent[:ae_hash]["q"].should == "1"
+      expect(aevent[:vm_id]).to eq(@vm.id)
+      expect(aevent["VmOrTemplate::vm"]).to eq(@vm.id)
+      expect(aevent[:ae_hash]["kevin"]).to eq("1")
+      expect(aevent[:ae_hash]["q"]).to eq("1")
     end
   end
 end

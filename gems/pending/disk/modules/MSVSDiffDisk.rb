@@ -14,8 +14,14 @@ module MSVSDiffDisk
     else
       raise "Unrecognized mountMode: #{dInfo.mountMode}"
     end
-    @msDisk_file = MiqLargeFile.open(@dInfo.fileName, fileMode) unless @dInfo.baseOnly
-    MSCommon.d_init_common(@dInfo, @msDisk_file) unless @dInfo.baseOnly
+    if dInfo.hyperv_connection
+      @hyperv_connection = dInfo.hyperv_connection
+      @ms_disk_file      = MSCommon.connect_to_hyperv(dInfo)
+    else
+      @hyperv_connection = nil
+      @ms_disk_file      = MiqLargeFile.open(dInfo.fileName, fileMode) unless dInfo.baseOnly
+    end
+    MSCommon.d_init_common(dInfo, @ms_disk_file) unless dInfo.baseOnly
 
     # Get parent locators.
     @locators = []
@@ -74,13 +80,13 @@ module MSVSDiffDisk
 
   def d_close
     @parent.close if @parent
-    @msDisk_file.close
+    @ms_disk_file.close
   end
 
   def d_size
     total = 0
     total = @parent.d_size if @parent
-    total += @msDisk_file.size
+    total += @ms_disk_file.size
     total
   end
 
@@ -91,9 +97,10 @@ module MSVSDiffDisk
 
   def getParent(locator)
     if locator.key?('fileName')
-      @parentOstruct = OpenStruct.new
-      @parentOstruct.fileName = locator['fileName']
-      @parent = MiqDisk.getDisk(@parentOstruct)
+      @parent_ostruct                   = OpenStruct.new
+      @parent_ostruct.fileName          = locator['fileName']
+      @parent_ostruct.hyperv_connection = @hyperv_connection unless @hyperv_connection.nil?
+      @parent                           = MiqDisk.getDisk(@parent_ostruct)
     end
   end
 
@@ -114,7 +121,7 @@ module MSVSDiffDisk
   end
 
   def getPathData(locator)
-    @msDisk_file.seek(MSCommon.getHiLo(locator, "data_offset"), IO::SEEK_SET)
-    @msDisk_file.read(locator['data_length'])
+    @ms_disk_file.seek(MSCommon.getHiLo(locator, "data_offset"), IO::SEEK_SET)
+    @ms_disk_file.read(locator['data_length'])
   end
 end

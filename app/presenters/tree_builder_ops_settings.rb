@@ -19,11 +19,13 @@ class TreeBuilderOpsSettings < TreeBuilderOps
   # Get root nodes count/array for explorer tree
   def x_get_tree_roots(_count_only, _options)
     objects = [
-      {:id => "sis", :text => "Analysis Profiles", :image => "scan_item_set", :tip => "Analysis Profiles"},
-      {:id => "z", :text => "Zones", :image => "zone", :tip => "Zones"}
+      {:id => "sis", :text => _("Analysis Profiles"), :image => "scan_item_set", :tip => _("Analysis Profiles")},
+      {:id => "z", :text => _("Zones"), :image => "zone", :tip => _("Zones")}
     ]
-    objects.push(:id => "l", :text => "LDAP", :image => "ldap", :tip => "LDAP") if get_vmdb_config[:product][:new_ldap]
-    objects.push({:id => "msc", :text => "Schedules", :image => "miq_schedule", :tip => "Schedules"})
+    if get_vmdb_config[:product][:new_ldap]
+      objects.push(:id => "l", :text => _("LDAP"), :image => "ldap", :tip => _("LDAP"))
+    end
+    objects.push(:id => "msc", :text => _("Schedules"), :image => "miq_schedule", :tip => _("Schedules"))
     objects
   end
 
@@ -37,7 +39,7 @@ class TreeBuilderOpsSettings < TreeBuilderOps
       MiqSchedule.where("prod_default != 'system' or prod_default is null").to_a.sort do |a, b|
         a.name.downcase <=> b.name.downcase
       end.each do |z|
-        objects.push(z) if z.adhoc.nil? && (z.towhat != "DatabaseBackup" || DatabaseBackup.backup_supported?)
+        objects.push(z) if z.adhoc.nil?
       end
       count_only_or_objects(count_only, objects, nil)
     when "sis"

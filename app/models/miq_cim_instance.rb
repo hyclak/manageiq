@@ -4,7 +4,7 @@ require 'miq_storage_defs'
 require 'wbem'
 require 'net_app_manageability/types'
 
-class MiqCimInstance < ActiveRecord::Base
+class MiqCimInstance < ApplicationRecord
   has_many  :miq_cim_associations,
             :dependent    => :destroy
 
@@ -81,11 +81,9 @@ class MiqCimInstance < ActiveRecord::Base
     # should be returned, because the true status of the instance can only be determined when the full
     # scan is complete.
     #
-    aa = MiqSmisAgent.find(:all, :conditions => [
-      "zone_id = ? and (last_update_status = ? or last_update_status = ?)",
-      zone_id, STORAGE_UPDATE_IN_PROGRESS, STORAGE_UPDATE_PENDING
-    ])
-    return "In Progress"    unless aa.empty?
+    aa = MiqSmisAgent.where(:zone_id            => zone_id,
+                            :last_update_status => [STORAGE_UPDATE_IN_PROGRESS, STORAGE_UPDATE_PENDING])
+    return "In Progress"    unless aa.exists?
     return "Agent Inaccessible" if last_update_status == STORAGE_UPDATE_AGENT_INACCESSIBLE
 
     if last_update_status == STORAGE_UPDATE_NO_AGENT
@@ -119,35 +117,19 @@ class MiqCimInstance < ActiveRecord::Base
   def last_capture(interval_name = "hourly")
     return nil unless has_metrics?
     if interval_name == "realtime"
-      perf = metrics.miq_derived_metrics.first(
-        :select => "statistic_time",
-        :order  => "statistic_time DESC"
-      )
+      metrics.miq_derived_metrics.maximum("statistic_time")
     else
-      perf = metrics.miq_metrics_rollups.first(
-        :select     => "statistic_time",
-        :conditions => {:rollup_type => interval_name},
-        :order      => "statistic_time DESC"
-      )
+      metrics.miq_metrics_rollups.where(:rollup_type => interval_name).maximum("statistic_time")
     end
-    perf.nil? ? nil : perf.statistic_time
   end
 
   def first_capture(interval_name = "hourly")
     return nil unless has_metrics?
     if interval_name == "realtime"
-      perf = metrics.miq_derived_metrics.first(
-        :select => "statistic_time",
-        :order  => "statistic_time ASC"
-      )
+      metrics.miq_derived_metrics.minimum("statistic_time")
     else
-      perf = metrics.miq_metrics_rollups.first(
-        :select     => "statistic_time",
-        :conditions => {:rollup_type => interval_name},
-        :order      => "statistic_time ASC"
-      )
+      metrics.miq_metrics_rollups.where(:rollup_type => interval_name).minimum("statistic_time")
     end
-    perf.nil? ? nil : perf.statistic_time
   end
 
   def first_and_last_capture(interval_name = "hourly")
@@ -224,7 +206,7 @@ class MiqCimInstance < ActiveRecord::Base
   #
   def getAssociators(association)
     results = []
-    query = miq_cim_associations.scoped.includes(:result_instance).select(:result_instance_id, :id)
+    query = miq_cim_associations.includes(:result_instance).select(:result_instance_id, :id)
     query = query.where_association(association)
     query.find_each { |a| results << a.result_instance }
     results.uniq
@@ -232,7 +214,7 @@ class MiqCimInstance < ActiveRecord::Base
 
   def getAssociatedVmdbObjs(association)
     results = []
-    query = miq_cim_associations.scoped.includes(:result_instance => :vmdb_obj).select(:result_instance_id, :id)
+    query = miq_cim_associations.includes(:result_instance => :vmdb_obj).select(:result_instance_id, :id)
     query = query.where_association(association)
     query.find_each { |a| results << a.result_instance.vmdb_obj }
     results.uniq
@@ -242,14 +224,14 @@ class MiqCimInstance < ActiveRecord::Base
   # Get the associations from this node that match the given association.
   #
   def getAssociations(association)
-    miq_cim_associations.scoped.where_association(association)
+    miq_cim_associations.where_association(association)
   end
 
   #
   # Return the number of associations from this node that match the given association.
   #
   def getAssociationSize(association)
-    miq_cim_associations.scoped.where_association(association).size
+    miq_cim_associations.where_association(association).size
   end
 
   def mark_associations_stale

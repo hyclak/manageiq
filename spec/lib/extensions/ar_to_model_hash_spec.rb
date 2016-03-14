@@ -1,13 +1,14 @@
-require "spec_helper"
-
 describe ToModelHash do
   context "#to_model_hash" do
-    let(:test_disk_class)     { Class.new(ActiveRecord::Base) { self.table_name = "test_disks" } }
-    let(:test_hardware_class) { Class.new(ActiveRecord::Base) { self.table_name = "test_hardwares" } }
-    let(:test_vm_class)       { Class.new(ActiveRecord::Base) { self.table_name = "test_vms" } }
-    let(:test_os_class)       { Class.new(ActiveRecord::Base) { self.table_name = "test_operating_systems" } }
+    let(:test_disk_class)     { Class.new(ActiveRecord::Base) { include ToModelHash; self.table_name = "test_disks" } }
+    let(:test_hardware_class) { Class.new(ActiveRecord::Base) { include ToModelHash; self.table_name = "test_hardwares" } }
+    let(:test_vm_class)       { Class.new(ActiveRecord::Base) { include ToModelHash; self.table_name = "test_vms" } }
+    let(:test_os_class)       { Class.new(ActiveRecord::Base) { include ToModelHash; self.table_name = "test_operating_systems" } }
     let(:fixed_options)       { test_vm_class.send(:to_model_hash_options_fixup, @test_to_model_hash_options) }
     let(:mocked_preloader)    { double }
+
+    require 'active_support/testing/stream'
+    include ActiveSupport::Testing::Stream
 
     before do
       silence_stream($stdout) do
@@ -33,19 +34,19 @@ describe ToModelHash do
         end
       end
 
-      test_disk_class.belongs_to     :test_hardware,         :anonymous_class => test_hardware_class
-      test_hardware_class.has_many   :test_disks,            :anonymous_class => test_disk_class
-      test_hardware_class.belongs_to :test_vm,               :anonymous_class => test_vm_class
-      test_vm_class.has_one          :test_hardware,         :anonymous_class => test_hardware_class, :dependent => :destroy
-      test_vm_class.has_one          :test_operating_system, :anonymous_class => test_os_class,       :dependent => :destroy
+      test_disk_class.belongs_to     :test_hardware,         :anonymous_class => test_hardware_class, :inverse_of => :test_disks
+      test_hardware_class.has_many   :test_disks,            :anonymous_class => test_disk_class,     :inverse_of => :test_hardware
+      test_hardware_class.belongs_to :test_vm,               :anonymous_class => test_vm_class,       :inverse_of => :test_hardware
+      test_vm_class.has_one          :test_hardware,         :anonymous_class => test_hardware_class, :inverse_of => :test_vm,       :dependent => :destroy
+      test_vm_class.has_one          :test_operating_system, :anonymous_class => test_os_class,       :inverse_of => false,          :dependent => :destroy
 
       # we're testing the preload of associations, skip the recursive .to_model_hash
-      ActiveRecord::Base.any_instance.stub(:to_model_hash_recursive)
-      ActiveRecord::Associations::Preloader.stub(:new).and_return(mocked_preloader)
+      allow_any_instance_of(ActiveRecord::Base).to receive(:to_model_hash_recursive)
+      allow(ActiveRecord::Associations::Preloader).to receive(:new).and_return(mocked_preloader)
     end
 
     def assert_preloaded(associations)
-      mocked_preloader.should_receive(:preload) do |_recs, assocs|
+      expect(mocked_preloader).to receive(:preload) do |_recs, assocs|
         expect(assocs).to match_array(associations)
       end
 

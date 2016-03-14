@@ -89,7 +89,7 @@ module MiqReport::Generator
     if klass.nil?
       klass = db_class
       result = {}
-      cols.each { |c| result.merge!(c.to_sym => {}) if klass.virtual_column?(c) } if cols
+      cols.each { |c| result.merge!(c.to_sym => {}) if klass.virtual_attribute?(c) } if cols
     end
 
     if includes.kind_of?(Hash)
@@ -108,7 +108,7 @@ module MiqReport::Generator
             result.merge!(k => get_include_for_find(v["include"], assoc_klass)) if assoc_klass
           end
 
-          v["columns"].each { |c| result[k].merge!(c.to_sym => {}) if assoc_klass.virtual_column?(c) } if assoc_klass && assoc_klass.respond_to?(:virtual_column?) && v["columns"]
+          v["columns"].each { |c| result[k].merge!(c.to_sym => {}) if assoc_klass.virtual_attribute?(c) } if assoc_klass && assoc_klass.respond_to?(:virtual_attribute?) && v["columns"]
         end
       end
     elsif includes.kind_of?(Array)
@@ -235,11 +235,10 @@ module MiqReport::Generator
       end
 
       start_time, end_time = Metric::Helper.get_time_range_from_offset(db_options[:start_offset], db_options[:end_offset], :tz => tz)
-      time_range_cond = ["timestamp BETWEEN ? AND ?", start_time, end_time]
       results = VimPerformanceDaily
                 .find_entries(ext_options.merge(:reflections => associations, :class => klass))
                 .where(where_clause)
-                .where(time_range_cond)
+                .where(:timestamp => start_time..end_time)
                 .includes(includes)
                 .references(includes)
                 .limit(options[:limit])
@@ -259,13 +258,8 @@ module MiqReport::Generator
       where_clause, includes = MiqExpression.merge_where_clauses_and_includes([where_clause, exp_sql], [includes, exp_includes])
 
       results = klass.find_all_by_interval_and_time_range(
-        db_options[:interval],
-        start_time,
-        end_time,
-        :all, :conditions => where_clause,
-              :include    => includes,
-              :limit      => options[:limit]
-      )
+        db_options[:interval], start_time, end_time
+      ).where(where_clause).includes(includes).limit(options[:limit])
 
       results = Rbac.filtered(results, :class        => db,
                                        :filter       => conditions,
@@ -276,6 +270,7 @@ module MiqReport::Generator
       # Basic report
       # Daily and Hourly for: C&U main reports go through here too
       ext_options[:only_cols] += conditions.columns_for_sql if conditions # Add cols references in expression to ensure they are present for evaluation
+      # NOTE: using search to get user property "managed", otherwise this is overkill
       results, attrs = Rbac.search(
         options.merge(
           :class            => db,
@@ -354,7 +349,7 @@ module MiqReport::Generator
   def build_table(data, db, options = {})
     klass = db.respond_to?(:constantize) ? db.constantize : db
     data = data.to_a
-    objs = data[0] && data[0].kind_of?(Integer) ? klass.find_all_by_id(data) : data.compact
+    objs = data[0] && data[0].kind_of?(Integer) ? klass.where(:id => data) : data.compact
 
     # Add resource columns to performance reports cols and col_order arrays for widget click thru support
     if klass.to_s.ends_with?("Performance")
@@ -636,8 +631,6 @@ module MiqReport::Generator
   def build_reportable_data(entry, options = {})
     rec = entry[:obj]
     data_records = [build_get_attributes_with_options(rec, options)]
-    rec.class.aar_columns |= data_records.first.keys
-
     data_records = build_add_includes(data_records, entry, options["include"]) if options["include"]
     data_records
   end
@@ -719,7 +712,6 @@ module MiqReport::Generator
             association_records.each do |assoc_record|
               data_records << existing_record.merge(assoc_record)
             end
-            entry[:obj].class.aar_columns |= data_records.last.keys
           end
         end
       end

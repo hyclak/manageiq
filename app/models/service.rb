@@ -1,4 +1,4 @@
-class Service < ActiveRecord::Base
+class Service < ApplicationRecord
   DEFAULT_PROCESS_DELAY_BETWEEN_GROUPS = 120
 
   belongs_to :tenant
@@ -6,7 +6,7 @@ class Service < ActiveRecord::Base
   belongs_to :service                        # Parent Service
   has_many :services, :dependent => :destroy # Child services
 
-  has_many :dialogs, -> { uniq }, :through => :service_template
+  has_many :dialogs, -> { distinct }, :through => :service_template
 
   has_one :miq_request_task, :dependent => :nullify, :as => :destination
   has_one :miq_request, :through => :miq_request_task
@@ -23,6 +23,8 @@ class Service < ActiveRecord::Base
   virtual_has_one    :custom_action_buttons
   virtual_has_one    :provision_dialog
   virtual_has_one    :user
+
+  before_validation :set_tenant_from_group
 
   delegate :custom_actions, :custom_action_buttons, :to => :service_template, :allow_nil => true
   delegate :provision_dialog, :to => :miq_request, :allow_nil => true
@@ -96,7 +98,10 @@ class Service < ActiveRecord::Base
   def all_vms
     direct_vms + indirect_vms
   end
-  alias_method :vms, :all_vms
+
+  def vms
+    all_vms
+  end
 
   def start
     raise_request_start_event
@@ -173,6 +178,15 @@ class Service < ActiveRecord::Base
     st.picture
   end
 
+  def validate_reconfigure
+    ra = reconfigure_resource_action
+    ra && ra.dialog_id && ra.fqname.present?
+  end
+
+  def reconfigure_resource_action
+    service_template.resource_actions.find_by_action('Reconfigure') if service_template
+  end
+
   def raise_final_process_event(action)
     case action.to_s
     when "start" then raise_started_event
@@ -202,5 +216,15 @@ class Service < ActiveRecord::Base
 
   def v_total_vms
     vms.size
+  end
+
+  def set_tenant_from_group
+    self.tenant_id = miq_group.tenant_id if miq_group
+  end
+
+  def tenant_identity
+    user = evm_owner
+    user = User.super_admin.tap { |u| u.current_group = miq_group } if user.nil? || !user.miq_group_ids.include?(miq_group_id)
+    user
   end
 end

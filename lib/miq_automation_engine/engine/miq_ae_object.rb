@@ -80,6 +80,7 @@ module MiqAeEngine
           if @aei.nil?
             $miq_ae_logger.info("Instance [#{@object_name}] not found in MiqAeDatastore - trying [#{MISSING_INSTANCE}]")
             # Try the .missing instance, if the requested one was not found
+            @attributes['_missing_instance'] = @instance
             @instance = MISSING_INSTANCE
             @aei      = fetch_instance(@instance)
           end
@@ -115,7 +116,7 @@ module MiqAeEngine
 
       Benchmark.realtime_block(:inherit_time) do
         # Who do we inherit from
-        @inherits = @aec.inherits.blank? ? BASE_OBJECT : @aec.inherits
+        @inherits = BASE_OBJECT
 
         parts     = @inherits.split(PATH_SEPARATOR)
         klass     = parts.pop

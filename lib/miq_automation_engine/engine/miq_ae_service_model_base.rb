@@ -29,13 +29,13 @@ module MiqAeMethodService
 
     # Expose the ActiveRecord find, all, count, and first
     def self.class_method_exposed?(m)
-      m.to_s.starts_with?('find_') || [:find, :all, :count, :first].include?(m)
+      m.to_s.starts_with?('find_') || [:where, :find, :all, :count, :first].include?(m)
     end
     private_class_method :class_method_exposed?
 
     def self.inherited(subclass)
       subclass.class_eval do
-        model.column_names_with_virtual.each do |attr|
+        model.attribute_names.each do |attr|
           next if EXPOSED_ATTR_BLACK_LIST.any? { |rexp| attr =~ rexp }
           next if subclass.base_class != self && method_defined?(attr)
           expose attr
@@ -109,12 +109,12 @@ module MiqAeMethodService
         if results.nil?
           ret = nil
         elsif results.kind_of?(Array)
-          ret = drb_return(results.collect { |r| wrap_results(r) })
+          ret = results.collect { |r| wrap_results(r) }
         elsif results.kind_of?(ActiveRecord::Relation)
-          ret = drb_return(results.collect { |r| wrap_results(r) })
+          ret = results.collect { |r| wrap_results(r) }
         elsif results.kind_of?(ActiveRecord::Base)
           klass = MiqAeMethodService.const_get("MiqAeService#{results.class.name.gsub(/::/, '_')}")
-          ret = drb_return(klass.new(results))
+          ret = klass.new(results)
         else
           ret = results
         end
@@ -124,14 +124,6 @@ module MiqAeMethodService
 
     def wrap_results(results)
       self.class.wrap_results(results)
-    end
-
-    def self.drb_return(obj)
-      MiqAeService.current ? MiqAeService.current.drb_return(obj) : obj
-    end
-
-    def drb_return(obj)
-      self.class.drb_return(obj)
     end
 
     #
@@ -192,12 +184,12 @@ module MiqAeMethodService
     end
 
     def virtual_columns_inspect
-      arr = @object.class.virtual_column_names.sort.collect { |vc| "#{vc}: #{@object.send(vc).inspect}" }
+      arr = @object.class.virtual_attribute_names.sort.collect { |vc| "#{vc}: #{@object.send(vc).inspect}" }
       "<#{arr.join(', ')}>"
     end
 
     def virtual_column_names
-      @object.class.virtual_column_names.sort
+      @object.class.virtual_attribute_names.sort
     end
 
     def inspect

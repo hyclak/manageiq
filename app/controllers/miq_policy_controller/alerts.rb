@@ -8,7 +8,7 @@ module MiqPolicyController::Alerts
       @edit = nil
       @alert = session[:edit][:alert_id] ? MiqAlert.find_by_id(session[:edit][:alert_id]) : MiqAlert.new
       if @alert && @alert.id.blank?
-        add_flash(_("Add of new %s was cancelled by the user") % ui_lookup(:model => "MiqAlert"))
+        add_flash(_("Add of new %{models} was cancelled by the user") % {:models => ui_lookup(:model => "MiqAlert")})
       else
         add_flash(_("Edit of %{model} \"%{name}\" was cancelled by the user") % {:model => ui_lookup(:model => "MiqAlert"), :name => @alert.description})
       end
@@ -51,13 +51,14 @@ module MiqPolicyController::Alerts
     alerts = []
     # showing 1 alert, delete it
     if params[:id].nil? || MiqAlert.find_by_id(params[:id]).nil?
-      add_flash(_("%s no longer exists") % ui_lookup(:model => "MiqAlert"),
+      add_flash(_("%{models} no longer exists") % {:models => ui_lookup(:model => "MiqAlert")},
                 :error)
     else
       alerts.push(params[:id])
     end
     process_alerts(alerts, "destroy") unless alerts.empty?
-    add_flash(_("The selected %s was deleted") % ui_lookup(:models => "MiqAlert")) if @flash_array.nil?
+    add_flash(_("The selected %{models} was deleted") %
+      {:models => ui_lookup(:models => "MiqAlert")}) if @flash_array.nil?
     @new_alert_node = self.x_node = "root"
     get_node_info(x_node)
     replace_right_cell("root", [:alert_profile, :alert])
@@ -213,8 +214,8 @@ module MiqPolicyController::Alerts
     @edit[:current] = {}
 
     if params[:copy]  # If copying, create a new alert based on the original
-      a = MiqAlert.find(params[:id])
-      @alert = MiqAlert.new(a.attributes)
+      # skip record id when copying attributes
+      @alert = MiqAlert.find(params[:id]).dup
     else
       @alert = params[:id] ? MiqAlert.find(params[:id]) : MiqAlert.new  # Get existing or new record
       @alert.enabled = true unless @alert.id            # Default enabled to true if new record
@@ -433,7 +434,7 @@ module MiqPolicyController::Alerts
 
     # :time_thresholds
     @sb[:alert][:time_thresholds] ||= {
-      5.minutes.to_i => "5 Minutes", 10.minutes.to_i => "10 Minutes", 15.minutes.to_i => "15 Minutes", 30.minutes.to_i => "30 Minutes",
+      5.minutes.to_i => _("5 Minutes"), 10.minutes.to_i => _("10 Minutes"), 15.minutes.to_i => "15 Minutes", 30.minutes.to_i => "30 Minutes",
       1.hour.to_i => "1 Hour", 2.hours.to_i => "2 Hours", 3.hours.to_i => "3 Hours", 4.hours.to_i => "4 Hours", 6.hours.to_i => "6 Hours", 12.hours.to_i => "12 Hours",
       1.day.to_i => "1 Day"
       # Stopping this at 1 day for now - Sprint 53
@@ -479,7 +480,7 @@ module MiqPolicyController::Alerts
     begin
       alarms = MiqAlert.ems_alarms(@edit[:new][:db], @edit[:new][:expression][:options][:ems_id])
     rescue StandardError => bang
-      add_flash(_("Error during '%s': ") % "ems_alarms" << bang.message, :error)
+      add_flash(_("Error during alarms: %{messages}") % {:messages => bang.message}, :error)
     end
     alarms
   end
@@ -529,24 +530,24 @@ module MiqPolicyController::Alerts
       add_flash(_("A valid expression must be present"), :error)
     end
     unless @edit[:new][:expression][:eval_method] && @edit[:new][:expression][:eval_method] != "nothing"
-      add_flash(_("%s must be selected") % "A Driving Event", :error) if alert.responds_to_events.blank?
+      add_flash(_("A Driving Event must be selected"), :error) if alert.responds_to_events.blank?
     end
     if alert.options[:notifications][:automate]
-      add_flash(_("%s is required") % "Event Name", :error) if alert.options[:notifications][:automate][:event_name].blank?
+      add_flash(_("Event name is required"), :error) if alert.options[:notifications][:automate][:event_name].blank?
     end
     if alert.expression.kind_of?(Hash) && alert.expression[:eval_method] == 'event_threshold'
-      add_flash(_("%s is required") % "Event to Check", :error) if alert.expression[:options][:event_types].blank?
+      add_flash(_("Event to Check is required"), :error) if alert.expression[:options][:event_types].blank?
     end
 
     if @edit.fetch_path(:new, :expression, :eval_method) == "realtime_performance"
       vt = @edit.fetch_path(:new, :expression, :options, :value_threshold)
       unless vt && is_integer?(vt)
-        add_flash(_("%s must be an integer") % "Value Threshold", :error)
+        add_flash(_("Value Threshold must be an integer"), :error)
       end
       if @edit.fetch_path(:new, :expression, :options, :trend_direction).ends_with?("more_than")
         ts = @edit.fetch_path(:new, :expression, :options, :trend_steepness)
         unless ts && is_integer?(ts)
-          add_flash(_("%s must be an integer") % "Trend Steepness", :error)
+          add_flash(_("Trend Steepness must be an integer"), :error)
         end
       end
     end
@@ -554,11 +555,13 @@ module MiqPolicyController::Alerts
            alert.options[:notifications][:snmp] ||
            alert.options[:notifications][:evm_event] ||
            alert.options[:notifications][:automate]
-      add_flash(_("At least one %s must be configured") % "of E-mail, SNMP Trap, Timeline Event, or Management Event",
+      add_flash(_("At least one of E-mail, SNMP Trap, Timeline Event, or Management Event must be configured"),
                 :error)
     end
     if alert.options[:notifications][:email]
-      add_flash(_("At least one %s must be configured") % "E-mail recipient", :error) if alert.options[:notifications][:email][:to].blank?
+      if alert.options[:notifications][:email][:to].blank?
+        add_flash(_("At least one E-mail recipient must be configured"), :error)
+      end
     end
     if alert.options[:notifications][:snmp]
       validate_snmp_options(alert.options[:notifications][:snmp])
@@ -575,10 +578,10 @@ module MiqPolicyController::Alerts
     @record = @alert = alert
     @email_to = []
     if @alert.responds_to_events == "_hourly_timer_"
-      @event = "Hourly Timer"
+      @event = _("Hourly Timer")
     else
       e = MiqEventDefinition.find_by_name(@alert.responds_to_events)
-      @event = e.nil? ? "<No Event configured>" : e.etype.description + ": " + e.description
+      @event = e.nil? ? _("<No Event configured>") : e.etype.description + ": " + e.description
     end
     if @alert.options && @alert.options[:notifications] && @alert.options[:notifications][:email] && @alert.options[:notifications][:email][:to]
       @alert.options[:notifications][:email][:to].each do |to|

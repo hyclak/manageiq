@@ -69,41 +69,19 @@ module Vmdb
 
     # Get dictionary name with default settings
     def ui_lookup(options = {})
-      # Pass in singular or plural key to determine format of returned string
       if options[:table]
-        ui_lookup_for_table(options[:table]).singularize
+        Dictionary.gettext(options[:table], :type => :table, :notfound => :titleize, :plural => false)
       elsif options[:tables]
-        ui_lookup_for_table(options[:tables]).pluralize
+        Dictionary.gettext(options[:tables], :type => :table, :notfound => :titleize, :plural => true)
       elsif options[:model]
-        ui_lookup_for_model(options[:model]).singularize
+        Dictionary.gettext(options[:model], :type => :model, :notfound => :titleize, :plural => false)
       elsif options[:models]
-        ui_lookup_for_model(options[:models]).pluralize
-      elsif options[:host_types]
-        ui_lookup_for_host_types(options[:host_types])
-      elsif options[:ems_cluster_types]
-        ui_lookup_for_ems_cluster_types(options[:ems_cluster_types])
+        Dictionary.gettext(options[:models], :type => :model, :notfound => :titleize, :plural => true)
       elsif options[:ui_title]
         ui_lookup_for_title(options[:ui_title])
       else
         ''
       end
-    end
-
-    def ui_lookup_for_table(text)
-      # Pass in singular or plural key to determine format of returned string
-      Dictionary.gettext(text, :type => :table, :notfound => :titleize)
-    end
-
-    def ui_lookup_for_model(text)
-      Dictionary.gettext(text, :type => :model, :notfound => :titleize)
-    end
-
-    def ui_lookup_for_host_types(text)
-      Dictionary.gettext(text, :type => :host_types, :notfound => :titleize)
-    end
-
-    def ui_lookup_for_ems_cluster_types(text)
-      Dictionary.gettext(text, :type => :ems_cluster_types, :notfound => :titleize)
     end
 
     def ui_lookup_for_title(text)

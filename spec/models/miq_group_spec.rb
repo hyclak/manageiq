@@ -1,16 +1,34 @@
-require "spec_helper"
-
 describe MiqGroup do
   context "set as Super Administrator" do
     before(:each) do
       @miq_group = FactoryGirl.create(:miq_group, :group_type => "system", :role => "super_administrator")
     end
 
+    describe ".remove_tag_from_all_managed_filters" do
+      let(:other_miq_group) { FactoryGirl.create(:miq_group) }
+      let(:filters) { [["/managed/prov_max_memory/test", "/managed/prov_max_memory/1024"], ["/managed/my_name/test"]] }
+
+      before do
+        @miq_group.set_managed_filters(filters)
+        other_miq_group.set_managed_filters(filters)
+        [@miq_group, other_miq_group].each(&:save)
+      end
+
+      it "removes managed filter from all groups" do
+        MiqGroup.all.each { |group| expect(group.get_managed_filters).to match_array(filters) }
+
+        MiqGroup.remove_tag_from_all_managed_filters("/managed/my_name/test")
+
+        expected_filters = [["/managed/prov_max_memory/test", "/managed/prov_max_memory/1024"]]
+        MiqGroup.all.each { |group| expect(group.get_managed_filters).to match_array(expected_filters) }
+      end
+    end
+
     context "#get_filters" do
       it "normal" do
         expected = {:test => "test filter"}
         @miq_group.filters = expected
-        @miq_group.get_filters.should == expected
+        expect(@miq_group.get_filters).to eq(expected)
       end
 
       it "when nil" do
@@ -20,7 +38,7 @@ describe MiqGroup do
 
       it "when {}" do
         @miq_group.filters = {}
-        @miq_group.get_filters.should == {}
+        expect(@miq_group.get_filters).to eq({})
       end
     end
 
@@ -53,50 +71,50 @@ describe MiqGroup do
         it "normal" do
           expected = {type => "test filter"}
           @miq_group.filters = expected
-          @miq_group.public_send(method).should == expected[type]
+          expect(@miq_group.public_send(method)).to eq(expected[type])
         end
 
         it "when nil" do
           @miq_group.filters = nil
-          @miq_group.public_send(method).should == []
+          expect(@miq_group.public_send(method)).to eq([])
         end
 
         it "when []" do
           @miq_group.filters = []
-          @miq_group.public_send(method).should == []
+          expect(@miq_group.public_send(method)).to eq([])
         end
 
         it "missing the #{type} key" do
           expected = {"something" => "test filter"}
           @miq_group.filters = expected
-          @miq_group.public_send(method).should == []
+          expect(@miq_group.public_send(method)).to eq([])
         end
       end
 
       it "#set_#{type}_filters" do
         filters = {type => "test"}
         @miq_group.public_send("set_#{type}_filters", filters[type])
-        @miq_group.public_send("get_#{type}_filters").should == filters[type]
-        @miq_group.get_filters.should == filters
+        expect(@miq_group.public_send("get_#{type}_filters")).to eq(filters[type])
+        expect(@miq_group.get_filters).to eq(filters)
       end
     end
 
     it "should return user role name" do
-      @miq_group.miq_user_role_name.should == "EvmRole-super_administrator"
+      expect(@miq_group.miq_user_role_name).to eq("EvmRole-super_administrator")
     end
 
     it "should set group type to 'system' " do
-      @miq_group.group_type.should == "system"
+      expect(@miq_group.group_type).to eq("system")
     end
 
     it "should return user count" do
       # TODO: - add more users to check for proper user count...
-      @miq_group.user_count.should == 0
+      expect(@miq_group.user_count).to eq(0)
     end
 
     it "should strip group description of leading and trailing spaces" do
       @miq_group.description = "      leading and trailing white spaces     "
-      @miq_group.description.should == "leading and trailing white spaces"
+      expect(@miq_group.description).to eq("leading and trailing white spaces")
     end
   end
 
@@ -108,19 +126,19 @@ describe MiqGroup do
       ifp_object  = double('ifp_object')
       @ifp_interface = double('ifp_interface')
 
-      DBus.stub(:system_bus).and_return(sysbus)
-      sysbus.stub(:[]).with("org.freedesktop.sssd.infopipe").and_return(ifp_service)
-      ifp_service.stub(:object).with("/org/freedesktop/sssd/infopipe").and_return(ifp_object)
-      ifp_object.stub(:introspect)
-      ifp_object.stub(:[]).with("org.freedesktop.sssd.infopipe").and_return(@ifp_interface)
+      allow(DBus).to receive(:system_bus).and_return(sysbus)
+      allow(sysbus).to receive(:[]).with("org.freedesktop.sssd.infopipe").and_return(ifp_service)
+      allow(ifp_service).to receive(:object).with("/org/freedesktop/sssd/infopipe").and_return(ifp_object)
+      allow(ifp_object).to receive(:introspect)
+      allow(ifp_object).to receive(:[]).with("org.freedesktop.sssd.infopipe").and_return(@ifp_interface)
     end
 
     it "should return groups by user name with external authentication" do
       memberships = [%w(foo bar)]
 
-      @ifp_interface.stub(:GetUserGroups).with('user').and_return(memberships)
+      allow(@ifp_interface).to receive(:GetUserGroups).with('user').and_return(memberships)
 
-      MiqGroup.get_httpd_groups_by_user('user').should == memberships.first
+      expect(MiqGroup.get_httpd_groups_by_user('user')).to eq(memberships.first)
     end
   end
 
@@ -134,15 +152,15 @@ describe MiqGroup do
                         :bind            => true,
                         :get_user_object => 'user object',
                         :get_memberships => %w(foo bar))
-      MiqLdap.stub(:new).and_return(miq_ldap)
+      allow(MiqLdap).to receive(:new).and_return(miq_ldap)
     end
 
     it "should return LDAP groups by user name" do
-      MiqGroup.get_ldap_groups_by_user('fred', 'bind_dn', 'password').should == %w(foo bar)
+      expect(MiqGroup.get_ldap_groups_by_user('fred', 'bind_dn', 'password')).to eq(%w(foo bar))
     end
 
     it "should issue an error message when user name could not be bound to LDAP" do
-      MiqLdap.new.stub(:bind => false)
+      allow(MiqLdap.new).to receive_messages(:bind => false)
       # darn, wanted a MiqException::MiqEVMLoginError
       expect do
         MiqGroup.get_ldap_groups_by_user('fred', 'bind_dn', 'password')
@@ -150,7 +168,7 @@ describe MiqGroup do
     end
 
     it "should issue an error message when user name does not exist in LDAP directory" do
-      MiqLdap.new.stub(:get_user_object => nil)
+      allow(MiqLdap.new).to receive_messages(:get_user_object => nil)
 
       # darn, wanted a MiqException::MiqEVMLoginError
       expect do
@@ -201,28 +219,28 @@ describe MiqGroup do
     end
 
     it "#active_vms" do
-      @miq_group.active_vms.should match_array([@active_vm])
+      expect(@miq_group.active_vms).to match_array([@active_vm])
     end
 
     it "#allocated_memory" do
-      @miq_group.allocated_memory.should == @ram_size.megabyte
+      expect(@miq_group.allocated_memory).to eq(@ram_size.megabyte)
     end
 
     it "#allocated_vcpu" do
-      @miq_group.allocated_vcpu.should == @num_cpu
+      expect(@miq_group.allocated_vcpu).to eq(@num_cpu)
     end
 
     it "#allocated_storage" do
-      @miq_group.allocated_storage.should == @disk_size
+      expect(@miq_group.allocated_storage).to eq(@disk_size)
     end
 
     it "#provisioned_storage" do
-      @miq_group.provisioned_storage.should == @ram_size.megabyte + @disk_size
+      expect(@miq_group.provisioned_storage).to eq(@ram_size.megabyte + @disk_size)
     end
 
     %w(allocated_memory allocated_vcpu allocated_storage provisioned_storage).each do |vcol|
       it "should have virtual column #{vcol} " do
-        described_class.should have_virtual_column "#{vcol}", :integer
+        expect(described_class).to have_virtual_column "#{vcol}", :integer
       end
     end
 
@@ -234,7 +252,7 @@ describe MiqGroup do
                          :ems_id       => @ems.id,
                          :storage_id   => @storage.id,
                          :hardware     => hw)
-      @miq_group.allocated_storage.should == @disk_size
+      expect(@miq_group.allocated_storage).to eq(@disk_size)
     end
   end
 
@@ -249,7 +267,7 @@ describe MiqGroup do
       FactoryGirl.create(:user, :miq_groups => [group])
 
       expect {
-        expect { group.destroy }.to raise_error
+        expect { group.destroy }.to raise_error(RuntimeError, /Still has users assigned/)
       }.to_not change { MiqGroup.count }
     end
 
@@ -258,12 +276,13 @@ describe MiqGroup do
       FactoryGirl.create(:user, :miq_groups => [group, group2], :current_group => group2)
 
       expect {
-        expect { group.destroy }.to raise_error
+        expect { group.destroy }.to raise_error(RuntimeError, /Still has users assigned/)
       }.to_not change { MiqGroup.count }
     end
 
     it "fails if referenced by a tenant#default_miq_group" do
-      expect { FactoryGirl.create(:tenant).default_miq_group.reload.destroy }.to raise_error
+      expect { FactoryGirl.create(:tenant).default_miq_group.reload.destroy }
+        .to raise_error(RuntimeError, /A tenant default group can not be deleted/)
     end
   end
 
@@ -271,14 +290,13 @@ describe MiqGroup do
     it "adds new groups after initial seed" do
       [Tenant, MiqUserRole, MiqGroup].each(&:seed)
 
-      role_map_path = File.expand_path(File.join(Rails.root, "db/fixtures/role_map.yaml"))
+      role_map_path = ApplicationRecord::FIXTURE_DIR.join("role_map.yaml")
       role_map = YAML.load_file(role_map_path)
-      role_map.unshift('EvmRole-test_role' => 'tenant_quota_administrator')
-      filter_map_path = File.expand_path(File.join(Rails.root, "db/fixtures/filter_map.yaml"))
-      filter_map = YAML.load_file(filter_map_path)
+      role_map = {'EvmRole-test_role' => 'tenant_quota_administrator'}.merge(role_map)
+      filter_map_path = ApplicationRecord::FIXTURE_DIR.join("filter_map.yaml")
 
       allow(YAML).to receive(:load_file).with(role_map_path).and_return(role_map)
-      allow(YAML).to receive(:load_file).with(filter_map_path).and_return(filter_map)
+      allow(YAML).to receive(:load_file).with(filter_map_path).and_call_original
 
       expect {
         MiqGroup.seed
@@ -292,7 +310,7 @@ describe MiqGroup do
       expect(tenant.reload.default_miq_group.miq_user_role).not_to be
       MiqUserRole.seed
       MiqGroup.seed
-      expect(tenant.reload.default_miq_group.miq_user_role).to be
+      expect(tenant.reload.default_miq_group.miq_user_role).to be_truthy
     end
   end
 
@@ -323,20 +341,6 @@ describe MiqGroup do
       gb = FactoryGirl.create(:miq_group, :description => 'B', :tenant => tenant)
 
       expect(tenant.miq_groups.sort_by_desc).to eq([ga, gb, gc, tenant.default_miq_group])
-    end
-  end
-
-  describe "#all_users" do
-    it "finds users" do
-      g  = FactoryGirl.create(:miq_group)
-      g2 = FactoryGirl.create(:miq_group)
-
-      FactoryGirl.create(:user)
-      u_one  = FactoryGirl.create(:user, :miq_groups => [g])
-      u_two  = FactoryGirl.create(:user, :miq_groups => [g, g2], :current_group => g)
-
-      expect(g.all_users).to match_array([u_one, u_two])
-      expect(g2.all_users).to match_array([u_two])
     end
   end
 
@@ -405,9 +409,8 @@ describe MiqGroup do
     it "fails for default groups" do
       tenant = FactoryGirl.create(:tenant)
       g = FactoryGirl.create(:tenant).default_miq_group
-      expect do
-        g.update_attributes!(:tenant => tenant)
-      end.to raise_error
+      expect { g.update_attributes!(:tenant => tenant) }
+        .to raise_error(ActiveRecord::RecordInvalid, /Tenant cant change the tenant of a default group/)
     end
   end
 
@@ -456,7 +459,7 @@ describe MiqGroup do
       g1 = MiqGroup.create(:description => "one")
       g2 = MiqGroup.create(:description => "two")
 
-      expect(g1.sequence).to be
+      expect(g1.sequence).to be_truthy
       expect(g2.sequence).to eq(g1.sequence + 1)
     end
 

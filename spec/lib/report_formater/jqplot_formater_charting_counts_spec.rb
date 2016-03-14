@@ -1,7 +1,10 @@
-require 'spec_helper'
 include ReportsSpecHelper
 
 describe ReportFormatter::JqplotFormatter do
+  before(:each) do
+    allow(Charting).to receive(:backend).and_return(:jqplot)
+    allow(Charting).to receive(:format).and_return(:jqplot)
+  end
   context '#build_reporting_chart_dim2' do
     it 'builds a stacked chart' do
       report = MiqReport.new(
@@ -69,7 +72,7 @@ describe ReportFormatter::JqplotFormatter do
       expect(report.chart[:data][0]).to eq([["linux_esx: 3", 3], ["widloze: 1", 1]])
       expect(report.chart[:options][:seriesDefaults][:renderer]).to eq("jQuery.jqplot.PieRenderer")
       expect(report.chart[:options][:series][0][:label]).to eq("OS Name")
-      expect(report.chart[:options][:highlighter]).to be
+      expect(report.chart[:options][:highlighter]).to be_truthy
     end
   end
 end

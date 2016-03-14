@@ -1,4 +1,3 @@
-require "spec_helper"
 require 'bcrypt'
 
 describe "User Password" do
@@ -12,7 +11,7 @@ describe "User Password" do
     end
 
     it "should have set password" do
-      @admin.authenticate_bcrypt(@old).should == @admin
+      expect(@admin.authenticate_bcrypt(@old)).to eq(@admin)
     end
 
     context "call change_password" do
@@ -22,7 +21,7 @@ describe "User Password" do
       end
 
       it "should change password" do
-        @admin.authenticate_bcrypt(@new).should == @admin
+        expect(@admin.authenticate_bcrypt(@new)).to eq(@admin)
       end
     end
 
@@ -34,7 +33,7 @@ describe "User Password" do
       end
 
       it "should change password" do
-        @admin.authenticate_bcrypt(@new).should == @admin
+        expect(@admin.authenticate_bcrypt(@new)).to eq(@admin)
       end
     end
   end

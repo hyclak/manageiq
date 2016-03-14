@@ -34,6 +34,22 @@ module AuthenticationMixin
     authentications.select { |a| a.kind_of?(ManageIQ::Providers::Openstack::InfraManager::AuthKeyPair) }
   end
 
+  def authentication_for_providers
+    authentications.where.not(:authtype => nil)
+  end
+
+  def authentication_for_summary
+    summary = []
+    authentication_for_providers.each do |a|
+      summary << {
+        :authtype       => a.authtype,
+        :status         => a.status,
+        :status_details => a.status_details
+      }
+    end
+    summary
+  end
+
   def has_authentication_type?(type)
     authentication_types.include?(type)
   end
@@ -62,8 +78,8 @@ module AuthenticationMixin
     authentication_component(type, :service_account)
   end
 
-  def required_credential_fields(_type)
-    [:userid]
+  def required_credential_fields(type)
+    type.to_s == "bearer" ? [:auth_key] : [:userid]
   end
 
   def has_credentials?(type = nil)
@@ -75,7 +91,7 @@ module AuthenticationMixin
   end
 
   def authentication_status
-    ordered_auths = authentication_userid_passwords.sort_by(&:status_severity)
+    ordered_auths = authentication_for_providers.sort_by(&:status_severity)
     ordered_auths.last.try(:status) || "None"
   end
 
@@ -115,7 +131,7 @@ module AuthenticationMixin
       cred = authentication_type(type)
       current = {:new => nil, :old => nil}
 
-      if value[:auth_key] && !self.kind_of?(ManageIQ::Providers::ContainerManager)
+      if value[:auth_key] && self.kind_of?(ManageIQ::Providers::Openstack::InfraManager)
         # TODO(lsmola) figure out if there is a better way. Password field is replacing \n with \s, I need to replace
         # them back
         fixed_auth_key = value[:auth_key].gsub(/-----BEGIN\sRSA\sPRIVATE\sKEY-----/, '')
@@ -124,7 +140,7 @@ module AuthenticationMixin
         value[:auth_key] = '-----BEGIN RSA PRIVATE KEY-----' + fixed_auth_key + '-----END RSA PRIVATE KEY-----'
       end
 
-      unless value[:userid].blank?
+      unless value.key?(:userid) && value[:userid].blank?
         current[:new] = {:user => value[:userid], :password => value[:password], :auth_key => value[:auth_key]}
       end
       current[:old] = {:user => cred.userid, :password => cred.password, :auth_key => cred.auth_key} if cred
@@ -136,7 +152,7 @@ module AuthenticationMixin
       next if current[:old] == current[:new]
 
       # Check if it is a delete
-      if value[:userid].blank?
+      if value.key?(:userid) && value[:userid].blank?
         current[:new] = nil
         next if options[:save] == false
         authentication_delete(type)
@@ -150,7 +166,7 @@ module AuthenticationMixin
           cred = ManageIQ::Providers::Openstack::InfraManager::AuthKeyPair.new(:name => "#{self.class.name} #{name}", :authtype => type.to_s,
                                                :resource_id => id, :resource_type => "ExtManagementSystem")
           authentications << cred
-        elsif self.kind_of?(ManageIQ::Providers::ContainerManager) && value[:auth_key]
+        elsif value[:auth_key]
           cred = AuthToken.new(:name => "#{self.class.name} #{name}", :authtype => type.to_s,
                                                :resource_id => id, :resource_type => "ExtManagementSystem")
           authentications << cred
@@ -162,8 +178,6 @@ module AuthenticationMixin
       cred.userid = value[:userid]
       cred.password = value[:password]
       cred.auth_key = value[:auth_key]
-      # TODO(lwander) this should have its own cred attribute
-      cred.service_account = value[:service_account]
 
       cred.save if options[:save] && id
     end
@@ -242,8 +256,8 @@ module AuthenticationMixin
     options         = args.last.kind_of?(Hash) ? args.last : {}
     save            = options.fetch(:save, true)
     type            = args.first
-    status, details = authentication_check_no_validation(type, options)
     auth            = authentication_best_fit(type)
+    status, details = authentication_check_no_validation(type || auth.authtype, options)
 
     if save
       status == :valid ? auth.validation_successful : auth.validation_failed(status, details)

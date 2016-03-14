@@ -1,13 +1,10 @@
-class MiqGroup < ActiveRecord::Base
+class MiqGroup < ApplicationRecord
   USER_GROUP   = "user"
   SYSTEM_GROUP = "system"
   TENANT_GROUP = "tenant"
 
-  default_scope { where(conditions_for_my_region_default_scope) }
-
   belongs_to :tenant
   belongs_to :miq_user_role
-  belongs_to :resource, :polymorphic => true
   has_and_belongs_to_many :users
   has_many   :vms,         :dependent => :nullify
   has_many   :miq_templates, :dependent => :nullify
@@ -22,7 +19,7 @@ class MiqGroup < ActiveRecord::Base
 
   delegate :self_service?, :limited_self_service?, :to => :miq_user_role, :allow_nil => true
 
-  validates :description, :guid, :presence => true, :uniqueness => true
+  validates :description, :presence => true, :uniqueness => true
   validate :validate_default_tenant, :on => :update, :if => :tenant_id_changed?
   before_destroy :ensure_can_be_destroyed
 
@@ -34,13 +31,10 @@ class MiqGroup < ActiveRecord::Base
 
   acts_as_miq_taggable
   include ReportableMixin
-  include UuidMixin
   include CustomAttributeMixin
   include ActiveVmAggregationMixin
   include TimezoneMixin
   include TenancyMixin
-
-  FIXTURE_DIR = File.join(Rails.root, "db/fixtures")
 
   alias_method :current_tenant, :tenant
 
@@ -48,61 +42,35 @@ class MiqGroup < ActiveRecord::Base
     description
   end
 
-  def all_users
-    User.all_users_of_group(self)
-  end
-
-  def self.allows?(_group, _options = {})
-    # group: Id || Instance
-    # :identifier => Feature Identifier
-    # :object => Vm, Host, etc.
-
-    # TODO
-    # group = self.extract_objects(group)
-    # return true if self.filters.nil? # TODO - Man need to check for filters like {:managed => [], :belongsto => []}
-    #
-    # feature_type = MiqProductFeature.feature_details(identifier)[:feature_type]
-    #
-    # self.filters = MiqUserScope.hash_to_scope(self.filters) unless self.filters.kind_of?(MiqUserScope)
-
-    true # Remove once this is implemented
-  end
-
   def self.next_sequence
     maximum(:sequence).to_i + 1
   end
 
   def self.seed
-    role_map_file = File.expand_path(File.join(FIXTURE_DIR, "role_map.yaml"))
+    role_map_file = FIXTURE_DIR.join("role_map.yaml")
+    role_map = YAML.load_file(role_map_file) if role_map_file.exist?
+    return unless role_map
+
+    filter_map_file = FIXTURE_DIR.join("filter_map.yaml")
+    ldap_to_filters = filter_map_file.exist? ? YAML.load_file(filter_map_file) : {}
     root_tenant = Tenant.root_tenant
-    if File.exist?(role_map_file)
-      filter_map_file = File.expand_path(File.join(FIXTURE_DIR, "filter_map.yaml"))
-      ldap_to_filters = File.exist?(filter_map_file) ? YAML.load_file(filter_map_file) : {}
 
-      role_map = YAML.load_file(role_map_file)
-      order = role_map.collect(&:keys).flatten
-      groups_to_roles = role_map.each_with_object({}) { |g, h| h[g.keys.first] = g[g.keys.first] }
-      seq = 1
-      order.each do |g|
-        group = find_by_description(g) || new(:description => g)
-        user_role = MiqUserRole.find_by_name("EvmRole-#{groups_to_roles[g]}")
-        if user_role.nil?
-          _log.warn("Unable to find user_role 'EvmRole-#{groups_to_roles[g]}' for group '#{g}'")
-          next
-        end
-        group.miq_user_role = user_role
-        group.sequence      = seq
-        group.filters       = ldap_to_filters[g]
-        group.group_type    = SYSTEM_GROUP
-        group.tenant        = root_tenant
+    role_map.each_with_index do |(group_name, role_name), index|
+      group = find_by_description(group_name) || new(:description => group_name)
+      user_role = MiqUserRole.find_by_name("EvmRole-#{role_name}")
+      if user_role.nil?
+        raise StandardError, "Unable to find user_role 'EvmRole-#{role_name}' for group '#{group_name}'"
+      end
+      group.miq_user_role = user_role
+      group.sequence      = index + 1
+      group.filters       = ldap_to_filters[group_name]
+      group.group_type    = SYSTEM_GROUP
+      group.tenant        = root_tenant
 
-        if group.changed?
-          mode = group.new_record? ? "Created" : "Updated"
-          group.save!
-          _log.info("#{mode} Group: #{group.description} with Role: #{user_role.name}")
-        end
-
-        seq += 1
+      if group.changed?
+        mode = group.new_record? ? "Created" : "Updated"
+        group.save!
+        _log.info("#{mode} Group: #{group.description} with Role: #{user_role.name}")
       end
     end
 
@@ -149,12 +117,6 @@ class MiqGroup < ActiveRecord::Base
     user_groups.first
   end
 
-  def get_user_scope(options = {})
-    scope = filters.kind_of?(MiqUserScope) ? filters : MiqUserScope.hash_to_scope(filters)
-
-    scope.get_filters(options)
-  end
-
   def get_filters(type = nil)
     if type
       (filters.respond_to?(:key?) && filters[type.to_s]) || []
@@ -178,6 +140,26 @@ class MiqGroup < ActiveRecord::Base
   def set_filters(type, filter)
     self.filters ||= {}
     self.filters[type.to_s] = filter
+  end
+
+  def self.remove_tag_from_all_managed_filters(tag)
+    all.each do |miq_group|
+      miq_group.remove_tag_from_managed_filter(tag)
+      miq_group.save if miq_group.filters_changed?
+    end
+  end
+
+  def remove_tag_from_managed_filter(filter_to_remove)
+    if get_managed_filters.present?
+      *category, _tag = filter_to_remove.split("/")
+      category = category.join("/")
+      self.filters["managed"].each do |filter|
+        next unless filter.first.starts_with?(category)
+        next unless filter.include?(filter_to_remove)
+        filter.delete(filter_to_remove)
+      end
+      self.filters["managed"].reject!(&:empty?)
+    end
   end
 
   def set_managed_filters(filter)
@@ -252,6 +234,11 @@ class MiqGroup < ActiveRecord::Base
 
   def self.non_tenant_groups
     where.not(:group_type => TENANT_GROUP)
+  end
+
+  def self.with_current_user_groups
+    current_user = User.current_user
+    current_user.admin_user? ? all : where(:id => current_user.miq_group_ids)
   end
 
   def self.valid_filters?(filters_hash)

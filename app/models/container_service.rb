@@ -1,4 +1,4 @@
-class ContainerService < ActiveRecord::Base
+class ContainerService < ApplicationRecord
   include CustomAttributeMixin
   include ReportableMixin
   # :name, :uid, :creation_timestamp, :resource_version, :namespace
@@ -12,6 +12,13 @@ class ContainerService < ActiveRecord::Base
   has_many :labels, -> { where(:section => "labels") }, :class_name => "CustomAttribute", :as => :resource, :dependent => :destroy
   has_many :selector_parts, -> { where(:section => "selectors") }, :class_name => "CustomAttribute", :as => :resource, :dependent => :destroy
   has_many :container_nodes, -> { distinct }, :through => :container_groups
+  belongs_to :container_image_registry
+
+  # Needed for metrics
+  has_many :metrics,                :as => :resource
+  has_many :metric_rollups,         :as => :resource
+  has_many :vim_performance_states, :as => :resource
+  delegate :my_zone,                :to => :ext_management_system
 
   acts_as_miq_taggable
 
@@ -19,5 +26,13 @@ class ContainerService < ActiveRecord::Base
 
   def container_groups_count
     number_of(:container_groups)
+  end
+
+  include Metric::CiMixin
+
+  PERF_ROLLUP_CHILDREN = :container_groups
+
+  def perf_rollup_parents(interval_name = nil)
+    []
   end
 end

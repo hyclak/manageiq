@@ -1,16 +1,3 @@
-class ActsAsArModelColumn < ActiveRecord::ConnectionAdapters::Column
-  attr_reader :options
-
-  def initialize(name, options)
-    type = options.kind_of?(Symbol) ? options : options[:type]
-    raise ArgumentError, "type must be specified" if type.nil?
-
-    @options = options.kind_of?(Hash) ? options : {}
-
-    super(name.to_s, @options[:default], VirtualColumn::TYPE_MAP[type.to_sym])
-  end
-end
-
 class ActsAsArModel
   include Vmdb::Logging
 
@@ -44,36 +31,107 @@ class ActsAsArModel
   # Column methods
   #
 
-  def self.columns_hash
-    @columns_hash ||= {}
+  module FakeAttributeStore
+    extend ActiveSupport::Concern
+
+    # When ActiveRecord::Attributes gets [partially] extracted into
+    # ActiveModel (hopefully in 5.1), this should become redundant. For
+    # now, we'll just fake out the portion of the API we need.
+    #
+    # Based very heavily on matching methods in current ActiveRecord.
+
+    module ClassMethods
+      def load_schema
+        load_schema! if @attribute_types.nil?
+      end
+
+      def load_schema!
+        # no-op
+      end
+
+      def reload_schema_from_cache
+        @attribute_types = nil
+      end
+
+      def attribute_types
+        @attribute_types ||= Hash.new(ActiveModel::Type::Value.new)
+      end
+
+      def attribute_names
+        load_schema
+        attribute_types.keys
+      end
+
+      def has_attribute?(name)
+        load_schema
+        attribute_types.key?(name.to_s)
+      end
+
+      def type_for_attribute(attr_name)
+        load_schema
+        attribute_types[attr_name]
+      end
+    end
   end
 
-  def self.columns
-    @columns ||= columns_hash.values
-  end
+  module AttributeBag
+    def initialize
+      @attributes = {}
+    end
 
-  def self.column_names
-    @column_names ||= columns_hash.keys
-  end
+    def attributes=(values)
+      values.each do |attr, value|
+        send("#{attr}=", value)
+      end
+    end
 
-  def self.column_names_symbols
-    @column_names_symbols ||= column_names.collect(&:to_sym)
+    def attributes
+      @attributes.dup
+    end
+
+    def [](attr)
+      @attributes[attr.to_s]
+    end
+    alias_method :read_attribute, :[]
+
+    def []=(attr, value)
+      @attributes[attr.to_s] = value
+    end
+    alias_method :write_attribute, :[]=
   end
 
   def self.set_columns_hash(hash)
     hash[:id] ||= :integer
 
-    hash.each do |col, options|
-      columns_hash[col.to_s] = ActsAsArModelColumn.new(col.to_s, options)
+    hash.each do |attribute, type|
+      virtual_attribute attribute, type
 
-      define_method(col) do
-        read_attribute(col)
+      define_method(attribute) do
+        read_attribute(attribute)
       end
 
-      define_method("#{col}=") do |val|
-        write_attribute(col, val)
+      define_method("#{attribute}=") do |val|
+        write_attribute(attribute, val)
       end
     end
+  end
+
+  include FakeAttributeStore
+  include VirtualFields
+
+  include AttributeBag
+
+  def self.instances_are_derived?
+    true
+  end
+
+  def self.reflect_on_association(name)
+    virtual_reflection(name)
+  end
+
+  def initialize(values = {})
+    super()
+    self.attributes = values
   end
 
   #
@@ -85,96 +143,54 @@ class ActsAsArModel
   end
 
   #
-  # Acts As Reportable methods
-  #
-
-  class << self
-    attr_reader :aar_options
-  end
-
-  class << self
-    attr_writer :aar_options
-  end
-
-  def self.aar_columns
-    @aar_columns ||= []
-  end
-
-  class << self
-    attr_writer :aar_columns
-  end
-
-  #
-  # Virtual columns and reflections
-  #
-
-  extend VirtualFields
-
-  #
-  # Attributes
-  #
-
-  attr_accessor :attributes
-
-  def self.instances_are_derived?
-    true
-  end
-
-  def self.reflect_on_association(name)
-    virtual_reflection(name)
-  end
-
-  def self.compute_type(name)
-    ActiveRecord::Base.send :compute_type, name
-  end
-
-  def initialize(values = {})
-    self.attributes = {}
-    values.each do |attr, value|
-      send("#{attr}=", value)
-    end
-  end
-
-  def [](attr)
-    attributes[attr.to_s]
-  end
-  alias_method :read_attribute, :[]
-
-  def []=(attr, value)
-    attributes[attr.to_s] = value
-  end
-  alias_method :write_attribute, :[]=
-
-  #
   # Find routines
   #
 
+  def self.where(*args)
+    return aar_scope.where(*args) if self.respond_to?(:aar_scope)
+    raise NotImplementedError
+  end
+
+  def self.find(*args)
+    return aar_scope.find(*args) if self.respond_to?(:aar_scope)
+    raise NotImplementedError
+  end
+
   def self.all(*args)
-    raise NotImplementedError unless self.respond_to?(:find)
-    find(:all, *args)
+    if !self.respond_to?(:aar_scope)
+      find(:all, *args)
+    elsif args.empty? || args.size == 1 && args.first.respond_to?(:empty?) && args.first.empty?
+      # avoid warnings
+      aar_scope
+    else
+      aar_scope.all(*args)
+    end
   end
 
   def self.first(*args)
-    raise NotImplementedError unless self.respond_to?(:find)
+    return aar_scope.first(*args) if self.respond_to?(:aar_scope)
     find(:first, *args)
   end
 
   def self.last(*args)
-    raise NotImplementedError unless self.respond_to?(:find)
+    return aar_scope.last(*args) if self.respond_to?(:aar_scope)
     find(:last, *args)
   end
 
   def self.count(*args)
+    return aar_scope.count(*args) if self.respond_to?(:aar_scope)
     all(*args).size
   end
 
   def self.find_by_id(*id)
+    return aar_scope.find_by_id(*id) if self.respond_to?(:aar_scope)
     options = id.extract_options!
     options.merge!(:conditions => {:id => id.first})
     first(options)
   end
 
   def self.find_all_by_id(*ids)
+    return aar_scope.find_all_by_id(*args) if self.respond_to?(:aar_scope)
     options = ids.extract_options!
     options.merge!(:conditions => {:id => ids.flatten})
     all(options)
@@ -186,7 +202,7 @@ class ActsAsArModel
 
   # Returns the contents of the record as a nicely formatted string.
   def inspect
-    attributes_as_nice_string = self.class.column_names.collect do |name|
+    attributes_as_nice_string = self.class.attribute_names.collect do |name|
       "#{name}: #{attribute_for_inspect(name)}"
     end.compact.join(", ")
     "#<#{self.class} #{attributes_as_nice_string}>"

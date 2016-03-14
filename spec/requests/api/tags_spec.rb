@@ -1,11 +1,7 @@
 #
 # REST API Request Tests - /api/tags
 #
-require 'spec_helper'
-
 describe ApiController do
-  include Rack::Test::Methods
-
   let(:zone)         { FactoryGirl.create(:zone, :name => "api_zone") }
   let(:miq_server)   { FactoryGirl.create(:miq_server, :guid => miq_server_guid, :zone => zone) }
   let(:ems)          { FactoryGirl.create(:ems_vmware, :zone => zone) }
@@ -27,17 +23,11 @@ describe ApiController do
   let(:tag_count)    { Tag.count }
 
   before(:each) do
-    init_api_spec_env
-
     FactoryGirl.create(:classification_department_with_tags)
     FactoryGirl.create(:classification_cost_center_with_tags)
 
     Classification.classify(vm2, tag1[:category], tag1[:name])
     Classification.classify(vm2, tag2[:category], tag2[:name])
-  end
-
-  def app
-    Vmdb::Application
   end
 
   context "Tag collection" do
@@ -57,7 +47,7 @@ describe ApiController do
 
         expect { run_post tags_url, options }.to change(Tag, :count).by(1)
 
-        tag = Tag.find(@result["results"].first["id"])
+        tag = Tag.find(response_hash["results"].first["id"])
         tag_category = Category.find(tag.category.id)
         expect(tag_category).to eq(category)
 
@@ -72,7 +62,7 @@ describe ApiController do
           run_post tags_url, :name => "test_tag", :description => "Test Tag", :category => {:id => category.id}
         end.to change(Tag, :count).by(1)
 
-        tag = Tag.find(@result["results"].first["id"])
+        tag = Tag.find(response_hash["results"].first["id"])
         tag_category = Category.find(tag.category.id)
         expect(tag_category).to eq(category)
 
@@ -87,7 +77,7 @@ describe ApiController do
           run_post tags_url, :name => "test_tag", :description => "Test Tag", :category => {:name => category.name}
         end.to change(Tag, :count).by(1)
 
-        tag = Tag.find(@result["results"].first["id"])
+        tag = Tag.find(response_hash["results"].first["id"])
         tag_category = Category.find(tag.category.id)
         expect(tag_category).to eq(category)
 
@@ -101,7 +91,7 @@ describe ApiController do
         expect do
           run_post "#{categories_url(category.id)}/tags", :name => "test_tag", :description => "Test Tag"
         end.to change(Tag, :count).by(1)
-        tag = Tag.find(@result["results"].first["id"])
+        tag = Tag.find(response_hash["results"].first["id"])
         tag_category = Category.find(tag.category.id)
         expect(tag_category).to eq(category)
 
@@ -125,7 +115,7 @@ describe ApiController do
         expect do
           run_post tags_url(tag.id), gen_request(:edit, :name => "new_name")
         end.to change { classification.reload.tag.name }.to("#{category.tag.name}/new_name")
-        expect(@result["name"]).to eq("#{category.tag.name}/new_name")
+        expect(response_hash["name"]).to eq("#{category.tag.name}/new_name")
         expect_request_success
       end
 
@@ -162,6 +152,28 @@ describe ApiController do
         expect_request_success_with_no_content
       end
 
+      it "will respond with 404 not found when deleting a non-existent tag through DELETE" do
+        api_basic_authorize action_identifier(:tags, :delete)
+        classification = FactoryGirl.create(:classification_tag)
+        tag_id = classification.tag.id
+        classification.destroy!
+
+        run_delete tags_url(tag_id)
+
+        expect_resource_not_found
+      end
+
+      it "will respond with 404 not found when deleting a non-existent tag through POST" do
+        api_basic_authorize action_identifier(:tags, :delete)
+        classification = FactoryGirl.create(:classification_tag)
+        tag_id = classification.tag.id
+        classification.destroy!
+
+        run_post tags_url(tag_id), :action => :delete
+
+        expect_resource_not_found
+      end
+
       it "can delete multiple tags within a category by id" do
         api_basic_authorize action_identifier(:tags, :delete)
         classification1 = FactoryGirl.create(:classification_tag)
@@ -176,7 +188,7 @@ describe ApiController do
         expect { classification1.reload }.to raise_error(ActiveRecord::RecordNotFound)
         expect { classification2.reload }.to raise_error(ActiveRecord::RecordNotFound)
         expect_result_to_match_hash(
-          @result,
+          response_hash,
           "results" => [
             {"success" => true, "message" => "tags id: #{tag1.id} deleting"},
             {"success" => true, "message" => "tags id: #{tag2.id} deleting"}
@@ -200,7 +212,7 @@ describe ApiController do
         expect { classification1.reload }.to raise_error(ActiveRecord::RecordNotFound)
         expect { classification2.reload }.to raise_error(ActiveRecord::RecordNotFound)
         expect_result_to_match_hash(
-          @result,
+          response_hash,
           "results" => [
             {"success" => true, "message" => "tags id: #{tag1.id} deleting"},
             {"success" => true, "message" => "tags id: #{tag2.id} deleting"}

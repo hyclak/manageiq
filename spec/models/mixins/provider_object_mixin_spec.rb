@@ -1,5 +1,3 @@
-require "spec_helper"
-
 describe ProviderObjectMixin do
   before do
     class TestClass
@@ -14,8 +12,8 @@ describe ProviderObjectMixin do
   def mock_ems_with_connection
     @ems        = double("ems")
     @connection = double("connection")
-    @ems.should_receive(:with_provider_connection).and_yield(@connection)
-    TestClass.any_instance.stub(:ext_management_system => @ems)
+    expect(@ems).to receive(:with_provider_connection).and_yield(@connection)
+    allow_any_instance_of(TestClass).to receive_messages(:ext_management_system => @ems)
   end
 
   it "#with_provider_connection" do
@@ -26,7 +24,7 @@ describe ProviderObjectMixin do
   context "when provider_object is written" do
     before do
       @provider_object = double("provider_object")
-      TestClass.any_instance.stub(:provider_object => @provider_object)
+      allow_any_instance_of(TestClass).to receive_messages(:provider_object => @provider_object)
     end
 
     it "#provider_object" do
@@ -47,6 +45,12 @@ describe ProviderObjectMixin do
     it "#with_provider_object" do
       mock_ems_with_connection
       expect { TestClass.new.with_provider_object {} }.to raise_error(NotImplementedError)
+    end
+  end
+
+  context "when no ems or manager is available" do
+    it "#connection_source" do
+      expect { TestClass.new.send(:connection_source) }.to raise_error(RuntimeError)
     end
   end
 end

@@ -1,4 +1,4 @@
-require "spec_helper"
+include AutomationSpecHelper
 
 module MiqAeObjectSpec
   include MiqAeEngine
@@ -31,7 +31,7 @@ module MiqAeObjectSpec
       hash = Hash.from_xml(xml)
       attrs = hash['MiqAeObject']['MiqAeAttribute']
       args.each do |key, value|
-        find_match(attrs, key, value).should be_true
+        expect(find_match(attrs, key, value)).to be_truthy
       end
     end
 
@@ -60,42 +60,51 @@ module MiqAeObjectSpec
 
     it "#process_args_as_attributes with a hash with no object reference" do
       result = @miq_obj.process_args_as_attributes("name" => "fred")
-      result["name"].should be_kind_of(String)
-      result["name"].should == "fred"
+      expect(result["name"]).to be_kind_of(String)
+      expect(result["name"]).to eq("fred")
     end
 
     it "#process_args_as_attributes with a hash with an object reference" do
       result = @miq_obj.process_args_as_attributes("VmOrTemplate::vm" => "#{@vm.id}")
-      result["vm_id"].should == @vm.id.to_s
-      result["vm"].should be_kind_of(MiqAeMethodService::MiqAeServiceVmOrTemplate)
+      expect(result["vm_id"]).to eq(@vm.id.to_s)
+      expect(result["vm"]).to be_kind_of(MiqAeMethodService::MiqAeServiceVmOrTemplate)
     end
 
     it "#process_args_as_attributes with a single element array" do
       result = @miq_obj.process_args_as_attributes({"Array::vms" => "VmOrTemplate::#{@vm.id}"})
-      result["vms"].should be_kind_of(Array)
-      result["vms"].length.should == 1
+      expect(result["vms"]).to be_kind_of(Array)
+      expect(result["vms"].length).to eq(1)
     end
 
     it "#process_args_as_attributes with an array" do
       vm2 = FactoryGirl.create(:vm_vmware)
       result = @miq_obj.process_args_as_attributes({"Array::vms" => "VmOrTemplate::#{@vm.id},VmOrTemplate::#{vm2.id}"})
-      result["vms"].should be_kind_of(Array)
-      result["vms"].length.should == 2
+      expect(result["vms"]).to be_kind_of(Array)
+      expect(result["vms"].length).to eq(2)
     end
 
     it "#process_args_as_attributes with an array containing invalid entries" do
       vm2 = FactoryGirl.create(:vm_vmware)
       result = @miq_obj.process_args_as_attributes({"Array::vms" => "VmOrTemplate::#{@vm.id},fred::12,,VmOrTemplate::#{vm2.id}"})
-      result["vms"].should be_kind_of(Array)
-      result["vms"].length.should == 2
+      expect(result["vms"]).to be_kind_of(Array)
+      expect(result["vms"].length).to eq(2)
     end
 
     it "#process_args_as_attributes with an array containing disparate objects" do
       host    = FactoryGirl.create(:host)
       ems     = FactoryGirl.create(:ems_vmware)
       result  = @miq_obj.process_args_as_attributes({"Array::my_objects" => "VmOrTemplate::#{@vm.id},Host::#{host.id},ExtManagementSystem::#{ems.id}"})
-      result["my_objects"].should be_kind_of(Array)
-      result["my_objects"].length.should == 3
+      expect(result["my_objects"]).to be_kind_of(Array)
+      expect(result["my_objects"].length).to eq(3)
+    end
+
+    it "disabled inheritance" do
+      @user = FactoryGirl.create(:user_with_group)
+      create_state_ae_model(:name => 'LUIGI', :ae_class => 'CLASS1', :ae_namespace => 'A/C', :instance_name => 'FRED')
+      klass = MiqAeClass.find_by_name('CLASS1')
+      klass.update_attributes!(:inherits => '/LUIGI/A/C/missing')
+      workspace = MiqAeEngine.instantiate("/A/C/CLASS1/FRED", @user)
+      expect(workspace.root).not_to be_nil
     end
 
     context "#enforce_state_maxima" do
@@ -109,7 +118,8 @@ module MiqAeObjectSpec
       it "should raise an exception after exceeding max_time" do
         Timecop.freeze(Time.parse('2013-01-01 01:00:00 UTC')) do
           @ws.root['ae_state_started'] = '2013-01-01 00:00:00 UTC'
-          expect { @miq_obj.enforce_state_maxima({'max_time' => '1.hour'}) }.to raise_error
+          expect { @miq_obj.enforce_state_maxima('max_time' => '1.hour') }
+            .to raise_error(RuntimeError, /exceeded maximum/)
         end
       end
     end

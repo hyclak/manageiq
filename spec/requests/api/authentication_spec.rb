@@ -1,19 +1,7 @@
 #
 # REST API Request Tests - /api authentication
 #
-require 'spec_helper'
-
 describe ApiController do
-  include Rack::Test::Methods
-
-  before(:each) do
-    init_api_spec_env
-  end
-
-  def app
-    Vmdb::Application
-  end
-
   ENTRYPOINT_KEYS = %w(name description version versions identity collections)
 
   context "Basic Authentication" do
@@ -108,16 +96,27 @@ describe ApiController do
       expect_single_resource_query
       expect_result_to_have_keys(ENTRYPOINT_KEYS)
       expect_result_to_match_hash(
-        @result["identity"],
+        response_hash["identity"],
         "userid"     => @user.userid,
         "name"       => @user.name,
         "user_href"  => "/api/users/#{@user.id}",
         "group"      => group2.description,
         "group_href" => "/api/groups/#{group2.id}",
         "role"       => @role.name,
+        "role_href"  => "/api/roles/#{group2.miq_user_role.id}",
         "tenant"     => @group.tenant.name
       )
-      expect(@result["identity"]["groups"]).to match_array(@user.miq_groups.pluck(:description))
+      expect(response_hash["identity"]["groups"]).to match_array(@user.miq_groups.pluck(:description))
+    end
+
+    it "querying user's authorization" do
+      api_basic_authorize
+
+      run_get entrypoint_url, :attributes => "authorization"
+
+      expect_single_resource_query
+      expect_result_to_have_keys(ENTRYPOINT_KEYS + %w(authorization))
+      expect_hash_to_have_keys(response_hash["authorization"], %w(product_features))
     end
   end
 
@@ -145,7 +144,7 @@ describe ApiController do
       expect_single_resource_query
       expect_result_to_have_keys(%w(auth_token))
 
-      auth_token = @result["auth_token"]
+      auth_token = response_hash["auth_token"]
 
       run_get entrypoint_url, :headers => {"auth_token" => auth_token}
 
@@ -161,8 +160,8 @@ describe ApiController do
       expect_single_resource_query
       expect_result_to_have_keys(%w(auth_token token_ttl expires_on))
 
-      auth_token = @result["auth_token"]
-      token_expires_on = @result["expires_on"]
+      auth_token = response_hash["auth_token"]
+      token_expires_on = response_hash["expires_on"]
 
       tm = TokenManager.new("api")
       token_info = tm.token_get_info("api", auth_token)
@@ -183,7 +182,7 @@ describe ApiController do
 
       expect_single_resource_query
       expect_result_to_have_keys(%w(auth_token token_ttl expires_on))
-      expect(@result["token_ttl"]).to eq(api_token_ttl)
+      expect(response_hash["token_ttl"]).to eq(api_token_ttl)
     end
 
     it "gets a token based identifier with an invalid requester_type" do
@@ -202,7 +201,18 @@ describe ApiController do
 
       expect_single_resource_query
       expect_result_to_have_keys(%w(auth_token token_ttl expires_on))
-      expect(@result["token_ttl"]).to eq(ui_token_ttl)
+      expect(response_hash["token_ttl"]).to eq(ui_token_ttl)
+    end
+
+    it "forgets the current token when asked to" do
+      api_basic_authorize
+
+      run_get auth_url
+
+      auth_token = response_hash["auth_token"]
+
+      expect_any_instance_of(TokenManager).to receive(:invalidate_token).with("api", auth_token)
+      run_delete auth_url, "auth_token" => auth_token
     end
   end
 end

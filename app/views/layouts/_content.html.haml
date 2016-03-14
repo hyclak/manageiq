@@ -15,13 +15,14 @@
         .row.toolbar-pf#toolbar
           .col-md-12
             .toolbar-pf-actions
-              = render :partial => "layouts/x_taskbar"
+              = render_toolbars(calculate_toolbars)
         #main-content.row
           .col-md-12
             .row
               .col-md-7#explorer
                 %h1#explorer_title
-                  = @right_cell_text
+                  %span#explorer_title_text
+                    = URI.unescape(@right_cell_text) if @right_cell_text
                   -# Link to clear the current applied filter, will be moved via JS to the right cell header
                   %span#clear_search{:style => "display:none"}
                     - if route_exists?(:action => 'adv_search_clear')
@@ -30,6 +31,7 @@
                                 {:action              => "adv_search_clear"},
                                 "data-miq_sparkle_on" => true,
                                 :remote               => true,
+                                "data-method"         => :post,
                                 :title                => "Remove the current filter",
                                 :style                => "text-decoration: underline;")
                       )
@@ -40,12 +42,11 @@
               .col-md-12
                 = yield
         .row.toolbar-pf#paging_div
-          .col-md-12
-            .toolbar-pf-actions
-              - if saved_report_paging?
-                = render(:partial => 'layouts/saved_report_paging_bar', :locals => {:pages => @sb[:pages]})
-              - else
-                = render(:partial => '/layouts/x_pagingcontrols')
+          - if saved_report_paging?
+            = render(:partial => 'layouts/saved_report_paging_bar',
+                     :locals  => {:pages => @sb[:pages]})
+          - else
+            = render(:partial => 'layouts/x_pagingcontrols')
 
         - unless simulate
           .resizer.hidden-xs
@@ -71,7 +72,9 @@
             .row.toolbar-pf#toolbar
               .col-md-12
                 .toolbar-pf-actions
-                  = render :partial => "layouts/taskbar"
+                  - if  @layout == "dashboard"
+                    = render :partial => "/layouts/tabs"
+                  = render_toolbars(calculate_toolbars)
           #main-content.row
             .col-md-12
               .row
@@ -87,16 +90,12 @@
                   = yield
           - unless @in_a_form
             .row.toolbar-pf#paging_div
-              .col-md-12
-                .toolbar-pf-actions
-                  - unless @embedded
-                    - if @pages && @items_per_page != ONE_MILLION
-                      = render(:partial => '/layouts/pagingcontrols',
-                              :locals => {:pages      => @pages,
-                                           :action_url => action_url_for_views,
-                                           :db         => @view.db,
-                                           :headers    => @view.headers,
-                                           :button_div => 'center_tb'})
+              = render(:partial => 'layouts/pagingcontrols',
+                       :locals  => {:pages      => @pages,
+                                    :action_url => action_url_for_views,
+                                    :db         => @view.try(:db),
+                                    :headers    => @view.try(:headers),
+                                    :button_div => 'center_tb'})
 
         .col-md-2.col-md-pull-10.sidebar-pf.sidebar-pf-left
           = render :partial => "layouts/listnav"
@@ -114,7 +113,7 @@
               .row
                 .col-md-12
                   %br
-                  = render :partial => '/layouts/tabs'
+                  = render :partial => 'layouts/tabs'
             .col-md-12
               .row
                 .col-md-12
@@ -125,7 +124,7 @@
             .row.toolbar-pf#toolbar
               .col-md-12
                 .toolbar-pf-actions
-                  = render :partial => "layouts/taskbar"
+                  = render_toolbars(calculate_toolbars)
           #main-content.row
             .col-md-12
               .row
@@ -140,17 +139,24 @@
                   = yield
           - if layout_uses_paging? && !@in_a_form
             .row.toolbar-pf#paging_div
-              .col-md-12
-                .toolbar-pf-actions
-                  - unless @embedded
-                    - if @pages && @items_per_page != ONE_MILLION
-                      = render(:partial => '/layouts/pagingcontrols',
-                              :locals => {:pages      => @pages,
-                                           :action_url => action_url_for_views,
-                                           :db         => @view.db,
-                                           :headers    => @view.headers,
-                                           :button_div => 'center_tb'})
+              = render(:partial => 'layouts/pagingcontrols',
+                       :locals  => {:pages      => @pages,
+                                    :action_url => action_url_for_views,
+                                    :db         => @view.try(:db),
+                                    :headers    => @view.try(:headers),
+                                    :button_div => 'center_tb'})
 
 - if show_advanced_search?
   :javascript
     #{javascript_show_if_exists("adv_searchbox_div")}
+
+:javascript
+  // a hack to prevent toolbars disappearing behind top menus, see BZ#1291465 for details
+  $('.container-fluid').scrollTop(0);
+
+- if @record
+  :javascript
+    ManageIQ.record.recordId = '#{@record.id}';
+- else
+  :javascript
+    ManageIQ.record.recordId = null;

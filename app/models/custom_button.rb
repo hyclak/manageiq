@@ -1,5 +1,4 @@
-class CustomButton < ActiveRecord::Base
-  default_scope { where conditions_for_my_region_default_scope }
+class CustomButton < ApplicationRecord
   has_one       :resource_action, :as => :resource, :dependent => :destroy, :autosave => true
 
   serialize :options
@@ -42,11 +41,7 @@ class CustomButton < ActiveRecord::Base
   def expanded_serializable_hash
     button_hash = serializable_hash
     if resource_action
-      resource_action_hash = resource_action.serializable_hash
-      if resource_action.dialog
-        resource_action_hash.merge!(:dialog => DialogSerializer.new.serialize([resource_action.dialog]).first)
-      end
-      button_hash.merge!(:resource_action => resource_action_hash)
+      button_hash[:resource_action] = resource_action.serializable_hash
     end
     button_hash
   end
@@ -80,22 +75,6 @@ class CustomButton < ActiveRecord::Base
       :zone        => target.try(:my_zone),
       :priority    => MiqQueue::HIGH_PRIORITY,
     )
-  end
-
-  def self.save_as_button(opts)
-    [:uri, :userid, :target_attr_name].each { |a| raise "no value given for '#{a}'" if opts[a].nil? }
-
-    opts[:options] = {:target_attr_name => opts.delete(:target_attr_name)}
-    opts[:uri_path], opts[:uri_attributes], opts[:uri_message] = parse_uri(opts.delete(:uri))
-
-    rec = new(opts)
-    if opts[:description].nil? && !rec.new_record?
-      rec.destroy
-      return nil
-    end
-
-    rec.new_record? ? rec.save! : rec.update_attributes!(opts)
-    rec
   end
 
   def to_export_xml(_options)

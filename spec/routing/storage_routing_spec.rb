@@ -1,4 +1,3 @@
-require "spec_helper"
 require "routing/shared_examples"
 
 describe "routes for StorageController" do
@@ -38,6 +37,9 @@ describe "routes for StorageController" do
   describe "#disk_files" do
     it "routes with GET" do
       expect(get("/#{controller_name}/disk_files")).to route_to("#{controller_name}#disk_files")
+    end
+    it "routes with POST" do
+      expect(post("/#{controller_name}/disk_files")).to route_to("#{controller_name}#disk_files")
     end
   end
 

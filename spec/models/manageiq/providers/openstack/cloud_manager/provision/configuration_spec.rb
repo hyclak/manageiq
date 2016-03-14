@@ -1,5 +1,3 @@
-require "spec_helper"
-
 describe ManageIQ::Providers::Openstack::CloudManager::Provision::Configuration do
   context "#configure_network_adapters" do
     before do
@@ -19,7 +17,7 @@ describe ManageIQ::Providers::Openstack::CloudManager::Provision::Configuration 
                                    :cloud_network => [@net1.id, @net1.name]
                                  }
                                 )
-      @task.stub(:miq_request => double("MiqRequest").as_null_object)
+      allow(@task).to receive_messages(:miq_request => double("MiqRequest").as_null_object)
     end
 
     it "sets nic from dialog" do

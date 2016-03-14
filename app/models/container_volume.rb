@@ -1,3 +1,4 @@
-class ContainerVolume < ActiveRecord::Base
+class ContainerVolume < ApplicationRecord
+  include ReportableMixin
   belongs_to :parent, :polymorphic => true
 end

@@ -1,4 +1,4 @@
-class EmsCluster < ActiveRecord::Base
+class EmsCluster < ApplicationRecord
   include NewWithTypeStiMixin
   include_concern 'CapacityPlanning'
   include ReportableMixin
@@ -9,15 +9,16 @@ class EmsCluster < ActiveRecord::Base
   belongs_to  :ext_management_system, :foreign_key => "ems_id"
   has_many    :hosts, :dependent => :nullify
   has_many    :vms_and_templates
-  has_many    :miq_templates
-  has_many    :vms
+  has_many    :miq_templates, :inverse_of => :ems_cluster
+  has_many    :vms, :inverse_of => :ems_cluster
 
   has_many    :metrics,                :as => :resource  # Destroy will be handled by purger
   has_many    :metric_rollups,         :as => :resource  # Destroy will be handled by purger
   has_many    :vim_performance_states, :as => :resource  # Destroy will be handled by purger
 
   has_many    :policy_events, -> { order "timestamp" }
-  has_many    :miq_events,             :as => :target,    :dependent => :destroy
+  has_many    :miq_events,         :as => :target,   :dependent => :destroy
+  has_many    :miq_alert_statuses, :as => :resource, :dependent => :destroy
 
   virtual_column :v_ram_vr_ratio,      :type => :float,   :uses => [:aggregate_memory, :aggregate_vm_memory]
   virtual_column :v_cpu_vr_ratio,      :type => :float,   :uses => [:aggregate_cpu_total_cores, :aggregate_vm_cpus]
@@ -57,7 +58,14 @@ class EmsCluster < ActiveRecord::Base
   include Metric::CiMixin
   include MiqPolicyMixin
   include AsyncDeleteMixin
-  include WebServiceAttributeMixin
+
+  def tenant_identity
+    if ext_management_system
+      ext_management_system.tenant_identity
+    else
+      User.super_admin.tap { |u| u.current_group = Tenant.root_tenant.default_miq_group }
+    end
+  end
 
   #
   # Provider Object methods
@@ -310,14 +318,12 @@ class EmsCluster < ActiveRecord::Base
   end
 
   def self.get_perf_collection_object_list
-    # cl_hash = self.in_my_region.all(:include => [:tags, :taggings, :ext_management_system], :select => "name, id, ems_id").inject({}) do |h,c|
-    cl_hash = in_my_region.all(:include => [:tags, :taggings], :select => "name, id").inject({}) do |h, c|
+    cl_hash = in_my_region.includes(:tags, :taggings).select(:id, :name).each_with_object({}) do |c, h|
       h[c.id] = {:cl_rec => c, :ho_ids => c.host_ids}
-      h
     end
 
     hids = cl_hash.values.flat_map { |v| v[:ho_ids] }.compact.uniq
-    hosts_by_id = Host.find_all_by_id(hids, :include => [:tags, :taggings], :select => "name, id").inject({}) { |h, host| h[host.id] = host; h }
+    hosts_by_id = Host.where(:id => hids).includes(:tags, :taggings).select(:id, :name).index_by(&:id)
 
     cl_hash.each do |_k, v|
       hosts = hosts_by_id.values_at(*v[:ho_ids]).compact

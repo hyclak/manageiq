@@ -10,15 +10,29 @@ function miqRowClick(row_id, row_url, row_url_ajax) {
   }
 }
 
+function checkboxItemId($elem) {
+  var val = $elem.val()
+  var name = $elem.attr('name');
+
+  if (_.startsWith(name, 'check_')) {
+    return name.substr(6);
+  }
+
+  return val;
+}
+
 // returns a list of checked row ids
 function miqGridGetCheckedRows(grid) {
   grid = grid || 'list_grid';
   var crows = [];
 
   $('#' + grid + ' .list-grid-checkbox').each(function(_idx, elem) {
-    if ($(elem).prop('checked')) {
-      crows.push($(elem).val());
+    if (! $(elem).prop('checked')) {
+      return;
     }
+
+    var item_id = checkboxItemId($(elem));
+    crows.push(item_id);
   });
 
   return crows;
@@ -41,12 +55,12 @@ function miqOrderService(id) {
 }
 
 // Handle checkbox
-function miqGridOnCheck(elem, button_div) {
+function miqGridOnCheck(elem, button_div, grid) {
   if (elem) {
     miqUpdateButtons(elem, button_div);
   }
 
-  var crows = miqGridGetCheckedRows();
+  var crows = miqGridGetCheckedRows(grid);
   ManageIQ.gridChecks = crows;
 
   if (miqDomElementExists('center_tb')) {

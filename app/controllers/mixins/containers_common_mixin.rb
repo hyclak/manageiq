@@ -1,11 +1,16 @@
 module ContainersCommonMixin
   extend ActiveSupport::Concern
+  include AuthorizationMessagesMixin
 
   def index
     redirect_to :action => 'show_list'
   end
 
   def show
+    # fix breadcrumbs - remove displaying 'topology' when navigating to any container related entity summary page
+    if @breadcrumbs.present? && (@breadcrumbs.last[:name].eql? 'Topology')
+      @breadcrumbs.clear
+    end
     @display = params[:display] || "main" unless control_selected?
     @lastaction = "show"
     @showtype = "main"
@@ -37,7 +42,15 @@ module ContainersCommonMixin
     end
   end
 
+  def show_list
+    process_show_list
+  end
+
   private
+
+  def display_name
+    ui_lookup(:tables => @record.class.base_class.name)
+  end
 
   def show_container(record, controller_name, display_name)
     return if record_no_longer_exists?(record)
@@ -86,6 +99,10 @@ module ContainersCommonMixin
       show_container_display(record, "container_image_registries", ContainerImageRegistry)
     elsif @display == "container_nodes" || session[:display] == "container_nodes" && params[:display].nil?
       show_container_display(record, "container_nodes", ContainerNode)
+    elsif @display == "persistent_volumes" || session[:display] == "persistent_volumes" && params[:display].nil?
+      show_container_display(record, "persistent_volumes", PersistentVolume)
+    elsif @display == "container_builds" || session[:display] == "container_builds" && params[:display].nil?
+      show_container_display(record, "container_builds", ContainerBuild)
     end
     # Came in from outside show_list partial
     if params[:ppsetting] || params[:searchtag] || params[:entry] || params[:sort_choice]
@@ -115,14 +132,7 @@ module ContainersCommonMixin
                     :url  => "/#{alt_controller_name || controller_name}/show/#{record.id}?display=#{@display}")
     @view, @pages = get_view(clazz, :parent => record)  # Get the records (into a view) and the paginator
     @showtype = @display
-
-    total_count = @view.extras.fetch(:total_count, 0)
-    auth_count = @view.extras.fetch(:auth_count, 0)
-    if total_count > auth_count
-      @bottom_msg = "* You are not authorized to view " +
-                    pluralize(total_count - auth_count, "other #{title.singularize}") +
-                    " on this #{ui_lookup(:tables => @table_name)}"
-    end
+    notify_about_unauthorized_items(title, ui_lookup(:tables => @table_name))
   end
 
   # Scan all selected or single displayed image(s)

@@ -1,4 +1,3 @@
-require "spec_helper"
 require "ovirt"
 
 describe ManageIQ::Providers::Redhat::InfraManager::Provision::Configuration::Network do
@@ -22,13 +21,13 @@ describe ManageIQ::Providers::Redhat::InfraManager::Provision::Configuration::Ne
                                :status      => 'Ok',
                                :options     => {:src_vm_id => template.id}
                               )
-    @task.stub(
+    allow(@task).to receive_messages(
       :dest_cluster             => ems_cluster,
       :get_provider_destination => rhevm_vm
     )
 
-    rhevm_vm.stub(:nics => [rhevm_nic1, rhevm_nic2])
-    Ovirt::Cluster.stub(:find_by_href => rhevm_cluster)
+    allow(rhevm_vm).to receive_messages(:nics => [rhevm_nic1, rhevm_nic2])
+    allow(Ovirt::Cluster).to receive_messages(:find_by_href => rhevm_cluster)
   end
 
   context "#configure_network_adapters" do
@@ -39,8 +38,8 @@ describe ManageIQ::Providers::Redhat::InfraManager::Provision::Configuration::Ne
 
       it "first NIC from dialog" do
         set_vlan
-        rhevm_nic1.should_receive(:apply_options!)
-        rhevm_nic2.should_receive(:apply_options!)
+        expect(rhevm_nic1).to receive(:apply_options!)
+        expect(rhevm_nic2).to receive(:apply_options!)
 
         @task.configure_network_adapters
 
@@ -51,8 +50,8 @@ describe ManageIQ::Providers::Redhat::InfraManager::Provision::Configuration::Ne
       end
 
       it "no NIC from dialog" do
-        rhevm_nic1.should_receive(:destroy)
-        rhevm_nic2.should_receive(:apply_options!)
+        expect(rhevm_nic1).to receive(:destroy)
+        expect(rhevm_nic2).to receive(:apply_options!)
 
         @task.configure_network_adapters
       end
@@ -61,8 +60,8 @@ describe ManageIQ::Providers::Redhat::InfraManager::Provision::Configuration::Ne
     it "dialog NIC only" do
       set_vlan
 
-      rhevm_nic1.should_receive(:apply_options!)
-      rhevm_nic2.should_receive(:destroy)
+      expect(rhevm_nic1).to receive(:apply_options!)
+      expect(rhevm_nic2).to receive(:destroy)
 
       @task.configure_network_adapters
     end
@@ -75,8 +74,8 @@ describe ManageIQ::Providers::Redhat::InfraManager::Provision::Configuration::Ne
       it "should update an existing adapter's network" do
         @task.options[:networks] = [{:network => network_name}]
 
-        rhevm_vm.should_receive(:nics).and_return([rhevm_nic1])
-        rhevm_nic1.should_receive(:apply_options!).with(:name => "nic1", :network_id => network_id)
+        expect(rhevm_vm).to receive(:nics).and_return([rhevm_nic1])
+        expect(rhevm_nic1).to receive(:apply_options!).with(:name => "nic1", :network_id => network_id)
 
         @task.configure_network_adapters
       end
@@ -84,8 +83,8 @@ describe ManageIQ::Providers::Redhat::InfraManager::Provision::Configuration::Ne
       it "should update an existing adapter's MAC address" do
         @task.options[:networks] = [{:mac_address => mac_address}]
 
-        rhevm_vm.should_receive(:nics).and_return([rhevm_nic1])
-        rhevm_nic1.should_receive(:apply_options!).with(
+        expect(rhevm_vm).to receive(:nics).and_return([rhevm_nic1])
+        expect(rhevm_nic1).to receive(:apply_options!).with(
           :name        => "nic1",
           :network_id  => network_id,
           :mac_address => mac_address
@@ -98,8 +97,8 @@ describe ManageIQ::Providers::Redhat::InfraManager::Provision::Configuration::Ne
     it "should create a new adapter with an optional MAC address" do
       @task.options[:networks] = [{:network => network_name, :mac_address => mac_address}]
 
-      rhevm_vm.should_receive(:nics).and_return([])
-      rhevm_vm.should_receive(:create_nic).with(
+      expect(rhevm_vm).to receive(:nics).and_return([])
+      expect(rhevm_vm).to receive(:create_nic).with(
         :name        => 'nic1',
         :network_id  => network_id,
         :mac_address => mac_address

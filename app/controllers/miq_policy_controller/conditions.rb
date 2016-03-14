@@ -10,7 +10,8 @@ module MiqPolicyController::Conditions
       if @condition && @condition.id
         add_flash(_("Edit of %{model} \"%{name}\" was cancelled by the user") % {:model => "#{ui_lookup(:model => @edit[:new][:towhat])} #{ui_lookup(:model => "Condition")}", :name => @condition.description})
       else
-        add_flash(_("Add of new %s was cancelled by the user") % "#{ui_lookup(:model => @edit[:new][:towhat])} #{ui_lookup(:model => "Condition")}")
+        add_flash(_("Add of new %{model} was cancelled by the user") %
+          {:model => "#{ui_lookup(:model => @edit[:new][:towhat])} #{ui_lookup(:model => "Condition")}"})
       end
       @edit = nil
       get_node_info(x_node)
@@ -106,7 +107,8 @@ module MiqPolicyController::Conditions
                        :target_id    => policy.id,
                        :target_class => "MiqPolicy",
                        :userid       => session[:userid],
-                       :message      => "Condition record ID #{params[:id]} was removed from Policy ID #{policy.id}")
+                       :message      => _("Condition record ID %{param_id} was removed from Policy ID %{policy_id}")) %
+                                          {:param_id => params[:id], :policy_id => policy.id}
     add_flash(_("Condition \"%{cond_name}\" has been removed from Policy \"%{pol_name}\"") % {:cond_name => cdesc, :pol_name => policy.description})
     policy_get_info(policy)
     @nodetype = "p"
@@ -122,14 +124,15 @@ module MiqPolicyController::Conditions
     # showing 1 condition, delete it
     con = Condition.find_by_id(params[:id])
     if params[:id].nil? || con.nil?
-      add_flash(_("%s no longer exists") % ui_lookup(:model => "Condition"),
+      add_flash(_("%{models} no longer exists") % {:models => ui_lookup(:model => "Condition")},
                 :error)
     else
       conditions.push(params[:id])
       @new_condition_node = "xx-#{con.towhat.downcase}"
     end
     process_conditions(conditions, "destroy") unless conditions.empty?
-    add_flash(_("The selected %s was deleted") % ui_lookup(:models => "Condition")) if @flash_array.nil?
+    add_flash(_("The selected %{models} was deleted") %
+      {:models => ui_lookup(:models => "Condition")}) if @flash_array.nil?
     get_node_info(@new_condition_node)
     replace_right_cell("xx", [:condition])
   end
@@ -156,8 +159,8 @@ module MiqPolicyController::Conditions
     @edit[:current] = {}
 
     if params[:copy]  # If copying, create a new condition based on the original
-      c = Condition.find(params[:id])
-      @condition = Condition.new(c.attributes.merge(:name => nil))
+      cond = Condition.find(params[:id])
+      @condition = cond.dup.tap { |c| c.name = nil }
     else
       @condition = params[:id] && params[:typ] != "new" ? Condition.find(params[:id]) : Condition.new     # Get existing or new record
     end
@@ -223,7 +226,7 @@ module MiqPolicyController::Conditions
 
   def condition_get_all_folders
     @folders = ["Host", "Vm"]
-    @right_cell_text = _("All %s") % ui_lookup(:models => "Condition")
+    @right_cell_text = _("All %{models}") % {:models => ui_lookup(:models => "Condition")}
     @right_cell_div = "condition_folders"
   end
 
@@ -231,7 +234,7 @@ module MiqPolicyController::Conditions
     @conditions = Condition.all.sort_by { |c| c.description.downcase }
     set_search_text
     @conditions = apply_search_filter(@search_text, @conditions) unless @search_text.blank?
-    @right_cell_text = _("All %s") % ui_lookup(:models => "Condition")
+    @right_cell_text = _("All %{models}") % {:models => ui_lookup(:models => "Condition")}
     @right_cell_div = "condition_list"
   end
 

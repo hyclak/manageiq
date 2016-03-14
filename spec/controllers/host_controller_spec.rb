@@ -1,5 +1,3 @@
-require "spec_helper"
-
 describe HostController do
   context "#button" do
     render_views
@@ -7,6 +5,8 @@ describe HostController do
     before(:each) do
       set_user_privileges
       EvmSpecHelper.create_guid_miq_server_zone
+
+      ApplicationController.handle_exceptions = true
     end
 
     it "doesn't break" do
@@ -21,65 +21,65 @@ describe HostController do
     end
 
     it "when VM Right Size Recommendations is pressed" do
-      controller.should_receive(:vm_right_size)
-      post :button, :pressed => 'vm_right_size', :format => :js
-      controller.send(:flash_errors?).should_not be_true
+      expect(controller).to receive(:vm_right_size)
+      post :button, :params => { :pressed => 'vm_right_size', :format => :js }
+      expect(controller.send(:flash_errors?)).not_to be_truthy
     end
 
     it "when VM Migrate is pressed" do
-      controller.should_receive(:prov_redirect).with("migrate")
-      post :button, :pressed => 'vm_migrate', :format => :js
-      controller.send(:flash_errors?).should_not be_true
+      expect(controller).to receive(:prov_redirect).with("migrate")
+      post :button, :params => { :pressed => 'vm_migrate', :format => :js }
+      expect(controller.send(:flash_errors?)).not_to be_truthy
     end
 
     it "when VM Retire is pressed" do
-      controller.should_receive(:retirevms).once
-      post :button, :pressed => 'vm_retire', :format => :js
-      controller.send(:flash_errors?).should_not be_true
+      expect(controller).to receive(:retirevms).once
+      post :button, :params => { :pressed => 'vm_retire', :format => :js }
+      expect(controller.send(:flash_errors?)).not_to be_truthy
     end
 
     it "when VM Manage Policies is pressed" do
-      controller.should_receive(:assign_policies).with(VmOrTemplate)
-      post :button, :pressed => 'vm_protect', :format => :js
-      controller.send(:flash_errors?).should_not be_true
+      expect(controller).to receive(:assign_policies).with(VmOrTemplate)
+      post :button, :params => { :pressed => 'vm_protect', :format => :js }
+      expect(controller.send(:flash_errors?)).not_to be_truthy
     end
 
     it "when MiqTemplate Manage Policies is pressed" do
-      controller.should_receive(:assign_policies).with(VmOrTemplate)
-      post :button, :pressed => 'miq_template_protect', :format => :js
-      controller.send(:flash_errors?).should_not be_true
+      expect(controller).to receive(:assign_policies).with(VmOrTemplate)
+      post :button, :params => { :pressed => 'miq_template_protect', :format => :js }
+      expect(controller.send(:flash_errors?)).not_to be_truthy
     end
 
     it "when VM Tag is pressed" do
-      controller.should_receive(:tag).with(VmOrTemplate)
-      post :button, :pressed => 'vm_tag', :format => :js
-      controller.send(:flash_errors?).should_not be_true
+      expect(controller).to receive(:tag).with(VmOrTemplate)
+      post :button, :params => { :pressed => 'vm_tag', :format => :js }
+      expect(controller.send(:flash_errors?)).not_to be_truthy
     end
 
     it "when MiqTemplate Tag is pressed" do
-      controller.should_receive(:tag).with(VmOrTemplate)
-      post :button, :pressed => 'miq_template_tag', :format => :js
-      controller.send(:flash_errors?).should_not be_true
+      expect(controller).to receive(:tag).with(VmOrTemplate)
+      post :button, :params => { :pressed => 'miq_template_tag', :format => :js }
+      expect(controller.send(:flash_errors?)).not_to be_truthy
     end
 
     it "when Custom Button is pressed" do
       host = FactoryGirl.create(:host)
       custom_button = FactoryGirl.create(:custom_button, :applies_to_class => "Host")
       d = FactoryGirl.create(:dialog, :label => "Some Label")
-      dt = FactoryGirl.create(:dialog_tab, :label => "Some Tab")
-      d.add_resource(dt, :order => 0)
+      dt = FactoryGirl.create(:dialog_tab, :label => "Some Tab", :order => 0)
+      d.dialog_tabs << dt
       ra = FactoryGirl.create(:resource_action, :dialog_id => d.id)
       custom_button.resource_action = ra
       custom_button.save
-      post :button, :pressed => "custom_button", :id => host.id, :button_id => custom_button.id
+      post :button, :params => { :pressed => "custom_button", :id => host.id, :button_id => custom_button.id }
       expect(response.status).to eq(200)
-      controller.send(:flash_errors?).should_not be_true
+      expect(controller.send(:flash_errors?)).not_to be_truthy
     end
 
     it "when Drift button is pressed" do
-      controller.should_receive(:drift_analysis)
-      post :button, :pressed => 'common_drift', :format => :js
-      controller.send(:flash_errors?).should_not be_true
+      expect(controller).to receive(:drift_analysis)
+      post :button, :params => { :pressed => 'common_drift', :format => :js }
+      expect(controller.send(:flash_errors?)).not_to be_truthy
     end
   end
 
@@ -97,7 +97,7 @@ describe HostController do
                                       )
 
       expect_any_instance_of(Host).to receive(:save).and_call_original
-      controller.should_receive(:render)
+      expect(controller).to receive(:render)
       controller.send(:create)
       expect(response.status).to eq(200)
     end
@@ -118,7 +118,7 @@ describe HostController do
                                        :default_verify   => "def",
                                        :user_assigned_os => "linux_generic"
                                       )
-      controller.should_receive(:render)
+      expect(controller).to receive(:render)
       controller.send(:create)
       expect(response.status).to eq(200)
     end
@@ -147,8 +147,8 @@ describe HostController do
 
     it "renders show_details" do
       controller.instance_variable_set(:@breadcrumbs, [])
-      controller.stub(:get_view)
-      get :guest_applications, :id => @host.id
+      allow(controller).to receive(:get_view)
+      get :guest_applications, :params => { :id => @host.id }
       expect(response.status).to eq(200)
       expect(response).to render_template('host/show')
       expect(assigns(:breadcrumbs)).to eq([{:name => "#{@host.name} (Packages)",
@@ -157,38 +157,45 @@ describe HostController do
     end
   end
 
-  it "#show" do
-    set_user_privileges
-    host = FactoryGirl.create(:host,
-                              :hardware => FactoryGirl.create(:hardware,
-                                                              :cpu_sockets          => 2,
-                                                              :cpu_cores_per_socket => 4,
-                                                              :cpu_total_cores      => 8
-                                                             )
-                             )
+  describe "#show" do
+    before do
+      EvmSpecHelper.create_guid_miq_server_zone
+      @user = FactoryGirl.create(:user)
+      login_as @user
+      @host = FactoryGirl.create(:host,
+               :hardware => FactoryGirl.create(:hardware,
+                              :cpu_sockets          => 2,
+                              :cpu_cores_per_socket => 4,
+                              :cpu_total_cores      => 8))
+      session[:settings] = {:quadicons => {:host => 'foo'}}
+    end
 
-    get :show, :id => host.id
+    subject { get :show, :params => {:id => @host.id} }
 
-    expect(response.status).to eq(200)
-    expect(response).to render_template('host/show')
+    context "render listnav and host" do
+      render_views
+      it { is_expected.to have_http_status 200 }
+      it { is_expected.to render_template('host/show') }
+      it { is_expected.to render_template(:partial => "layouts/listnav/_host") }
+    end
   end
 
   context "#set_credentials" do
-    let(:mocked_host) { mock_model(Host) }
+    let(:mocked_host) { double(Host) }
     it "uses params[:default_password] for validation if one exists" do
       controller.instance_variable_set(:@_params,
                                        :default_userid   => "default_userid",
                                        :default_password => "default_password2")
       creds = {:userid => "default_userid", :password => "default_password2"}
-      mocked_host.should_receive(:update_authentication).with({:default => creds}, {:save => false})
+      expect(mocked_host).to receive(:update_authentication).with({:default => creds}, {:save => false})
       expect(controller.send(:set_credentials, mocked_host, :validate)).to include(:default => creds)
     end
 
     it "uses the stored password for validation if params[:default_password] does not exist" do
       controller.instance_variable_set(:@_params, :default_userid => "default_userid")
-      mocked_host.should_receive(:authentication_password).and_return('default_password')
+      expect(mocked_host).to receive(:authentication_password).and_return('default_password')
       creds = {:userid => "default_userid", :password => "default_password"}
-      mocked_host.should_receive(:update_authentication).with({:default => creds}, {:save => false})
+      expect(mocked_host).to receive(:update_authentication).with({:default => creds}, {:save => false})
       expect(controller.send(:set_credentials, mocked_host, :validate)).to include(:default => creds)
     end
 
@@ -200,8 +207,8 @@ describe HostController do
                                        :remote_password  => "remote_password2")
       default_creds = {:userid => "default_userid", :password => "default_password2"}
       remote_creds = {:userid => "remote_userid", :password => "remote_password2"}
-      mocked_host.should_receive(:update_authentication).with({:default => default_creds,
-                                                               :remote  => remote_creds}, :save => false)
+      expect(mocked_host).to receive(:update_authentication).with({:default => default_creds,
+                                                                   :remote  => remote_creds}, :save => false)
 
       expect(controller.send(:set_credentials, mocked_host, :validate)).to include(:default => default_creds,
                                                                                    :remote  => remote_creds)
@@ -211,11 +218,11 @@ describe HostController do
       controller.instance_variable_set(:@_params,
                                        :default_userid => "default_userid",
                                        :remote_userid  => "remote_userid",)
-      mocked_host.should_receive(:authentication_password).and_return('default_password')
-      mocked_host.should_receive(:authentication_password).with(:remote).and_return('remote_password')
+      expect(mocked_host).to receive(:authentication_password).and_return('default_password')
+      expect(mocked_host).to receive(:authentication_password).with(:remote).and_return('remote_password')
       default_creds = {:userid => "default_userid", :password => "default_password"}
       remote_creds = {:userid => "remote_userid", :password => "remote_password"}
-      mocked_host.should_receive(:update_authentication).with({:default => default_creds,
+      expect(mocked_host).to receive(:update_authentication).with({:default => default_creds,
                                                                :remote  => remote_creds}, :save => false)
 
       expect(controller.send(:set_credentials, mocked_host, :validate)).to include(:default => default_creds,
@@ -228,12 +235,12 @@ describe HostController do
                                        :default_password => "default_password2",
                                        :ws_userid        => "ws_userid",
                                        :ipmi_userid      => "ipmi_userid")
-      mocked_host.should_receive(:authentication_password).with(:ws).and_return('ws_password')
-      mocked_host.should_receive(:authentication_password).with(:ipmi).and_return('ipmi_password')
+      expect(mocked_host).to receive(:authentication_password).with(:ws).and_return('ws_password')
+      expect(mocked_host).to receive(:authentication_password).with(:ipmi).and_return('ipmi_password')
       default_creds = {:userid => "default_userid", :password => "default_password2"}
       ws_creds = {:userid => "ws_userid", :password => "ws_password"}
       ipmi_creds = {:userid => "ipmi_userid", :password => "ipmi_password"}
-      mocked_host.should_receive(:update_authentication).with({:default => default_creds,
+      expect(mocked_host).to receive(:update_authentication).with({:default => default_creds,
                                                                :ws      => ws_creds,
                                                                :ipmi    => ipmi_creds}, :save => false)
 

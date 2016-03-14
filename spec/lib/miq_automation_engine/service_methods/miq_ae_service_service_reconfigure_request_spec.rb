@@ -1,5 +1,3 @@
-require "spec_helper"
-
 include AutomationSpecHelper
 module MiqAeServiceServiceReconfigureRequestSpec
   describe MiqAeMethodService::MiqAeServiceServiceReconfigureRequest do
@@ -20,7 +18,7 @@ module MiqAeServiceServiceReconfigureRequestSpec
     end
 
     it "returns 'service' for ci_type" do
-      invoke_ae.root('ci_type').should == 'service'
+      expect(invoke_ae.root('ci_type')).to eq('service')
     end
   end
 end

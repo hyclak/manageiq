@@ -1,4 +1,3 @@
-require "spec_helper"
 require_migration
 
 describe AssignTenantToMiqRequest do
@@ -22,7 +21,7 @@ describe AssignTenantToMiqRequest do
   end
 
   migration_context :up do
-    describe "#root_tenant" do
+    describe "tenant_stub.root_tenant" do
       it "doesnt create tenant if no records exist" do
         migrate
 
@@ -61,7 +60,7 @@ describe AssignTenantToMiqRequest do
 
       expect(tenant_stub.count).to eq(1)
       stubs.each do |stub|
-        expect(stub.where(:tenant_id => nil).exists?).to be_false
+        expect(stub.where(:tenant_id => nil).exists?).to be_falsey
       end
     end
   end

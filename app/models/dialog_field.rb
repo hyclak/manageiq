@@ -1,4 +1,4 @@
-class DialogField < ActiveRecord::Base
+class DialogField < ApplicationRecord
   include NewWithTypeStiMixin
   attr_accessor :value
   attr_accessor :dialog
@@ -96,12 +96,16 @@ class DialogField < ActiveRecord::Base
     "dialog_#{name}"
   end
 
-  def validate(dialog_tab, dialog_group)
+  def validate_field_data(dialog_tab, dialog_group)
     validate_error_message(dialog_tab, dialog_group) if required? && required_value_error?
   end
 
   def resource
     self
+  end
+
+  def update_and_serialize_values
+    DialogFieldSerializer.serialize(self)
   end
 
   private
@@ -124,5 +128,9 @@ class DialogField < ActiveRecord::Base
 
   def get_default_value
     default_value
+  end
+
+  def values_from_automate
+    DynamicDialogFieldValueProcessor.values_from_automate(self)
   end
 end

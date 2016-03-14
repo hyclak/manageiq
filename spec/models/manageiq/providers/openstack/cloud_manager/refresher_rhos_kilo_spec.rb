@@ -1,11 +1,10 @@
-require "spec_helper"
 require_relative "refresh_spec_common"
 
 describe ManageIQ::Providers::Openstack::CloudManager::Refresher do
   include Openstack::RefreshSpecCommon
 
   before(:each) do
-    setup_ems('1.2.3.4', 'password_2WpEraURh')
+    setup_ems('11.22.33.44', 'password_2WpEraURh')
     @environment = :kilo
   end
 

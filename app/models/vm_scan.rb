@@ -7,8 +7,9 @@ class VmScan < Job
   #
   DEFAULT_TIMEOUT = defined?(RSpec) ? 300 : 3000
 
-  def self.current_job_timeout
-    DEFAULT_TIMEOUT
+  def self.current_job_timeout(timeout_adjustment = 1)
+    timeout_adjustment = 1 if defined?(RSpec)
+    DEFAULT_TIMEOUT * timeout_adjustment
   end
 
   def load_transitions
@@ -56,7 +57,7 @@ class VmScan < Job
     rescue => err
       _log.log_backtrace(err)
       signal(:abort, err.message, "error")
-    rescue TimeoutError
+    rescue Timeout::Error
       msg = "Request to check policy timed out"
       _log.error(msg)
       signal(:abort, msg, "error")
@@ -95,7 +96,8 @@ class VmScan < Job
 
       # TODO: should this logic be moved to a VM subclass implementation?
       #       or, make type-specific Job classes.
-      if vm.kind_of?(ManageIQ::Providers::Openstack::CloudManager::Vm)
+      if vm.kind_of?(ManageIQ::Providers::Openstack::CloudManager::Vm) ||
+         vm.kind_of?(ManageIQ::Providers::Microsoft::InfraManager::Vm)
         if vm.ext_management_system
           sn_description = snapshotDescription
           _log.info("Creating snapshot, description: [#{sn_description}]")
@@ -170,7 +172,7 @@ class VmScan < Job
       _log.log_backtrace(err)
       signal(:abort, err.message, "error")
       return
-    rescue TimeoutError
+    rescue Timeout::Error
       msg = case options[:snapshot]
             when :smartProxy, :skipped then "Request to log snapshot user event with EMS timed out."
             else "Request to create snapshot timed out"
@@ -205,7 +207,7 @@ class VmScan < Job
       options[:categories] = vm.scan_profile_categories(scan_args["vmScanProfiles"])
 
       # If the host supports VixDisk Lib then we need to validate that the host has the required credentials set.
-      if vm.vendor.to_s == 'VMware'
+      if vm.vendor == 'vmware'
         scan_ci_type = ems_list['connect_to']
         if host.is_vix_disk? && ems_list[scan_ci_type] && (ems_list[scan_ci_type][:username].nil? || ems_list[scan_ci_type][:password].nil?)
           context[:snapshot_mor] = nil unless options[:snapshot] == :created
@@ -215,7 +217,7 @@ class VmScan < Job
 
       _log.info "[#{host.name}] communicates with [#{scan_ci_type}:#{ems_list[scan_ci_type][:hostname]}(#{ems_list[scan_ci_type][:address]})] to scan vm [#{vm.name}]" if agent_class == "MiqServer" && !ems_list[scan_ci_type].nil?
       vm.scan_metadata(options[:categories], "taskid" => jobid, "host" => host, "args" => [YAML.dump(scan_args)])
-    rescue TimeoutError
+    rescue Timeout::Error
       message = "timed out attempting to scan, aborting"
       _log.error("#{message}")
       signal(:abort, message, "error")
@@ -244,7 +246,7 @@ class VmScan < Job
 
     # Disable connecting to EMS for COS SmartProxy.  Embedded Proxy will
     # enable this if needed in the scan_sync_vm method in server_smart_proxy.rb.
-    ems_list['connect'] = false if vm.vendor.to_s == 'RedHat'
+    ems_list['connect'] = false if vm.vendor == 'redhat'
     ems_list
   end
 
@@ -254,7 +256,7 @@ class VmScan < Job
     # Check if Policy returned scan profiles to use, otherwise use the default profile if available.
     scan_args["vmScanProfiles"] = options[:scan_profiles] || vm.scan_profile_list
     scan_args['snapshot']['forceFleeceDefault'] = false if vm.scan_via_ems? && vm.template?
-    scan_args['permissions'] = {'group' => 36} if vm.vendor.to_s == 'RedHat'
+    scan_args['permissions'] = {'group' => 36} if vm.vendor == 'redhat'
     scan_args
   end
 
@@ -280,13 +282,15 @@ class VmScan < Job
           #       or, make type-specific Job classes.
           if vm.kind_of?(ManageIQ::Providers::Openstack::CloudManager::Vm)
             vm.ext_management_system.vm_delete_evm_snapshot(vm, mor)
+          elsif vm.kind_of?(ManageIQ::Providers::Microsoft::InfraManager::Vm)
+            vm.ext_management_system.vm_delete_evm_snapshot(vm, :snMor => mor)
           else
             delete_snapshot(mor)
           end
         rescue => err
           _log.error("#{err}")
           return
-        rescue TimeoutError
+        rescue Timeout::Error
           msg = "Request to delete snapshot timed out"
           _log.error("#{msg}")
         end
@@ -317,7 +321,7 @@ class VmScan < Job
                        "taskid" => jobid,
                        "host"   => host
                       )
-    rescue TimeoutError
+    rescue Timeout::Error
       message = "timed out attempting to synchronize, aborting"
       _log.error("#{message}")
       signal(:abort, message, "error")
@@ -470,7 +474,7 @@ class VmScan < Job
   end
 
   def start_user_event_message(vm, send = true)
-    return if vm.vendor == "Amazon"
+    return if vm.vendor == "amazon"
 
     user_event = "EVM SmartState Analysis Initiated for VM [#{vm.name}]"
     log_user_event(user_event, vm) if send
@@ -478,7 +482,7 @@ class VmScan < Job
   end
 
   def end_user_event_message(vm, send = true)
-    return if vm.vendor == "Amazon"
+    return if vm.vendor == "amazon"
 
     user_event = "EVM SmartState Analysis completed for VM [#{vm.name}]"
     unless options[:end_message_sent]
@@ -532,6 +536,8 @@ class VmScan < Job
         set_status("Deleting snapshot before aborting job")
         if vm.kind_of?(ManageIQ::Providers::Openstack::CloudManager::Vm)
           vm.ext_management_system.vm_delete_evm_snapshot(vm, mor)
+        elsif vm.kind_of?(ManageIQ::Providers::Microsoft::InfraManager::Vm)
+          vm.ext_management_system.vm_delete_evm_snapshot(vm, :snMor => mor)
         else
           delete_snapshot(mor)
         end

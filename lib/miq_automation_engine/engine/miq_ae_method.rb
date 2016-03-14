@@ -182,10 +182,12 @@ RUBY
     def self.run_ruby_method(body, preamble = nil)
       ActiveRecord::Base.connection_pool.release_connection
       Bundler.with_clean_env do
-        run_method(Gem.ruby) do |stdin|
-          stdin.puts(preamble.to_s)
-          stdin.puts(body)
-          stdin.puts(RUBY_METHOD_POSTSCRIPT) unless preamble.blank?
+        ActiveSupport::Dependencies.interlock.permit_concurrent_loads do
+          run_method(Gem.ruby) do |stdin|
+            stdin.puts(preamble.to_s)
+            stdin.puts(body)
+            stdin.puts(RUBY_METHOD_POSTSCRIPT) unless preamble.blank?
+          end
         end
       end
     end
@@ -222,12 +224,20 @@ RUBY
     end
 
     def self.setup_drb_for_ruby_method
+      require 'drb/timeridconv'
+      DRb.install_id_conv(DRb::TimerIdConv.new(drb_cache_timeout))
       drb_front  = MiqAeMethodService::MiqAeServiceFront.new
       drb        = DRb.start_service("druby://127.0.0.1:0", drb_front)
     end
 
+    def self.drb_cache_timeout
+      1.hour
+    end
+
     def self.teardown_drb_for_ruby_method
       DRb.stop_service
+      # Set the ID conv to nil so that the cache can be GC'ed
+      DRb.install_id_conv(nil)
     end
 
     def self.invoke_inline_ruby(aem, obj, inputs)

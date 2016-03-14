@@ -1,4 +1,3 @@
-require "spec_helper"
 require 'util/extensions/miq-deep'
 
 describe 'miq-deep' do
@@ -19,7 +18,7 @@ describe 'miq-deep' do
 
     h = CASE_HASH.deep_clone
     h = h.deep_delete(:token)
-    h.should == normal_delete
+    expect(h).to eq(normal_delete)
   end
 
   it 'Array#deep_delete' do
@@ -28,14 +27,14 @@ describe 'miq-deep' do
 
     h = CASE_ARRAY.deep_clone
     h = h.deep_delete(:token)
-    h.should == normal_delete
+    expect(h).to eq(normal_delete)
   end
 
   # TODO: More test cases for deleting other keys, and deleting multiple keys
 
   def should_deep_clone(o1, o2)
-    o1.should == o2
-    o1.should_not equal(o2)
+    expect(o1).to eq(o2)
+    expect(o1).not_to equal(o2)
 
     # TODO: Add test cases that show that all sub-elements are cloned properly
   end

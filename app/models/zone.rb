@@ -1,4 +1,4 @@
-class Zone < ActiveRecord::Base
+class Zone < ApplicationRecord
   DEFAULT_NTP_SERVERS = {:server => %w(0.pool.ntp.org 1.pool.ntp.org 2.pool.ntp.org)}.freeze
 
   validates_presence_of   :name, :description
@@ -7,11 +7,9 @@ class Zone < ActiveRecord::Base
   serialize :settings, Hash
 
   belongs_to      :log_file_depot, :class_name => "FileDepot"
-  alias_attribute :log_depot, :log_file_depot
 
   has_many :miq_servers
   has_many :ext_management_systems
-  has_many :miq_groups, :as => :resource
   has_many :miq_schedules, :dependent => :destroy
   has_many :storage_managers
   has_many :ldap_regions
@@ -152,6 +150,10 @@ class Zone < ActiveRecord::Base
     ext_management_systems.select { |e| e.kind_of? ManageIQ::Providers::ContainerManager }
   end
 
+  def ems_middlewares
+    ext_management_systems.select { |e| e.kind_of? ManageIQ::Providers::MiddlewareManager }
+  end
+
   def ems_clouds
     ext_management_systems.select { |e| e.kind_of? EmsCloud }
   end
@@ -162,10 +164,9 @@ class Zone < ActiveRecord::Base
   end
 
   def vms_without_availability_zone
-    MiqPreloader.preload(self, :ext_management_systems => :vms)
-    ext_management_systems.flat_map do |e|
-      e.kind_of?(EmsCloud) ? e.vms.select { |vm| vm.availability_zone.nil? } : []
-    end
+    clouds = ext_management_systems.select { |e| e.kind_of?(EmsCloud) }
+    MiqPreloader.preload(clouds, :vms => :availability_zone)
+    clouds.flat_map { |e| e.vms.select { |vm| vm.availability_zone.nil? } }
   end
 
   def vms_and_templates
@@ -227,6 +228,10 @@ class Zone < ActiveRecord::Base
 
   def active?
     miq_servers.any?(&:active?)
+  end
+
+  def any_started_miq_servers?
+    miq_servers.any?(&:started?)
   end
 
   protected

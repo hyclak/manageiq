@@ -1,5 +1,3 @@
-require "spec_helper"
-
 describe "MiqAeStateMachineRetry" do
   before do
     @method_name     = 'MY_RETRY_METHOD'
@@ -10,10 +8,10 @@ describe "MiqAeStateMachineRetry" do
     @state_class     = 'MY_STATE_MACHINE'
     @state_instance  = 'MY_STATE_INSTANCE'
     @max_retries     = 1
-    @max_time        = 2
     @root_class      = "TOP_OF_THE_WORLD"
     @root_instance   = "EVEREST"
     @user            = FactoryGirl.create(:user_with_group)
+    @miq_server      = FactoryGirl.create(:miq_server)
     @automate_args   = {:namespace        => @namespace,
                         :class_name       => @root_class,
                         :instance_name    => @root_instance,
@@ -21,7 +19,8 @@ describe "MiqAeStateMachineRetry" do
                         :miq_group_id     => @user.current_group_id,
                         :tenant_id        => @user.current_tenant.id,
                         :automate_message => 'create'}
-    MiqServer.stub(:my_zone).and_return('default')
+    allow(MiqServer).to receive(:my_zone).and_return('default')
+    allow(MiqServer).to receive(:my_server).and_return(@miq_server)
     clear_domain
   end
 
@@ -81,12 +80,12 @@ describe "MiqAeStateMachineRetry" do
     RUBY
   end
 
-  def setup_model(method_script)
+  def setup_model(method_script, max_time = nil)
     dom = FactoryGirl.create(:miq_ae_domain, :enabled => true, :name => @domain)
     ns  = FactoryGirl.create(:miq_ae_namespace, :parent_id => dom.id, :name => @namespace)
     @ns_fqname = ns.fqname
     create_retry_class(:namespace => @ns_fqname, :name => @retry_class, :method_script => method_script)
-    create_state_class(:namespace => @ns_fqname, :name => @state_class)
+    create_state_class({:namespace => @ns_fqname, :name => @state_class}, max_time)
     create_root_class(:namespace => @ns_fqname, :name => @root_class)
   end
 
@@ -104,10 +103,10 @@ describe "MiqAeStateMachineRetry" do
                                    'ae_methods'   => ae_methods))
   end
 
-  def create_state_class(attrs = {})
+  def create_state_class(attrs = {}, max_time = nil)
     ae_fields = {'state1' => {:aetype      => 'state',      :datatype => 'string',
                               :max_retries => @max_retries, :message  => 'create',
-                              :max_time    => @max_time}}
+                              :max_time    => max_time}}
     fqname = "/#{@domain}/#{@namespace}/#{@retry_class}/#{@method_instance}"
     ae_instances = {@state_instance => {'state1' => {:value => fqname}}}
 
@@ -179,13 +178,13 @@ describe "MiqAeStateMachineRetry" do
     expected = {'three' => 3, 'one'  => 1, 'two'  => 2, 'gravy' => 'train'}
     send_ae_request_via_queue(@automate_args)
     status, _message, ws = deliver_ae_request_from_queue
-    status.should_not eq(MiqQueue::STATUS_ERROR)
-    ws.should_not be_nil
-    MiqQueue.count.should eq(2)
+    expect(status).not_to eq(MiqQueue::STATUS_ERROR)
+    expect(ws).not_to be_nil
+    expect(MiqQueue.count).to eq(2)
     status, _message, ws = deliver_ae_request_from_queue
-    status.should_not eq(MiqQueue::STATUS_ERROR)
-    ws.persist_state_hash.should eq(expected)
-    ws.root.attributes['finished'].should be_true
+    expect(status).not_to eq(MiqQueue::STATUS_ERROR)
+    expect(ws.persist_state_hash).to eq(expected)
+    expect(ws.root.attributes['finished']).to be_truthy
   end
 
   it "check max retries" do
@@ -193,27 +192,28 @@ describe "MiqAeStateMachineRetry" do
     send_ae_request_via_queue(@automate_args)
     (@max_retries + 2).times do
       status, _message, ws = deliver_ae_request_from_queue
-      status.should_not eq(MiqQueue::STATUS_ERROR)
-      ws.should_not be_nil
+      expect(status).not_to eq(MiqQueue::STATUS_ERROR)
+      expect(ws).not_to be_nil
     end
-    deliver_ae_request_from_queue.should be_nil
+    expect(deliver_ae_request_from_queue).to be_nil
   end
 
   it "check max_time" do
-    setup_model(perpetual_retry_script)
+    max_time = 2
+    setup_model(perpetual_retry_script, max_time)
     send_ae_request_via_queue(@automate_args)
 
     status, _message, ws = deliver_ae_request_from_queue
     expect(status).not_to eq(MiqQueue::STATUS_ERROR)
-    expect(ws).to be
+    expect(ws).to be_truthy
 
-    Timecop.travel(@max_time + 1) do
+    Timecop.travel(max_time + 1) do
       status, _message, ws = deliver_ae_request_from_queue
       expect(status).not_to eq(MiqQueue::STATUS_ERROR)
-      expect(ws).to be
+      expect(ws).to be_truthy
     end
 
-    Timecop.travel(@max_time * 2 + 2) do
+    Timecop.travel(max_time * 2 + 2) do
       status, _message, ws = deliver_ae_request_from_queue
       expect(status).not_to be
     end
@@ -223,8 +223,8 @@ describe "MiqAeStateMachineRetry" do
     create_restart_model(simpleton_script, simpleton_script, perpetual_restart_script)
     send_ae_request_via_queue(@automate_args)
     status, _message, ws = deliver_ae_request_from_queue
-    status.should_not eq(MiqQueue::STATUS_ERROR)
-    ws.should_not be_nil
+    expect(status).not_to eq(MiqQueue::STATUS_ERROR)
+    expect(ws).not_to be_nil
     q = MiqQueue.where(:state => 'ready').first
     expect(q.args[0][:state]).to eql('state1')
   end
@@ -233,8 +233,8 @@ describe "MiqAeStateMachineRetry" do
     create_restart_model(simpleton_script, simpleton_script, perpetual_restart_script_with_nextstate)
     send_ae_request_via_queue(@automate_args)
     status, _message, ws = deliver_ae_request_from_queue
-    status.should_not eq(MiqQueue::STATUS_ERROR)
-    ws.should_not be_nil
+    expect(status).not_to eq(MiqQueue::STATUS_ERROR)
+    expect(ws).not_to be_nil
     q = MiqQueue.where(:state => 'ready').first
     expect(q.args[0][:state]).to eql('state2')
   end

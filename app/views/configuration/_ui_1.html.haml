@@ -3,7 +3,10 @@
 = render :partial => "layouts/flash_msg"
 
 #tab_div
-  = form_tag({:action => "update"}, :id => "config_form", :class => "form-horizontal") do
+  = form_tag({:action => "update"},
+             :id     => "config_form",
+             :class  => "form-horizontal",
+             :method => :post) do
     .row
       .col-md-12.col-lg-6
         %fieldset
@@ -23,9 +26,10 @@
                   = _("Show %s Quadrants") % icons_checkbox[1]
                 .col-md-8
                   = check_box_tag("quadicons_#{icons_checkbox[2]}",
-                                  "1",
-                                  @edit[:new][:quadicons][icons_checkbox[2].to_sym],
-                                  "data-miq_observe_checkbox" => url_json)
+                                  true,
+                                  @edit[:new][:quadicons][icons_checkbox[2].to_sym], :data => {:on_text => 'Yes', :off_text => 'No'})
+                :javascript
+                  miqInitBootstrapSwitch("quadicons_#{icons_checkbox[2]}", "#{url}")
           .form-group
             %label.col-md-3.control-label
               = _('Truncate Long Text')

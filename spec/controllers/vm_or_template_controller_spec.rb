@@ -1,5 +1,3 @@
-require "spec_helper"
-
 describe VmOrTemplateController do
   let(:template_vmware) { FactoryGirl.create(:template_vmware, :name => 'template_vmware Name') }
   let(:vm_vmware)       { FactoryGirl.create(:vm_vmware, :name => "vm_vmware Name") }
@@ -14,38 +12,41 @@ describe VmOrTemplateController do
   # So we need a test for each possible value of 'presses' until all this is
   # converted into proper routes and test is changed to test the new routes.
   describe 'x_button' do
+    before do
+      ApplicationController.handle_exceptions = true
+    end
+
     describe 'corresponding methods are called for allowed actions' do
       ApplicationController::Explorer::X_BUTTON_ALLOWED_ACTIONS.each_pair do |action_name, method|
         actual_action = 'vm_' + action_name
         actual_method = [:s1, :s2].include?(method) ? actual_action : method.to_s
 
         it "calls the appropriate method: '#{actual_method}' for action '#{actual_action}'" do
-          controller.stub(:x_button_response)
-          controller.should_receive(actual_method)
-          get :x_button, :id => nil, :pressed => actual_action
+          expect(controller).to receive(actual_method)
+          get :x_button, :params => { :id => nil, :pressed => actual_action }
         end
       end
     end
 
     it 'exception is raised for unknown action' do
-      get :x_button, :pressed => 'random_dude', :format => :html
-      expect { response }.to render_template('layouts/exception')
+      get :x_button, :params => { :pressed => 'random_dude', :format => :html }
+      expect(response).to render_template('layouts/exception')
     end
 
     context "x_button method check" do
       before { controller.instance_variable_set(:@_orig_action, "x_history") }
 
       it "should set correct VM for right-sizing when on vm list view" do
-        controller.should_receive(:replace_right_cell)
-        post :x_button, :pressed => "vm_right_size", :id => vm_vmware.id, :check_10r839 => '1'
-        controller.send(:flash_errors?).should_not be_true
+        expect(controller).to receive(:replace_right_cell)
+        post :x_button, :params => { :pressed => "vm_right_size", :id => vm_vmware.id, :check_10r839 => '1' }
+        expect(controller.send(:flash_errors?)).not_to be_truthy
         assigns(:record).id == vm_vmware.id
       end
 
       it "should set correct VM for right-sizing when from vm summary screen" do
-        controller.should_receive(:replace_right_cell)
-        post :x_button, :pressed => "vm_right_size", :id => vm_vmware.id
-        controller.send(:flash_errors?).should_not be_true
+        expect(controller).to receive(:replace_right_cell)
+        post :x_button, :params => { :pressed => "vm_right_size", :id => vm_vmware.id }
+        expect(controller.send(:flash_errors?)).not_to be_truthy
         assigns(:record).id == vm_vmware.id
       end
     end
@@ -59,13 +60,15 @@ describe VmOrTemplateController do
     end
 
     it 'skips dropping a breadcrumb when a button action is executed' do
-      post :x_button, :id => nil, :pressed => 'miq_template_ownership'
+      ApplicationController.handle_exceptions = true
+
+      post :x_button, :params => { :id => nil, :pressed => 'miq_template_ownership' }
       breadcrumbs = controller.instance_variable_get(:@breadcrumbs)
       expect(breadcrumbs).to eq([{:name => "VMs and Instances", :url => "/vm_or_template/explorer"}])
     end
 
     it 'drops a breadcrumb when an action allowing breadcrumbs is executed' do
-      post :accordion_select, :id => "templates_images_filter"
+      post :accordion_select, :params => { :id => "templates_images_filter" }
       breadcrumbs = controller.instance_variable_get(:@breadcrumbs)
       expect(breadcrumbs).to eq([{:name => "VM Templates and Images", :url => "/vm_or_template/explorer"}])
     end
@@ -116,9 +119,9 @@ describe VmOrTemplateController do
           session[:settings] = {}
           seed_session_trees('vm_or_template', tree.to_sym)
 
-          post :tree_select, :id => 'root', :format => :js
+          post :tree_select, :params => { :id => 'root', :format => :js }
 
-          response.should render_template('layouts/gtl/_list')
+          expect(response).to render_template('layouts/gtl/_list')
           expect(response.status).to eq(200)
         end
       end

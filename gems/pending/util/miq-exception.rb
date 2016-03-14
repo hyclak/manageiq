@@ -90,17 +90,6 @@ module MiqException
 
   class RbacPrivilegeException < Error; end
 
-  class MiqGitConflicts < Error
-    attr_reader :conflicts
-    def initialize(conflicts)
-      @conflicts = conflicts
-      super
-    end
-  end
-
-  class MiqGitEntryMissing < Error; end
-  class MiqGitRepositoryMissing < Error; end
-
   class MiqParsingError < Error; end
 
   class MiqOrchestrationProvisionError < Error; end
@@ -109,6 +98,11 @@ module MiqException
   class MiqOrchestrationUpdateError < Error; end
   class MiqOrchestrationDeleteError < Error; end
   class MiqOrchestrationStackNotExistError < Error; end
+
+  class MiqVolumeValidationError < Error; end
+  class MiqVolumeCreateError < Error; end
+  class MiqVolumeUpdateError < Error; end
+  class MiqVolumeDeleteError < Error; end
 
   class MiqOpenstackRequiredServiceMissing < Error; end
   class MiqOpenstackKeystoneServiceMissing < MiqOpenstackRequiredServiceMissing; end

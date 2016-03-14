@@ -97,6 +97,7 @@ module Authenticator
 
     def authorize(taskid, username, *args)
       audit = {:event => "authorize", :userid => username}
+      decrypt_ldap_password(config) if MiqLdap.using_ldap?
 
       run_task(taskid, "Authorizing") do |task|
         begin
@@ -191,12 +192,21 @@ module Authenticator
     end
 
     def authorize_queue?
-      !MiqEnvironment::Process.is_ui_worker_via_command_line?
+      !defined?(Rails::Server)
+    end
+
+    def decrypt_ldap_password(config)
+      config[:bind_pwd] = MiqPassword.try_decrypt(config[:bind_pwd])
+    end
+
+    def encrypt_ldap_password(config)
+      config[:bind_pwd] = MiqPassword.try_encrypt(config[:bind_pwd])
     end
 
     def authorize_queue(username, _request, *args)
       task = MiqTask.create(:name => "#{self.class.proper_name} User Authorization of '#{username}'", :userid => username)
       if authorize_queue?
+        encrypt_ldap_password(config) if MiqLdap.using_ldap?
         MiqQueue.put(
           :queue_name   => "generic",
           :class_name   => self.class.to_s,
@@ -237,11 +247,12 @@ module Authenticator
       end
     end
 
+    # TODO: Fix this icky select matching with tenancy
     def match_groups(external_group_names)
       return [] if external_group_names.empty?
       external_group_names = external_group_names.collect(&:downcase)
 
-      internal_groups = MiqServer.my_server.permitted_groups
+      internal_groups = MiqGroup.order(:sequence).to_a
 
       external_group_names.each { |g| _log.debug("External Group: #{g}") }
       internal_groups.each      { |g| _log.debug("Internal Group: #{g.description.downcase}") }

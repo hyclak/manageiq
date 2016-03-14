@@ -1,5 +1,3 @@
-require "spec_helper"
-
 describe OpsController do
   before(:each) do
     EvmSpecHelper.create_guid_miq_server_zone
@@ -8,36 +6,42 @@ describe OpsController do
   end
 
   describe 'x_button' do
+    before do
+      ApplicationController.handle_exceptions = true
+    end
+
     describe 'corresponding methods are called for allowed actions' do
       OpsController::OPS_X_BUTTON_ALLOWED_ACTIONS.each_pair do |action_name, method|
         it "calls the appropriate method: '#{method}' for action '#{action_name}'" do
-          controller.should_receive(method)
-          get :x_button, :pressed => action_name
+          expect(controller).to receive(method)
+          get :x_button, :params => { :pressed => action_name }
         end
       end
     end
 
     it 'exception is raised for unknown action' do
-      get :x_button, :pressed => 'random_dude', :format => :html
-      expect { response }.to render_template('layouts/exception')
+      get :x_button, :params => { :pressed => 'random_dude', :format => :html }
+      expect(response).to render_template('layouts/exception')
     end
   end
 
   it 'can view the db_settings tab' do
+    ApplicationController.handle_exceptions = true
+
     session[:sandboxes] = {"ops" => {:active_tree => :vmdb_tree,
                                      :active_tab  => 'db_settings',
                                      :trees       => {:vmdb_tree => {:active_node => 'root'}}}}
-    session[:settings] = {:views => {}, :perpage => {:list => 10}}
-    post :change_tab, :tab_id => 'db_settings', :format => :json
+    post :change_tab, :params => { :tab_id => 'db_settings', :format => :json }
   end
 
   it 'can view the db_connections tab' do
+    ApplicationController.handle_exceptions = true
+
     session[:sandboxes] = {"ops" => {:active_tree => :vmdb_tree,
                                      :active_tab  => 'db_connections',
                                      :trees       => {:vmdb_tree => {:active_node => 'root'}}}}
-    session[:settings] = {:views => {}, :perpage => {:list => 10}}
-    controller.should_receive(:render)
-    post :change_tab, :tab_id => 'db_connections', :format => :json
+    expect(controller).to receive(:head)
+    post :change_tab, :params => { :tab_id => 'db_connections', :format => :json }
     expect(response.status).to eq(200)
   end
 
@@ -45,8 +49,11 @@ describe OpsController do
   #
   # def rbac_user_set_record_vars(user)
   describe 'rbac_user_edit' do
+    before do
+      ApplicationController.handle_exceptions = true
+    end
+
     it 'can add a user w/ group' do
-      session[:settings] = {:views => {}, :perpage => {:list => 10}}
       session[:edit] = {
         :key     => 'rbac_user_edit__new',
         :current => {},
@@ -60,13 +67,11 @@ describe OpsController do
         }
       }
 
-      controller.should_receive(:replace_right_cell)
-      get :rbac_user_edit, :button => 'add'
+      expect(controller).to receive(:replace_right_cell)
+      get :rbac_user_edit, :params => { :button => 'add' }
     end
 
     it 'cannot add a user w/o matching passwords' do
-      session[:settings] = {}
-      session[:settings] = {:views => {}, :perpage => {:list => 10}}
       session[:edit] = {
         :key => 'rbac_user_edit__new',
         :new => {
@@ -79,16 +84,14 @@ describe OpsController do
         }
       }
 
-      controller.should_receive(:render_flash)
-      get :rbac_user_edit, :button => 'add'
+      expect(controller).to receive(:render_flash)
+      get :rbac_user_edit, :params => { :button => 'add' }
       flash_messages = assigns(:flash_array)
-      flash_messages.first[:message].should == "Password/Verify Password do not match"
-      flash_messages.first[:level].should == :error
+      expect(flash_messages.first[:message]).to eq("Password/Verify Password do not match")
+      expect(flash_messages.first[:level]).to eq(:error)
     end
 
     it 'cannot add a user w/o group' do
-      session[:settings] = {}
-      session[:settings] = {:views => {}, :perpage => {:list => 10}}
       session[:edit] = {
         :key => 'rbac_user_edit__new',
         :new => {
@@ -101,19 +104,17 @@ describe OpsController do
         }
       }
 
-      controller.should_receive(:render_flash)
-      get :rbac_user_edit, :button => 'add'
+      expect(controller).to receive(:render_flash)
+      get :rbac_user_edit, :params => { :button => 'add' }
       flash_messages = assigns(:flash_array)
-      flash_messages.first[:message].should == "A User must be assigned to a Group"
-      flash_messages.first[:level].should == :error
+      expect(flash_messages.first[:message]).to eq("A User must be assigned to a Group")
+      expect(flash_messages.first[:level]).to eq(:error)
     end
   end
 
   context "#db_backup" do
     it "posts db_backup action" do
-      session[:settings] = {:default_search => '',
-                            :views          => {},
-                            :perpage        => {:list => 10}}
+      session[:settings] = {:default_search => ''}
 
       miq_schedule = FactoryGirl.create(:miq_schedule,
                                         :name        => "test_db_schedule",
@@ -123,12 +124,13 @@ describe OpsController do
                                                          :tz         => "UTC",
                                                          :interval   => {:unit => "once", :value => ""}
                                                         })
-      post :db_backup,
-           :backup_schedule => miq_schedule.id,
-           :uri             => "nfs://test_location",
-           :uri_prefix      => "nfs",
-           :action_typ      => "db_backup",
-           :format          => :js
+      post :db_backup, :params => {
+        :backup_schedule => miq_schedule.id,
+        :uri             => "nfs://test_location",
+        :uri_prefix      => "nfs",
+        :action_typ      => "db_backup",
+        :format          => :js
+      }
       expect(response.status).to eq(200)
       expect(response.body).to_not be_empty
     end
@@ -142,7 +144,7 @@ describe OpsController do
       }
       controller.instance_variable_set(:@edit, edit)
       controller.send(:edit_changed?)
-      session[:changed].should eq(false)
+      expect(session[:changed]).to eq(false)
     end
 
     it "should set session[:changed] as true" do
@@ -152,7 +154,7 @@ describe OpsController do
       }
       controller.instance_variable_set(:@edit, edit)
       controller.send(:edit_changed?)
-      session[:changed].should eq(true)
+      expect(session[:changed]).to eq(true)
     end
 
     it "should set session[:changed] as false when config is same" do
@@ -164,7 +166,7 @@ describe OpsController do
       }
       controller.instance_variable_set(:@edit, edit)
       controller.send(:edit_changed?)
-      session[:changed].should eq(false)
+      expect(session[:changed]).to eq(false)
     end
 
     it "should set session[:changed] as true when config is sadifferentme" do
@@ -174,27 +176,29 @@ describe OpsController do
       }
       controller.instance_variable_set(:@edit, edit)
       controller.send(:edit_changed?)
-      session[:changed].should eq(true)
+      expect(session[:changed]).to eq(true)
     end
   end
 
   it "executes action schedule_edit" do
     schedule = FactoryGirl.create(:miq_schedule, :name => "test_schedule", :description => "old_schedule_desc")
-    controller.stub(:get_node_info)
-    controller.stub(:replace_right_cell)
-    controller.stub(:render)
+    allow(controller).to receive(:get_node_info)
+    allow(controller).to receive(:replace_right_cell)
+    allow(controller).to receive(:render)
 
-    post :schedule_edit,
-         :id          => schedule.id,
-         :button      => "save",
-         :name        => "test_schedule",
-         :description => "new_description",
-         :action_typ  => "vm",
-         :start_date  => "06/25/2015",
-         :timer_typ   => "Once",
-         :timer_value => ""
+    post :schedule_edit, :params => {
+      :id          => schedule.id,
+      :button      => "save",
+      :name        => "test_schedule",
+      :description => "new_description",
+      :action_typ  => "vm",
+      :start_date  => "06/25/2015",
+      :timer_typ   => "Once",
+      :timer_value => ""
+    }
 
-    expect(response.status).to eq(200)
+    skip "https://github.com/rails/rails/issues/23881" if Gem::Requirement.new('< 5.0.0.beta4') === Rails.gem_version
+    expect(response).to be_success
 
     audit_event = AuditEvent.where(:target_id => schedule.id).first
     expect(audit_event.attributes['message']).to include("description changed to new_description")
@@ -244,42 +248,70 @@ describe OpsController do
     MiqRegion.seed
     EvmSpecHelper.local_miq_server
     login_as FactoryGirl.create(:user, :features => "ops_rbac")
-    controller.stub(:get_vmdb_config).and_return(:product => {})
+    allow(controller).to receive(:get_vmdb_config).and_return(:product => {})
   end
 
   context "#explorer" do
     it "sets correct active accordion value" do
       controller.instance_variable_set(:@sb, {})
-      controller.stub(:get_node_info)
-      controller.should_receive(:render)
+      allow(controller).to receive(:get_node_info)
+      expect(controller).to receive(:render)
       controller.send(:explorer)
       expect(response.status).to eq(200)
-      assigns(:sb)[:active_accord].should eq(:rbac)
+      expect(assigns(:sb)[:active_accord]).to eq(:rbac)
     end
   end
 
   context "#explorer" do
     it "sets analytics active accordion value" do
       controller.instance_variable_set(:@sb, {})
-      controller.stub(:role_allows).and_return(false)
-      controller.stub(:get_vmdb_config).and_return(:product => {:analytics => true})
-      controller.stub(:get_node_info)
-      controller.should_receive(:render)
+      login_as FactoryGirl.create(:user, :features => "ops_analytics")
+      expect(controller).to receive(:render)
       controller.send(:explorer)
       expect(response.status).to eq(200)
-      assigns(:sb)[:active_accord].should eq(:analytics)
+      expect(assigns(:sb)[:active_accord]).to eq(:analytics)
     end
   end
 
   context "#replace_explorer_trees" do
     it "build trees that are passed in and met other conditions" do
       controller.instance_variable_set(:@sb, {})
-      controller.stub(:x_build_dyna_tree)
-      r = proc { |opts| opts }
+      allow(controller).to receive(:x_build_dyna_tree)
       replace_trees = [:settings, :diagnostics, :analytics]
       presenter = ExplorerPresenter.new
-      controller.send(:replace_explorer_trees, replace_trees, presenter, r)
+      controller.send(:replace_explorer_trees, replace_trees, presenter)
       expect(response.status).to eq(200)
+    end
+  end
+
+  context "Toolbar buttons render" do
+    before do
+      _guid, @miq_server, @zone = EvmSpecHelper.remote_guid_miq_server_zone
+      allow(controller).to receive(:check_privileges).and_return(true)
+      allow(controller).to receive(:assert_privileges).and_return(true)
+      allow(controller).to receive(:x_active_tree).and_return(:diagnostics_tree)
+      allow(controller).to receive(:x_node).and_return("z-#{ApplicationRecord.compress_id(@zone.id)}")
+      post :change_tab, :params => { :tab_id => "diagnostics_collect_logs" }
+      allow(controller).to receive(:x_node).and_return("svr-#{ApplicationRecord.compress_id(@miq_server.id)}")
+    end
+    it "does not render toolbar buttons when edit is clicked" do
+      post :x_button, :params => { :id => @miq_server.id, :pressed => 'log_depot_edit', :format => :js }
+      expect(response.status).to eq(200)
+      expect(response.body).to include("if (miqDomElementExists('toolbar')) $('#toolbar').hide();")
+    end
+
+    it "renders toolbar buttons when cancel is clicked" do
+      allow(controller).to receive(:diagnostics_set_form_vars)
+      post :x_button, :params => { :id => @miq_server.id, :pressed => 'log_depot_edit', :button => "cancel", :format => :js }
+      expect(response.status).to eq(200)
+      expect(response.body).to include("if (miqDomElementExists('toolbar')) $('#toolbar').show();")
+    end
+
+    it "renders toolbar buttons when save is clicked" do
+      allow(controller).to receive(:diagnostics_set_form_vars)
+      post :x_button, :params => { :id => @miq_server.id, :pressed => 'log_depot_edit', :button => "save", :format => :js }
+      expect(response.status).to eq(200)
+      expect(response.body).to include("if (miqDomElementExists('toolbar')) $('#toolbar').show();")
     end
   end
 end

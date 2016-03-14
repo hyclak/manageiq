@@ -22,10 +22,6 @@ class TreeBuilderVmsAndTemplates < FullTreeBuilder
     prune_rbac(tree)
     sort_tree(tree)
 
-    # The node builder uses normalized_state to determine the icon on each VM,
-    #   which, in turn, needs the EMS
-    preload_ems_for_vms(tree)
-
     tree
   end
 
@@ -58,8 +54,7 @@ class TreeBuilderVmsAndTemplates < FullTreeBuilder
   def prune_rbac(tree)
     vms = extract_vms(tree).uniq
 
-    allowed_vm_ids, _attrs = Rbac.search(:targets => vms, :results_format => :ids)
-    allowed_vm_ids = Set.new(allowed_vm_ids)
+    allowed_vm_ids = Set.new(Rbac.filtered(vms).map(&:id)) # results_format == :ids
 
     prune_filtered_vms(tree, allowed_vm_ids)
     prune_empty_folders(tree)
@@ -99,10 +94,5 @@ class TreeBuilderVmsAndTemplates < FullTreeBuilder
       datacenter = object.kind_of?(EmsFolder) ? object.is_datacenter? : false
       [SORT_CLASSES.index(object.class.base_class), datacenter ? 0 : 1, object.name.downcase]
     end
-  end
-
-  def preload_ems_for_vms(tree)
-    vms = extract_vms(tree)
-    MiqPreloader.preload(vms, :ext_management_system)
   end
 end

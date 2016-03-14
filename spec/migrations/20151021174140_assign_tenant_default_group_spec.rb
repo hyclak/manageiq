@@ -1,4 +1,3 @@
-require "spec_helper"
 require_migration
 
 describe AssignTenantDefaultGroup do
@@ -20,10 +19,10 @@ describe AssignTenantDefaultGroup do
         migrate
 
         t.reload
-        expect(t.default_miq_group_id).to be
+        expect(t.default_miq_group_id).to be_truthy
         g = group_stub.find(t.default_miq_group_id)
         expect(g.miq_user_role_id).to eq(tenant_role.id)
-        expect(g.sequence).to be
+        expect(g.sequence).to be_truthy
       end
 
       it "skips tenants that already have a group" do
@@ -42,7 +41,7 @@ describe AssignTenantDefaultGroup do
       migrate
 
       t.reload
-      expect(t.default_miq_group_id).to be
+      expect(t.default_miq_group_id).to be_truthy
       expect(group_stub.find(t.default_miq_group_id).miq_user_role_id).to be_nil
     end
   end

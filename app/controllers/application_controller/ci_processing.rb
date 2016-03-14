@@ -2,7 +2,7 @@ module ApplicationController::CiProcessing
   extend ActiveSupport::Concern
 
   included do
-    hide_action(:process_elements)
+    private(:process_elements)
   end
 
   # Set Ownership selected db records
@@ -31,7 +31,8 @@ module ApplicationController::CiProcessing
       recs = [params[:id].to_i]
     end
     if recs.length < 1
-      add_flash(_("One or more %{model} must be selected to %{task}") % {:model => Dictionary.gettext(db.to_s, :type => :model, :notfound => :titleize).pluralize, :task => "Set Ownership"}, :error)
+      add_flash(_("One or more %{model} must be selected to Set Ownership") % {
+        :model => Dictionary.gettext(db.to_s, :type => :model, :notfound => :titleize, :plural => true)}, :error)
       @refresh_div = "flash_msg_div"
       @refresh_partial = "layouts/flash_msg"
       return
@@ -77,7 +78,7 @@ module ApplicationController::CiProcessing
   # Build the ownership assignment screen
   def ownership_build_screen
     @users = {}   # Users array for first chooser
-    User.all.each { |u| @users[u.name] = u.id.to_s }
+    User.with_current_user_groups.each { |u| @users[u.name] = u.id.to_s }
     record = @edit[:klass].find(@edit[:ownership_items][0])
     user = record.evm_owner if @edit[:ownership_items].length == 1
     @edit[:new][:user] = user ? user.id.to_s : nil            # Set to first category, if not already set
@@ -86,7 +87,7 @@ module ApplicationController::CiProcessing
     # need to do this only if 1 vm is selected and miq_group has been set for it
     group = record.miq_group if @edit[:ownership_items].length == 1
     @edit[:new][:group] = group ? group.id.to_s : nil
-    MiqGroup.all.each { |g| @groups[g.description] = g.id.to_s }
+    MiqGroup.with_current_user_groups.each { |g| @groups[g.description] = g.id.to_s }
 
     @edit[:new][:user] = @edit[:new][:group] = DONT_CHANGE_OWNER if @edit[:ownership_items].length > 1
 
@@ -114,7 +115,7 @@ module ApplicationController::CiProcessing
     ownership_get_form_vars
     case params[:button]
     when "cancel"
-      add_flash(_("%s was cancelled by the user") % "Set Ownership")
+      add_flash(_("Set Ownership was cancelled by the user"))
       if @edit[:explorer]
         @edit = @sb[:action] = nil
         replace_right_cell
@@ -152,7 +153,7 @@ module ApplicationController::CiProcessing
       else
         object_types = object_types_for_flash_message(@edit[:klass], @edit[:ownership_items])
 
-        flash = _("Ownership saved for selected %s") % object_types
+        flash = _("Ownership saved for selected %{object_types}") % {:object_types => object_types}
         add_flash(flash)
         if @edit[:explorer]
           @edit = @sb[:action] = nil
@@ -186,8 +187,9 @@ module ApplicationController::CiProcessing
     assert_privileges(params[:pressed])
     vms = find_checked_items
     if VmOrTemplate.includes_template?(vms.map(&:to_i).uniq)
-      add_flash(_("%{task} does not apply to selected %{model}") % {:model => ui_lookup(:table => "miq_template"), :task => "Set Retirement Dates"}, :error)
-      render_flash { |page| page << '$(\'#main_div\').scrollTop();' }
+      add_flash(_("Set Retirement Date does not apply to selected %{model}") %
+        {:model => ui_lookup(:table => "miq_template")}, :error)
+      render_flash_and_scroll
       return
     end
     # check to see if coming from show_list or drilled into vms from another CI
@@ -202,7 +204,8 @@ module ApplicationController::CiProcessing
       session[:retire_items] = [params[:id]]
     else
       if vms.length < 1
-        add_flash(_("At least %{num} %{model} must be selected for %{action}") % {:num => "one", :model => ui_lookup(:model => "Vm"), :task => "tagging"}, :error)
+        add_flash(_("At least one %{model} must be selected for tagging") %
+          {:model => ui_lookup(:model => "Vm")}, :error)
         @refresh_div = "flash_msg_div"
         @refresh_partial = "layouts/flash_msg"
         return
@@ -255,7 +258,7 @@ module ApplicationController::CiProcessing
             OrchestrationStack
           when "service"
             Service
-          when "vm_infra", "vm_cloud", "vm"
+          when "vm_infra", "vm_cloud", "vm", "vm_or_template"
             Vm
           end
     if params[:button]
@@ -319,14 +322,16 @@ module ApplicationController::CiProcessing
     rec_cls = "vm"
     recs = params[:display] ? find_checked_items : [params[:id].to_i]
     if recs.length < 1
-      add_flash(_("One or more %{model} must be selected to %{task}") % {:model => ui_lookup(:table => request.parameters[:controller]), :task => "Right-Size Recommendations"}, :error)
+      add_flash(_("One or more %{model} must be selected to Right-Size Recommendations") %
+        {:model => ui_lookup(:table => request.parameters[:controller])}, :error)
       @refresh_div = "flash_msg_div"
       @refresh_partial = "layouts/flash_msg"
       return
     else
       if VmOrTemplate.includes_template?(recs)
-        add_flash(_("%{task} does not apply to selected %{model}") % {:model => ui_lookup(:table => "miq_template"), :task => "Right-Size Recommendations"}, :error)
-        render_flash { |page| page << '$(\'#main_div\').scrollTop();' }
+        add_flash(_("Right-Size Recommendations does not apply to selected %{model}") %
+          {:model => ui_lookup(:table => "miq_template")}, :error)
+        render_flash_and_scroll
         return
       end
     end
@@ -410,14 +415,14 @@ module ApplicationController::CiProcessing
       if @edit[:new][:cb_memory]
         if @edit[:new][:old_memory].to_s == @edit[:new][:memory].to_s &&
            @edit[:new][:old_mem_typ] == @edit[:new][:mem_typ]
-          add_flash(_("Change %s value to submit reconfigure request") % "Memory", :error)
+          add_flash(_("Change Memory value to submit reconfigure request"), :error)
         elsif (@edit[:new][:memory] =~ /^[-+]?[0-9]*[0-9]+$/).nil?
-          add_flash(_("%s must be an integer") % "Memory", :error)
+          add_flash(_("Memory must be an integer"), :error)
         end
       end
 
       if @edit[:new][:cb_cpu] && @edit[:new][:old_socket_count].to_s == @edit[:new][:socket_count].to_s && @edit[:new][:old_cores_per_socket_count].to_s == @edit[:new][:cores_per_socket_count].to_s
-        add_flash(_("Change %s value to submit reconfigure request") % "Processor Sockets or Cores Per Socket", :error)
+        add_flash(_("Change Processor Sockets or Cores Per Socket value to submit reconfigure request"), :error)
       end
 
       if @flash_array
@@ -534,6 +539,7 @@ module ApplicationController::CiProcessing
     # generate the grid/tile/list url to come back here when gtl buttons are pressed
     @gtl_url       = "/#{@db}/#{@listicon.pluralize}/#{@record.id}?"
     @showtype      = "details"
+    @display       = "main"
     @no_checkboxes = true
     @showlinks     = true
 
@@ -762,7 +768,9 @@ module ApplicationController::CiProcessing
       if request.parameters[:controller] == 'ems_infra'
         @discover_type = ExtManagementSystem.ems_infra_discovery_types
       else
-        @discover_type = ExtManagementSystem.ems_cloud_discovery_types.invert.collect{ |type| [Dictionary.gettext(type[0], :type => :discover_types, :notfound => :titleize), type[1]]}
+        @discover_type = ExtManagementSystem.ems_cloud_discovery_types.invert.collect do |type|
+          [discover_type(type[0]), type[1]]
+        end
         @discover_type_selected = @discover_type.first.last
       end
     else
@@ -812,7 +820,7 @@ module ApplicationController::CiProcessing
         @azure_tenant_id = params[:azure_tenant_id] if params[:azure_tenant_id]
 
         if @client_id == "" || @client_key == "" || @azure_tenant_id == ""
-          add_flash(_("%s are required") % "Client ID, Client Key and Azure Tenant ID", :error)
+          add_flash(_("Client ID, Client Key and Azure Tenant ID are required"), :error)
           render :action => 'discover'
           return
         end
@@ -821,7 +829,7 @@ module ApplicationController::CiProcessing
         @password = params[:password] if params[:password]
         @verify = params[:verify] if params[:verify]
         if request.parameters[:controller] == "ems_cloud" && params[:userid] == ""
-          add_flash(_("%s is required") % "Username", :error)
+          add_flash(_("Username is required"), :error)
           render :action => 'discover'
           return
         end
@@ -838,7 +846,7 @@ module ApplicationController::CiProcessing
       end
 
       if request.parameters[:controller] != "ems_cloud" && discover_type.length <= 0
-        add_flash(_("At least %{num} %{model} must be selected for %{action}") % {:num => "1", :model => "item", :action => "discovery"}, :error)
+        add_flash(_("At least 1 item must be selected for discovery"), :error)
         render :action => 'discover'
       else
         begin
@@ -856,9 +864,10 @@ module ApplicationController::CiProcessing
               ManageIQ::Providers::Amazon::CloudManager.discover_queue(@userid, @password)
             end
           end
-        rescue StandardError => bang
-          #       @flash_msg = "'Host Discovery' returned: " + bang.message; @flash_error = true
-          add_flash(_("%s Discovery returned: ") % title << bang.message, :error)
+        rescue => err
+          #       @flash_msg = "'Host Discovery' returned: " + err.message; @flash_error = true
+          add_flash(_("%{title} Discovery returned: %{error_message}") %
+            {:title => title, :error_message => err.message}, :error)
           render :action => 'discover'
           return
         else
@@ -876,7 +885,7 @@ module ApplicationController::CiProcessing
 
   def set_discover_title(type, controller)
     if type == "hosts"
-      return ui_lookup(:host_types => "hosts")
+      return _("Hosts / Nodes")
     else
       return ui_lookup(:tables => controller)
     end
@@ -949,25 +958,18 @@ module ApplicationController::CiProcessing
       description = get_record_display_name(elem)
       name        = elem.send(order_field.to_sym)
       if task == "destroy"
-        audit = {:event        => "#{klass.name.downcase}_record_delete",
-                 :message      => "[#{name}] Record deleted",
-                 :target_id    => id,
-                 :target_class => klass.base_class.name,
-                 :userid       => session[:userid]}
-      end
-
-      model_name = ui_lookup(:model => klass.name)  # Lookup friendly model name in dictionary
-      begin
-        elem.send(task.to_sym) if elem.respond_to?(task)    # Run the task
-      rescue StandardError => bang
-        add_flash(_("%{model} \"%{name}\": Error during '%{task}': ") % {:model => model_name, :name => description, :task => (display_name || task)} << bang.message,
-                  :error)
+        process_element_destroy(elem, klass, name)
       else
-        if task == "destroy"
-          AuditEvent.success(audit)
-          add_flash(_("%{model} \"%{name}\": Delete successful") % {:model => model_name, :name => description})
+        model_name = ui_lookup(:model => klass.name) # Lookup friendly model name in dictionary
+        begin
+          elem.send(task.to_sym) if elem.respond_to?(task) # Run the task
+        rescue => bang
+          add_flash(_("%{model} \"%{name}\": Error during '%{task}': %{error_msg}") %
+                   {:model => model_name, :name => record_name, :task => (display_name || task),
+                    :error_msg => bang.message}, :error)
         else
-          add_flash(_("%{model} \"%{name}\": %{task} successfully initiated") % {:model => model_name, :name => description, :task => (display_name || task)})
+          add_flash(_("%{model} \"%{name}\": %{task} successfully initiated") %
+                   {:model => model_name, :name => description, :task => (display_name || task)})
         end
       end
     end
@@ -975,12 +977,36 @@ module ApplicationController::CiProcessing
 
   private ############################
 
+  def process_element_destroy(element, klass, name)
+    return unless element.respond_to?(:destroy)
+
+    audit = {:event        => "#{klass.name.downcase}_record_delete",
+             :message      => "[#{name}] Record deleted",
+             :target_id    => element.id,
+             :target_class => klass.base_class.name,
+             :userid       => session[:userid]}
+
+    model_name  = ui_lookup(:model => klass.name) # Lookup friendly model name in dictionary
+    record_name = get_record_display_name(element)
+
+    element.destroy
+
+    if element.destroyed?
+      AuditEvent.success(audit)
+      add_flash(_("%{model} \"%{name}\": Delete successful") % {:model => model_name, :name => record_name})
+    else
+      error_msg = element.errors.collect { |_attr, msg| msg }.join(';')
+      add_flash(_("%{model} \"%{name}\": Error during delete: %{error_msg}") %
+               {:model => model_name, :name => record_name, :error_msg => error_msg}, :error)
+    end
+  end
+
   # find the record that was chosen
   def identify_record(id, klass = self.class.model)
     begin
       record = find_by_id_filtered(klass, from_cid(id))
     rescue ActiveRecord::RecordNotFound
-    rescue StandardError => @bang
+    rescue => @bang
       if @explorer
         self.x_node = "root"
         add_flash(@bang.message, :error, true)
@@ -1027,7 +1053,7 @@ module ApplicationController::CiProcessing
   end
 
   def breadcrumb_name(_model)
-    ui_lookup_for_model(self.class.model.name).pluralize
+    ui_lookup(:models => self.class.model.name)
   end
 
   # Reconfigure selected VMs
@@ -1051,18 +1077,20 @@ module ApplicationController::CiProcessing
       recs = [params[:id].to_i]
     end
     if recs.length < 1
-      add_flash(_("One or more %{model} must be selected to %{task}") % {:model => Dictionary.gettext(db.to_s, :type => :model, :notfound => :titleize).pluralize, :task => "Reconfigure"}, :error)
-      render_flash { |page| page << '$(\'#main_div\').scrollTop();' }
+      add_flash(_("One or more %{model} must be selected to Reconfigure") %
+        {:model => Dictionary.gettext(db.to_s, :type => :model, :notfound => :titleize, :plural => true)}, :error)
+      render_flash_and_scroll
       return
     else
       if VmOrTemplate.includes_template?(recs)
-        add_flash(_("%{task} does not apply because you selected at least one %{model}") % {:model => ui_lookup(:table => "miq_template"), :task => "Reconfigure"}, :error)
-        render_flash { |page| page << '$(\'#main_div\').scrollTop();' }
+        add_flash(_("Reconfigure does not apply because you selected at least one %{model}") %
+          {:model => ui_lookup(:table => "miq_template")}, :error)
+        render_flash_and_scroll
         return
       end
       unless VmOrTemplate.reconfigurable?(recs)
-        add_flash(_("%{task} does not apply because you selected at least one un-reconfigurable VM") % {:task => "Reconfigure"}, :error)
-        render_flash { |page| page << '$(\'#main_div\').scrollTop();' }
+        add_flash(_("Reconfigure does not apply because you selected at least one un-reconfigurable VM"), :error)
+        render_flash_and_scroll
         return
       end
       @edit[:reconfigure_items] = recs.collect(&:to_i)
@@ -1170,8 +1198,9 @@ module ApplicationController::CiProcessing
 
       vms = find_checked_items
       if method == 'retire_now' && VmOrTemplate.includes_template?(vms)
-        add_flash(_("%{task} does not apply to selected %{model}") % {:model => ui_lookup(:table => "miq_template"), :task => "Retire"}, :error)
-        render_flash { |page| page << '$(\'#main_div\').scrollTop();' }
+        add_flash(_("Retire does not apply to selected %{model}") %
+          {:model => ui_lookup(:table => "miq_template")}, :error)
+        render_flash_and_scroll
         return
       end
 
@@ -1194,7 +1223,8 @@ module ApplicationController::CiProcessing
     else # showing 1 vm
       klass = get_rec_cls
       if params[:id].nil? || klass.find_by_id(params[:id]).nil?
-        add_flash(_("%s no longer exists") % ui_lookup(:table => request.parameters["controller"]), :error)
+        add_flash(_("%{record} no longer exists") %
+          {:record => ui_lookup(:table => request.parameters["controller"])}, :error)
         show_list unless @explorer
         @refresh_partial = "layouts/gtl"
       else
@@ -1249,11 +1279,11 @@ module ApplicationController::CiProcessing
     options = {:ids => objs, :task => task, :userid => session[:userid]}
     options[:snap_selected] = session[:snap_selected] if task == "remove_snapshot" || task == "revert_to_snapshot"
     klass.process_tasks(options)
-  rescue StandardError => bang
-    add_flash(_("Error during '%s': ") % task << bang.message, :error)
+  rescue => err
+    add_flash(_("Error during '%{task}': %{error_message}") % {:task => task, :error_message => err.message}, :error)
   else
     add_flash(_("%{task} initiated for %{model} from the CFME Database") %
-      {:task  => display_name ? display_name.titleize : Dictionary.gettext(task, :type => :task).titleize,
+      {:task  => display_name ? display_name.titleize : task_name(task),
        :model => pluralize(objs.length, ui_lookup(:model => klass.to_s))})
   end
 
@@ -1261,7 +1291,7 @@ module ApplicationController::CiProcessing
     items = []
     if params[:id]
       if params[:id].nil? || !ExtManagementSystem.where(:id => params[:id]).exists?
-        add_flash(_("%s no longer exists") % ui_lookup(:table => controller_name), :error)
+        add_flash(_("%{record} no longer exists") % {:record => ui_lookup(:table => controller_name)}, :error)
       else
         items.push(params[:id])
         @single_delete = true if method == 'destroy' && !flash_errors?
@@ -1269,29 +1299,28 @@ module ApplicationController::CiProcessing
     else
       items = find_checked_items
       if items.empty?
-        add_flash(_("No %{model} were selected for %{task}") % {:model => ui_lookup(:ui_title => 'foreman'),
+        add_flash(_("No %{model} were selected for %{task}") % {:model => ui_lookup(:ui_title => 'providers'),
                                                                 :task  => display_name}, :error)
       else
-        process_foreman(items, method) unless items.empty? && !flash_errors?
+        process_cfgmgr(items, method) unless items.empty? && !flash_errors?
       end
     end
   end
 
-  def process_foreman(providers, task)
-    providers, _services_out_region = filter_ids_in_region(providers, "ManageIQ::Providers::Foreman::ConfigurationManager")
+  def process_cfgmgr(providers, task)
+    providers, _services_out_region = filter_ids_in_region(providers, "ManageIQ::Providers::ConfigurationManager")
     return if providers.empty?
 
     options = {:ids => providers, :task => task, :userid => session[:userid]}
-    kls = ManageIQ::Providers::Foreman::ConfigurationManager.find_by_id(providers.first).class.base_model
-    ManageIQ::Providers::Foreman::ConfigurationManager.process_tasks(options)
-  rescue StandardError => bang                            # Catch any errors
-    add_flash(_("Error during '%s': ") % task << bang.message, :error)
+    kls = ManageIQ::Providers::ConfigurationManager.find_by_id(providers.first).class
+    kls.process_tasks(options)
+  rescue => err
+    add_flash(_("Error during '%s': ") % task << err.message, :error)
   else
-    add_flash(_("%{task} initiated for %{count_model} (%{controller}) from the CFME Database") %
-      {:task        => Dictionary.gettext(task, :type => :task).titleize.gsub("Ems",
-                                                                              "#{ui_lookup(:ui_title => 'foreman')}"),
-       :controller  => ui_lookup(:ui_title => 'foreman'),
-       :count_model => pluralize(providers.length, ui_lookup(:model => kls.to_s))})
+    add_flash(_("%{task} initiated for %{count_model} (%{controller})") %
+                {:task        => task_name(task).gsub("Ems", "#{ui_lookup(:ui_title => 'provider')}"),
+                 :controller  => ui_lookup(:ui_title => ProviderForemanController.model_to_name(kls.to_s)),
+                 :count_model => pluralize(providers.length, _("provider"))})
   end
 
   # Delete all selected or single displayed VM(s)
@@ -1479,7 +1508,8 @@ module ApplicationController::CiProcessing
       vms = [params[:id]]
     end
     if vms.length < 1
-      add_flash(_("At least %{num} %{model} must be selected for %{action}") % {:num => 1, :model => ui_lookup(:model => "vm"), :action => "Policy Simulation"}, :error)
+      add_flash(_("At least 1 %{model} must be selected for Policy Simulation") %
+        {:model => ui_lookup(:model => "vm")}, :error)
       @refresh_div = "flash_msg_div"
       @refresh_partial = "layouts/flash_msg"
     else
@@ -1507,11 +1537,11 @@ module ApplicationController::CiProcessing
 
   # Common Cluster button handler routines
   def process_clusters(clusters, task)
-    clusters, clusters_out_region = filter_ids_in_region(clusters, "Cluster")
+    clusters, _clusters_out_region = filter_ids_in_region(clusters, "Cluster")
     return if clusters.empty?
 
     if task == "destroy"
-      EmsCluster.find_all_by_id(clusters, :order => "lower(name)").each do |cluster|
+      EmsCluster.where(:id => clusters).order("lower(name)").each do |cluster|
         id = cluster.id
         cluster_name = cluster.name
         audit = {:event => "ems_cluster_record_delete_initiated", :message => "[#{cluster_name}] Record delete initiated", :target_id => id, :target_class => "EmsCluster", :userid => session[:userid]}
@@ -1519,12 +1549,16 @@ module ApplicationController::CiProcessing
       end
       EmsCluster.destroy_queue(clusters)
     else
-      EmsCluster.find_all_by_id(clusters, :order => "lower(name)").each do |cluster|
+      EmsCluster.where(:id => clusters).order("lower(name)").each do |cluster|
         cluster_name = cluster.name
         begin
           cluster.send(task.to_sym) if cluster.respond_to?(task)    # Run the task
-        rescue StandardError => bang
-          add_flash(_("%{model} \"%{name}\": Error during '%{task}': ") % {:model => ui_lookup(:model => "EmsCluster"), :name => cluster_name, :task => task} << bang.message, :error)  # Push msg and error flag
+        rescue => err
+          add_flash(_("%{model} \"%{name}\": Error during '%{task}': %{error_message}") %
+            {:model         => ui_lookup(:model => "EmsCluster"),
+             :name          => cluster_name,
+             :task          => task,
+             :error_message => err.message}, :error) # Push msg and error flag
         else
           add_flash(_("%{model}: %{task} successfully initiated") % {:model => ui_lookup(:model => "EmsCluster"), :task => task})
         end
@@ -1534,11 +1568,11 @@ module ApplicationController::CiProcessing
 
   # Common RP button handler routines
   def process_resourcepools(rps, task)
-    rps, rps_out_region = filter_ids_in_region(rps, "Resource Pool")
+    rps, _rps_out_region = filter_ids_in_region(rps, "Resource Pool")
     return if rps.empty?
 
     if task == "destroy"
-      ResourcePool.find_all_by_id(rps, :order => "lower(name)").each do |rp|
+      ResourcePool.where(:id => rps).order("lower(name)").each do |rp|
         id = rp.id
         rp_name = rp.name
         audit = {:event => "rp_record_delete_initiated", :message => "[#{rp_name}] Record delete initiated", :target_id => id, :target_class => "ResourcePool", :userid => session[:userid]}
@@ -1546,12 +1580,16 @@ module ApplicationController::CiProcessing
       end
       ResourcePool.destroy_queue(rps)
     else
-      ResourcePool.find_all_by_id(rps, :order => "lower(name)").each do |rp|
+      ResourcePool.where(:id => rps).order("lower(name)").each do |rp|
         rp_name = rp.name
         begin
           rp.send(task.to_sym) if rp.respond_to?(task)    # Run the task
-        rescue StandardError => bang
-          add_flash(_("%{model} \"%{name}\": Error during '%{task}': ") % {:model => ui_lookup(:model => "ResourcePool"), :name => rp_name, :task => task} << bang.message, :error) # Push msg and error flag
+        rescue => err
+          add_flash(_("%{model} \"%{name}\": Error during '%{task}': %{error_message}") %
+            {:model         => ui_lookup(:model => "ResourcePool"),
+             :name          => rp_name,
+             :task          => task,
+             :error_message => err.message}, :error)
         else
           add_flash(_("%{model} \"%{name}\": %{task} successfully initiated") % {:model => ui_lookup(:model => "ResourcePool"), :name => rp_name, :task => task})
         end
@@ -1578,7 +1616,7 @@ module ApplicationController::CiProcessing
 
     else # showing 1 cluster
       if params[:id].nil? || EmsCluster.find_by_id(params[:id]).nil?
-        add_flash(_("%s no longer exists") % ui_lookup(:tables => "ems_cluster"), :error)
+        add_flash(_("%{record} no longer exists") % {:record => ui_lookup(:tables => "ems_cluster")}, :error)
       else
         clusters.push(params[:id])
         process_clusters(clusters, method)  unless clusters.empty?
@@ -1608,41 +1646,59 @@ module ApplicationController::CiProcessing
     cluster_button_operation('scan', 'Analysis')
   end
 
+  def each_host(host_ids, task_name)
+    Host.where(:id => host_ids).order("lower(name)").each do |host|
+      begin
+        yield host
+      rescue => err
+        add_flash(_("%{model} \"%{name}\": Error during '%{task}': %{message}") %
+                  {
+                    :model   => ui_lookup(:model => "Host"),
+                    :name    => host.name,
+                    :task    => task_name,
+                    :message => err.message
+                  }, :error)
+      end
+    end
+  end
+
   # Common Host button handler routines
   def process_hosts(hosts, task, display_name = nil)
-    hosts, hosts_out_region = filter_ids_in_region(hosts, "Host")
+    hosts, _hosts_out_region = filter_ids_in_region(hosts, "Host")
     return if hosts.empty?
+    task_name = (display_name || task)
 
-    if task == "refresh_ems"
+    case task
+    when "refresh_ems"
       Host.refresh_ems(hosts)
-      #      add_flash("'" + task.titleize + "' initiated for " + pluralize(hosts.length,"Host"))
-      add_flash(_("%{task} initiated for %{count_model} from the CFME Database") % {:task => (display_name || Dictionary.gettext(task, :type => :task).titleize), :count_model => pluralize(hosts.length, "Host")})
+      add_flash(_("%{task} initiated for %{count_model} from the CFME Database") % \
+        {:task        => (display_name || task_name(task)),
+         :count_model => pluralize(hosts.length, "Host")})
       AuditEvent.success(:userid => session[:userid], :event => "host_#{task}",
-          :message => "'#{display_name || task}' successfully initiated for #{pluralize(hosts.length, "Host")}",
+          :message => "'#{task_name}' successfully initiated for #{pluralize(hosts.length, "Host")}",
           :target_class => "Host")
-    elsif task == "destroy"
-      Host.where(:id => hosts).order("lower(name)").each do |host|
-        id = host.id
-        host_name = host.name
-        audit = {:event => "host_record_delete_initiated", :message => "[#{host_name}] Record delete initiated", :target_id => id, :target_class => "Host", :userid => session[:userid]}
+    when "destroy"
+      each_host(hosts, task_name) do |host|
+        audit = {:event => "host_record_delete_initiated", :message => "[#{host.name}] Record delete initiated", :target_id => id, :target_class => "Host", :userid => session[:userid]}
         AuditEvent.success(audit)
       end
       Host.destroy_queue(hosts)
-    else
-      Host.where(:id => hosts).order("lower(name)").each do |host|
-        host_name = host.name
-        begin
-          if host.respond_to?(task)  # Run the task
-            if task == "scan"
-              host.send(task.to_sym, session[:userid]) # Scan needs userid
-            else
-              host.send(task.to_sym)          # Run the task
-            end
-          end
-        rescue StandardError => bang
-          add_flash(_("%{model} \"%{name}\": Error during '%{task}': ") % {:model => ui_lookup(:model => "Host"), :name => host_name, :task => (display_name || task)} << bang.message, :error) # Push msg and error flag
+    when "scan"
+      each_host(hosts, task_name) do |host|
+        if host.respond_to?(:scan)
+          host.send(task.to_sym, session[:userid]) # Scan needs userid
+          add_flash(_("\"%{record}\": %{task} successfully initiated") % {:record => host.name, :task => (display_name || task)})
         else
-          add_flash(_("\"%{record}\": %{task} successfully initiated") % {:record => host_name, :task => (display_name || task)})
+          add_flash(_("\"%{task}\": not supported for %{hostname}") % {:hostname => host.name, :task => (task_name || task)}, :error)
+        end
+      end
+    else
+      each_host(hosts, task_name) do |host|
+        if host.respond_to?(task) && host.is_available?(task)
+          host.send(task.to_sym)
+          add_flash(_("\"%{record}\": %{task} successfully initiated") % {:record => host.name, :task => (display_name || task)})
+        else
+          add_flash(_("\"%{task}\": not available for %{hostname}") % {:hostname => host.name, :task => (display_name || task)}, :error)
         end
       end
     end
@@ -1654,7 +1710,7 @@ module ApplicationController::CiProcessing
     return if stacks.empty?
 
     if task == "destroy"
-      OrchestrationStack.find_all_by_id(stacks, :order => "lower(name)").each do |stack|
+      OrchestrationStack.where(:id => stacks).order("lower(name)").each do |stack|
         id = stack.id
         stack_name = stack.name
         audit = {:event        => "stack_record_delete_initiated",
@@ -1723,7 +1779,7 @@ module ApplicationController::CiProcessing
 
     else # showing 1 host
       if params[:id].nil? || Host.find_by_id(params[:id]).nil?
-        add_flash(_("%s no longer exists") % ui_lookup(:table => "host"), :error)
+        add_flash(_("%{record} no longer exists") % {:record => ui_lookup(:table => "host")}, :error)
       else
         hosts.push(params[:id])
         process_hosts(hosts, method, display_name)  unless hosts.empty?
@@ -1748,20 +1804,21 @@ module ApplicationController::CiProcessing
   end
 
   def process_storage(storages, task)
-    storages, storages_out_region = filter_ids_in_region(storages, "Datastore")
+    storages, _storages_out_region = filter_ids_in_region(storages, "Datastore")
     return if storages.empty?
 
     if task == "destroy"
-      Storage.find_all_by_id(storages, :order => "lower(name)").each do |storage|
+      Storage.where(:id => storages).order("lower(name)").each do |storage|
         id = storage.id
         storage_name = storage.name
         audit = {:event => "storage_record_delete_initiated", :message => "[#{storage_name}] Record delete initiated", :target_id => id, :target_class => "Storage", :userid => session[:userid]}
         AuditEvent.success(audit)
       end
       Storage.destroy_queue(storages)
-      add_flash(_("%{task} initiated for %{count_model} from the CFME Database") % {:task => "Delete", :count_model => pluralize(storages.length, "Datastore")})
+      add_flash(n_("Delete initiated for Datastore from the CFME Database",
+                   "Delete initiated for Datastores from the CFME Database", storages.length))
     else
-      Storage.find_all_by_id(storages, :order => "lower(name)").each do |storage|
+      Storage.where(:id => storages).order("lower(name)").each do |storage|
         storage_name = storage.name
         begin
           if task == "scan"
@@ -1769,11 +1826,15 @@ module ApplicationController::CiProcessing
           else
             storage.send(task.to_sym) if storage.respond_to?(task)    # Run the task
           end
-        rescue StandardError => bang
-          add_flash(_("%{model} \"%{name}\": Error during '%{task}': ") % {:model => ui_lookup(:model => "Storage"), :name => storage_name, :task => task} << bang.message, :error) # Push msg and error flag
+        rescue => err
+          add_flash(_("%{model} \"%{name}\": Error during '%{task}': %{error_message}") %
+            {:model         => ui_lookup(:model => "Storage"),
+             :name          => storage_name,
+             :task          => task,
+             :error_message => err.message}, :error) # Push msg and error flag
         else
           if task == "refresh_ems"
-            add_flash(_("\"%{record}\": %{task} successfully initiated") % {:record => storage_name, :task => "Refresh"})
+            add_flash(_("\"%{record}\": Refresh successfully initiated") % {:record => storage_name})
           else
             add_flash(_("\"%{record}\": %{task} successfully initiated") % {:record => storage_name, :task => task})
           end
@@ -1806,7 +1867,7 @@ module ApplicationController::CiProcessing
 
     else # showing 1 storage
       if params[:id].nil? || Storage.find_by_id(params[:id]).nil?
-        add_flash(_("%s no longer exists") % ui_lookup(:tables => "storage"), :error)
+        add_flash(_("%{record} no longer exists") % {:record => ui_lookup(:tables => "storage")}, :error)
       else
         storages.push(params[:id])
         process_storage(storages, method)  unless storages.empty?
@@ -1863,19 +1924,21 @@ module ApplicationController::CiProcessing
         if ds.vms_and_templates.length <= 0 && ds.hosts.length <= 0
           ds_to_delete.push(s)
         else
-          add_flash(_("\"%s\": cannot be removed, has vms or hosts") % ds.name, :warning)
+          add_flash(_("\"%{datastore_name}\": cannot be removed, has vms or hosts") %
+            {:datastore_name => ds.name}, :warning)
         end
       end
       process_storage(ds_to_delete, "destroy")  unless ds_to_delete.empty?
     else # showing 1 datastore, delete it
       if params[:id].nil? || Storage.find_by_id(params[:id]).nil?
-        add_flash(_("%s no longer exists") % ui_lookup(:tables => "storage"), :error)
+        add_flash(_("%{record} no longer exists") % {:record => ui_lookup(:tables => "storage")}, :error)
       else
         datastores.push(params[:id])
       end
       process_storage(datastores, "destroy")  unless datastores.empty?
       @single_delete = true unless flash_errors?
-      add_flash(_("The selected %s was deleted") % ui_lookup(:table => "storages")) if @flash_array.nil?
+      add_flash(_("The selected %{record} was deleted") %
+        {:record => ui_lookup(:table => "storages")}) if @flash_array.nil?
     end
     if @lastaction == "show_list"
       show_list
@@ -1888,19 +1951,22 @@ module ApplicationController::CiProcessing
     if @lastaction == "show_list" || (@lastaction == "show" && @layout != model_class.table_name.singularize)  # showing a list
       elements = find_checked_items
       if elements.empty?
-        add_flash(_("No %{model} were selected for %{task}") % {:model => ui_lookup(:tables => model_class.table_name), :task => "deletion"}, :error)
+        add_flash(_("No %{model} were selected for deletion") %
+          {:model => ui_lookup(:tables => model_class.table_name)}, :error)
       end
       send(destroy_method, elements, "destroy") unless elements.empty?
-      add_flash(_("%{task} initiated for %{count_model} from the CFME Database") % {:task => "Delete", :count_model => pluralize(elements.length, ui_lookup(:table => model_class.table_name))}) unless flash_errors?
+      add_flash(_("Delete initiated for %{count_model} from the CFME Database") %
+        {:count_model => pluralize(elements.length, ui_lookup(:table => model_class.table_name))}) unless flash_errors?
     else # showing 1 element, delete it
       if params[:id].nil? || model_class.find_by_id(params[:id]).nil?
-        add_flash(_("%s no longer exists") % ui_lookup(:table => model_class.table_name), :error)
+        add_flash(_("%{record} no longer exists") % {:record => ui_lookup(:table => model_class.table_name)}, :error)
       else
         elements.push(params[:id])
       end
       send(destroy_method, elements, "destroy") unless elements.empty?
       @single_delete = true unless flash_errors?
-      add_flash(_("The selected %s was deleted") % ui_lookup(:table => model_class.table_name)) if @flash_array.nil?
+      add_flash(_("The selected %{record} was deleted") %
+        {:record => ui_lookup(:table => model_class.table_name)}) if @flash_array.nil?
     end
     if @lastaction == "show_list"
       show_list

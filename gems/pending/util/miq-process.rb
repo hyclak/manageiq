@@ -1,6 +1,7 @@
 # encoding: US-ASCII
 
 require 'sys-uname'
+require 'sys/proctable'
 require 'util/runcmd'
 require 'util/win32/miq-wmi'
 require 'util/miq-system'
@@ -111,6 +112,7 @@ class MiqProcess
       cpu_total /= MiqSystem.num_cpus
       percent_cpu             = (1.0 * result[:cpu_time]) / cpu_total
       result[:percent_cpu]    = round_to(percent_cpu * 100.0, 2)
+      result[:proportional_set_size] = Sys::ProcTable.ps(pid).smaps.pss
     when :macosx
       h = nil
       begin
@@ -125,24 +127,9 @@ class MiqProcess
   end
 
   def self.command_line(pid)
-    case Sys::Platform::IMPL
-    when :mswin, :mingw
-      WMIHelper.connectServer { |wmi| wmi.run_query("select CommandLine from Win32_Process where Handle = '#{pid}'") { |p| return p.CommandLine } }
-    when :linux
-      filename = "/proc/#{pid}/cmdline"
-      cmdline = MiqSystem.readfile_async(filename)
-      return cmdline.tr("\000", " ").strip unless cmdline.nil?
-      rc = `ps --pid=#{pid} -o ucomm,command --no-headers`
-      return rc unless rc.strip.empty?
-    when :macosx
-      rc = `ps -p #{pid} -o ucomm,command`
-      rows = rc.split("\n")
-
-      # We always get the header back on Mac, so make sure there is more than just the header
-      return rows.last.strip if rows.length > 1
-    end
-
-    nil
+    # Already exited pids, or permission errors cause ps or ps.cmdline to be nil,
+    # so the best we can do is return an empty string.
+    Sys::ProcTable.ps(pid).try(:cmdline) || ""
   end
 
   def self.alive?(pid)
@@ -158,7 +145,7 @@ class MiqProcess
 
   def self.is_worker?(pid)
     command_line = self.command_line(pid)
-    command_line && command_line =~ /^ruby.+(runner|mongrel_rails)/
+    command_line.start_with?(MiqWorker::PROCESS_TITLE_PREFIX)
   end
 
   LINUX_STATES = {
@@ -205,7 +192,6 @@ class MiqProcess
         end
       end
     when :macosx
-      require 'sys/proctable'
       Sys::ProcTable.ps.select do |p|
         if p.cmdline && cmd.match(p.cmdline.tr("\000", " ").strip)
           pids << p.pid

@@ -59,6 +59,36 @@ class ExplorerPresenter
     ).update(options)
   end
 
+  def set_visibility(value, *elements)
+    elements.each { |el| @options[:set_visible_elements][el] = value }
+    self
+  end
+
+  def hide(*elements)
+    set_visibility(false, *elements)
+  end
+
+  def show(*elements)
+    set_visibility(true, *elements)
+  end
+
+  def reload_toolbars(toolbars)
+    toolbars.each_pair do |div_name, toolbar_data|
+      @options[:reload_toolbars][div_name] = toolbar_data
+    end
+    self
+  end
+
+  def replace(div_name, content)
+    @options[:replace_partials][div_name] = content
+    self
+  end
+
+  def update(div_name, content)
+    @options[:update_partials][div_name] = content
+    self
+  end
+
   def []=(key, value)
     @options[key] = value
   end
@@ -73,6 +103,8 @@ class ExplorerPresenter
     @out.join("\n")
   end
 
+  private
+
   def process
     # see if any miq expression vars need to be set
     unless @options[:exp].empty?
@@ -86,6 +118,11 @@ class ExplorerPresenter
     @out << javascript_for_miq_button_visibility(false).html_safe
 
     @out << "miqDeleteDynatreeCookies('#{@options[:clear_tree_cookies]}')" if @options[:clear_tree_cookies]
+
+    # Open an accordion inside an other AJAX call
+    unless @options[:open_accord].to_s.empty?
+      @out << "miqAccordionSwap('#accordion .panel-collapse.collapse.in', '##{j(@options[:open_accord])}_accord');"
+    end
 
     if @options[:remove_nodes]
       @out << "miqRemoveNodeChildren('#{@options[:active_tree]}',
@@ -142,7 +179,7 @@ class ExplorerPresenter
     # Scroll to top of main div
     @out << "$('#main_div').scrollTop(0);"
 
-    @out << "$('h1#explorer_title').html('#{j ERB::Util.h(@options[:right_cell_text])}');" if @options[:right_cell_text]
+    @out << "$('h1#explorer_title > span#explorer_title_text').html('#{j ERB::Util.h(URI.unescape(@options[:right_cell_text]))}');" if @options[:right_cell_text]
 
     # Reload toolbars
     @options[:reload_toolbars].each_pair do |div_name, toolbar|
@@ -155,7 +192,7 @@ class ExplorerPresenter
     [:record_id, :parent_id, :parent_class].each { |variable| @out << set_or_undef(variable.to_s) }
 
     # Open, select, and focus node in current tree
-    @out << "miqDynatreeActivateNodeSilently('#{@options[:active_tree]}', '#{@options[:osf_node]}');" unless @options[:osf_node].empty?
+    @out << "miqDynatreeActivateNodeSilently('#{@options[:active_tree]}', '#{@options[:osf_node]}');" unless @options[:osf_node].blank?
 
     @options[:lock_unlock_trees].each { |tree, lock| @out << tree_lock(tree, lock) }
 

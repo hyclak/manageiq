@@ -77,6 +77,8 @@ module ManageIQ
         get_floating_ips # We don't have any in Infra yet
         get_network_ports
 
+        link_network_ports_associations
+
         $fog_log.info("#{log_header}...Complete")
         @data
       end
@@ -193,7 +195,7 @@ module ManageIQ
           :ems_ref              => uid,
           :ems_ref_obj          => host.instance_uuid,
           :operating_system     => {:product_name => 'linux'},
-          :vmm_vendor           => 'RedHat',
+          :vmm_vendor           => 'redhat',
           :vmm_product          => identify_product(indexed_resources, host.instance_uuid),
           # Can't get this from ironic, maybe from Glance metadata, when it will be there, or image fleecing?
           :vmm_version          => nil,

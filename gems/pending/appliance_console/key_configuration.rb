@@ -30,10 +30,10 @@ module ApplianceConsole
 
       if fetch_key?
         say("")
-        @host      = ask_for_ip_or_hostname("hostname for appliance with encryption key (v2_key)", @host)
+        @host      = ask_for_ip_or_hostname("hostname for appliance with encryption key", @host)
         @login     = ask_for_string("appliance SSH login", @login)
         @password  = ask_for_password("appliance SSH password", @password)
-        @key_path  = ask_for_string("path of remote encryption key (v2_key)", @key_path)
+        @key_path  = ask_for_string("path of remote encryption key", @key_path)
       end
       @action
     end
@@ -83,8 +83,8 @@ module ApplianceConsole
         scp.download!(key_path, KEY_FILE)
       end
       File.exist?(KEY_FILE)
-    rescue Net::SSH::AuthenticationFailed => e
-      say(e.message)
+    rescue Net::SSH::AuthenticationFailed, SocketError => e
+      say("Failed to fetch key: #{e.message}")
       false
     end
 

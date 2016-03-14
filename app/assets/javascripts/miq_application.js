@@ -89,122 +89,125 @@ function miqCalendarDateConversion(server_offset) {
   return moment().utcOffset(Number(server_offset) / 60);
 }
 
-// Prefill text entry field when blank
-function miqLoginPrefill() {
-  miqPrefill($('#user_name'));
-  miqPrefill($('#user_password'));
-  miqPrefill($('#user_new_password'));
-  miqPrefill($('#user_verify_password'));
-  if ($('#user_name').length) {
-    // Retry in .2 seconds, if user name field is present
-    setTimeout(miqLoginPrefill, 200);
-  }
-}
+// The expressions variable is used only in the following two functions
+// TODO: Remove this scope wrapper after the expressions were moved to Ruby
+(function () {
+  // TODO: This probably should be moved into the Ruby code
+  var expressions = {
+    'boolean':     __('true/false'),
+    'bytes':       __('Number (Bytes)'),
+    'date':        __('Date'),
+    'datetime':    __('Date/Time'),
+    'decimal':     __('Integer'),
+    'fixnum':      __('Integer'),
+    'float':       __('Number'),
+    'gigabytes':   __('Number (GB)'),
+    'integer':     __('Integer'),
+    'kbps':        __('KBps'),
+    'kilobytes':   __('Number (kB)'),
+    'megabytes':   __('Number (MB)'),
+    'mhz':         __('MHz'),
+    'mhz_avg':     __('MHz'),
+    'numeric_set': __('Number List'),
+    'percent':     __('Percent'),
+    'regex':       __('Text (REGEX)'),
+    'ruby':        __('Ruby Script'),
+    'string':      __('Text'),
+    'string_set':  __('String List'),
+    'text':        __('Text')
+  };
 
-// Prefill expression value text entry fields when blank
-function miqExpressionPrefill(expEditor, noPrefillCount) {
-  var title;
+  // Prefill expression value text entry fields when blank
+  window.miqExpressionPrefill = function (expEditor, noPrefillCount) {
+    var title;
 
-  if ($('#chosen_value[type=text]').length) {
-    miqPrefill($('#chosen_value'), '/images/layout/expression/' + expEditor.first.type + '.png');
-    $('#chosen_value').prop('title', expEditor.first.title);
-    $('#chosen_value').prop('alt', expEditor.first.title);
-  }
-  if ($('#chosen_cvalue[type=text]').length) {
-    miqPrefill($('#chosen_cvalue'), '/images/layout/expression/' + expEditor.second.type + '.png');
-    $('#chosen_cvalue').prop('title', expEditor.second.title);
-    $('#chosen_cvalue').prop('alt', expEditor.second.title);
-  }
-  if ($('#chosen_regkey[type=text]').length) {
-    miqPrefill($('#chosen_regkey'), '/images/layout/expression/string.png');
-    title = "Registry Key";
-    $('#chosen_regkey').prop('title', title);
-    $('#chosen_regkey').prop('alt', title);
-  }
-  if ($('#chosen_regval[type=text]').length) {
-    miqPrefill($('#chosen_regval'), '/images/layout/expression/string.png');
-    title = "Registry Key Value";
-    $('#chosen_regval').prop('title', title);
-    $('#chosen_regval').prop('alt', title);
-  }
-  if ($('#miq_date_1_0[type=text]').length) {
-    miqPrefill($('#miq_date_1_0'), '/images/layout/expression/' + expEditor.first.type + '.png');
-    $('#miq_date_1_0').prop('title', expEditor.first.title);
-    $('#miq_date_1_0').prop('alt', expEditor.first.title);
-  }
-  if ($('#miq_date_1_1[type=text]').length) {
-    miqPrefill($('#miq_date_1_1'), '/images/layout/expression/' + expEditor.first.type + '.png');
-    $('#miq_date_1_1').prop('title', expEditor.first.title);
-    $('#miq_date_1_1').prop('alt', expEditor.first.title);
-  }
-  if ($('#miq_date_2_0[type=text]').length) {
-    miqPrefill($('#miq_date_2_0'), '/images/layout/expression/' + expEditor.second.type + '.png');
-    $('#miq_date_2_0').prop('title', expEditor.second.title);
-    $('#miq_date_2_0').prop('alt', expEditor.second.title);
-  }
-  if ($('#miq_date_2_1[type=text]').length) {
-    miqPrefill($('#miq_date_2_1'), '/images/layout/expression/' + expEditor.second.type + '.png');
-    $('#miq_date_2_1').prop('title', expEditor.second.title);
-    $('#miq_date_2_1').prop('alt', expEditor.second.title);
-  }
-  if (noPrefillCount) {
-    expEditor.prefillCount = 0;
-    setTimeout(function () {
-      miqExpressionPrefill(expEditor, false);
-    }, 200);
-  } else {
-    if (++expEditor.prefillCount > 100) {
+
+    if ($('#chosen_value[type=text]').length) {
+      $('#chosen_value').prop('placeholder', expressions[expEditor.first.type])
+      $('#chosen_value').prop('title', expEditor.first.title);
+      $('#chosen_value').prop('alt', expEditor.first.title);
+    }
+    if ($('#chosen_cvalue[type=text]').length) {
+      $('#chosen_cvalue').prop('placeholder', expressions[expEditor.second.type])
+      $('#chosen_cvalue').prop('title', expEditor.second.title);
+      $('#chosen_cvalue').prop('alt', expEditor.second.title);
+    }
+    if ($('#chosen_regkey[type=text]').length) {
+      title = __("Registry Key");
+      $('#chosen_regkey').prop('placeholder', expressions['string']);
+      $('#chosen_regkey').prop('title', title);
+      $('#chosen_regkey').prop('alt', title);
+    }
+    if ($('#chosen_regval[type=text]').length) {
+      title = __("Registry Key Value");
+      $('#chosen_regval').prop('placeholder', expressions['string']);
+      $('#chosen_regval').prop('title', title);
+      $('#chosen_regval').prop('alt', title);
+    }
+    if ($('#miq_date_1_0[type=text]').length) {
+      $('#miq_date_1_0').prop('placeholder', expressions[expEditor.first.type]);
+      $('#miq_date_1_0').prop('title', expEditor.first.title);
+      $('#miq_date_1_0').prop('alt', expEditor.first.title);
+    }
+    if ($('#miq_date_1_1[type=text]').length) {
+      $('#miq_date_1_1').prop('placeholder', expressions[expEditor.first.type]);
+      $('#miq_date_1_1').prop('title', expEditor.first.title);
+      $('#miq_date_1_1').prop('alt', expEditor.first.title);
+    }
+    if ($('#miq_date_2_0[type=text]').length) {
+      $('#miq_date_2_0').prop('placeholder', expressions[expEditor.second.type]);
+      $('#miq_date_2_0').prop('title', expEditor.second.title);
+      $('#miq_date_2_0').prop('alt', expEditor.second.title);
+    }
+    if ($('#miq_date_2_1[type=text]').length) {
+      $('#miq_date_2_1').prop('placeholder', expressions[expEditor.second.type]);
+      $('#miq_date_2_1').prop('title', expEditor.second.title);
+      $('#miq_date_2_1').prop('alt', expEditor.second.title);
+    }
+    if (noPrefillCount) {
       expEditor.prefillCount = 0;
-    }
-    setTimeout(function () {
-      miqExpressionPrefill(expEditor, false);
-    }, 200);
-  }
-}
-
-// Prefill report editor style value text entry fields when blank
-// (written more generic for reuse, just have to build
-// the ManageIQ.reportEditor.valueStyles hash)
-function miqValueStylePrefill(count) {
-  var found = false;
-
-  for (var field in ManageIQ.reportEditor.valueStyles) {
-    if ($(field).length) {
-      miqPrefill($(field), '/images/layout/expression/' + ManageIQ.reportEditor.valueStyles[field] + '.png');
-      found = true;
-    }
-  }
-  if (found) {
-    if (typeof count == 'undefined') {
-      ManageIQ.reportEditor.prefillCount = 0;
       setTimeout(function () {
-        miqValueStylePrefill(ManageIQ.reportEditor.prefillCount);
+        miqExpressionPrefill(expEditor, false);
       }, 200);
-    } else if (count == ManageIQ.reportEditor.prefillCount) {
-      if (++ManageIQ.reportEditor.prefillCount > 100) {
-        ManageIQ.reportEditor.prefillCount = 0;
-      }
-      setTimeout(function () {
-        miqValueStylePrefill(ManageIQ.reportEditor.prefillCount);
-      }, 200);
-    }
-  }
-}
-
-// Prefill text entry field when blank
-function miqPrefill(element, image, blank_image) {
-  if (element.length) {
-    if ($(element).val()) {
-      if (blank_image === '') {
-        $(element).css('background-color', 'transparent');
-      } else {
-        $(element).css('background', 'url(' + blank_image + ') no-repeat transparent');
-      }
     } else {
-      $(element).css('background', 'url(' + image + ') no-repeat transparent');
+      if (++expEditor.prefillCount > 100) {
+        expEditor.prefillCount = 0;
+      }
+      setTimeout(function () {
+        miqExpressionPrefill(expEditor, false);
+      }, 200);
     }
   }
-}
+
+  // Prefill report editor style value text entry fields when blank
+  // (written more generic for reuse, just have to build
+  // the ManageIQ.reportEditor.valueStyles hash)
+  window.miqValueStylePrefill = function (count) {
+    var found = false;
+
+    for (var field in ManageIQ.reportEditor.valueStyles) {
+      if ($(field).length) {
+        $(field).prop('placeholder', expressions[ManageIQ.reportEditor.valueStyles[field]]);
+        found = true;
+      }
+    }
+    if (found) {
+      if (typeof count == 'undefined') {
+        ManageIQ.reportEditor.prefillCount = 0;
+        setTimeout(function () {
+          miqValueStylePrefill(ManageIQ.reportEditor.prefillCount);
+        }, 200);
+      } else if (count == ManageIQ.reportEditor.prefillCount) {
+        if (++ManageIQ.reportEditor.prefillCount > 100) {
+          ManageIQ.reportEditor.prefillCount = 0;
+        }
+        setTimeout(function () {
+          miqValueStylePrefill(ManageIQ.reportEditor.prefillCount);
+        }, 200);
+      }
+    }
+  }
+})();
 
 // Get user's time zone offset
 function miqGetTZO() {
@@ -300,11 +303,11 @@ function miqDimDiv(divname, status) {
 
 // Check for changes and prompt
 function miqCheckForChanges() {
-  if (ManageIQ.angularApplication.$scope) {
-    if (ManageIQ.angularApplication.$scope.form.$dirty) {
-      var answer = confirm("Abandon changes?");
+  if (ManageIQ.angular.scope) {
+    if (ManageIQ.angular.scope.form.$dirty) {
+      var answer = confirm(__("Abandon changes?"));
       if (answer) {
-        ManageIQ.angularApplication.$scope.form.$setPristine(true);
+        ManageIQ.angular.scope.form.$setPristine(true);
       }
       return answer;
     }
@@ -313,7 +316,7 @@ function miqCheckForChanges() {
           $('#buttons_on').is(":visible")) ||
          ManageIQ.changes !== null) &&
         !$('#ignore_form_changes').length) {
-      return confirm("Abandon changes?");
+      return confirm(__("Abandon changes?"));
     }
   }
   // use default browser reaction for onclick
@@ -841,12 +844,75 @@ function miqEnterPressed(e) {
 }
 
 // Send login authentication via ajax
-function miqAjaxAuth() {
+function miqAjaxAuth(url) {
   miqEnableLoginFields(false);
-  miqJqueryRequest('/dashboard/authenticate', {
-    beforeSend: true,
-    data: miqSerializeForm('login_div'),
+  miqSparkleOn(); // miqJqueryRequest starts sparkle either way, but API.login doesn't
+
+  var credentials = {
+    login: $('#user_name').val(),
+    password: $('#user_password').val(),
+    serialized: miqSerializeForm('login_div'),
+  }
+
+  API.login(credentials.login, credentials.password)
+  .then(function() {
+    // API login ok, now do the normal one
+    miqJqueryRequest(url || '/dashboard/authenticate', {
+      beforeSend: true,
+      data: credentials.serialized,
+    });
+
+    // TODO API.autorenew is called on (non-login) page load - when?
+  })
+  .then(null, function() {
+    add_flash(__("API Authentication failed"), 'error');
+
+    miqEnableLoginFields(true);
+    miqSparkleOff();
   });
+}
+
+// add a flash message to an existing #flash_msg_div
+// levels are error, warning, info, success
+function add_flash(msg, level) {
+  level = level || 'success';
+  var cls = { alert: '', icon: '' };
+
+  switch (level) {
+    case 'error':
+      cls.alert = 'alert alert-danger';
+      cls.icon = 'pficon pficon-error-circle-o';
+      break;
+    case 'warning':
+      cls.alert = 'alert alert-warning';
+      cls.icon = 'pficon pficon-warning-triangle-o';
+      break;
+    case 'info':
+      cls.alert = 'alert alert-info';
+      cls.icon = 'pficon pficon-info';
+      break;
+    case 'success':
+      cls.alert = 'alert alert-success';
+      cls.icon = 'pficon pficon-ok';
+      break;
+  }
+
+  var icon_span = $('<span class="' + cls.icon + '"></span>');
+
+  var text_strong = $('<strong></strong>');
+  text_strong.text(msg);
+
+  var alert_div = $('<div class="' + cls.alert + '"></div>');
+  alert_div.append(icon_span, text_strong);
+
+  var text_div = $('<div class="flash_text_div"></div>');
+  text_div.attr('title', __('Click to remove message'));
+  text_div.on('click', function() {
+    text_div.remove();
+  });
+  text_div.append(alert_div);
+
+  $('#flash_msg_div').append(text_div).show();
 }
 
 function miqEnableLoginFields(enabled) {
@@ -1022,7 +1088,8 @@ function miqSearchByName(button) {
 // Send transaction to server so automate tree selection box can be made active
 // and rest of the screen can be blocked
 function miqShowAE_Tree(typ) {
-  miqJqueryRequest(miqPassFields("ae_tree_select_toggle", {typ: typ}));
+  var ae_url = "/" + ManageIQ.controller + "/ae_tree_select_toggle";
+  miqJqueryRequest(miqPassFields(ae_url, {typ: typ}));
   return true;
 }
 
@@ -1056,73 +1123,33 @@ function miqQsEnterEscape(e) {
 
 // Start/stop the JS spinner
 function miqSpinner(status) {
-  if (status) {
-    if (ManageIQ.spinner.spinner === null) {
-      var opts = {
-        lines: 15, // The number of lines to draw
-        length: 18, // The length of each line
-        width: 4, // The line thickness
-        radius: 25, // The radius of the inner circle
-        corners: 1, // Corner roundness (0..1)
-        rotate: 0, // The rotation offset
-        color: '#fff', // #rgb or #rrggbb
-        speed: 1, // Rounds per second
-        trail: 60, // Afterglow percentage
-        shadow: false, // Whether to render a shadow
-        hwaccel: false, // Whether to use hardware acceleration
-        className: 'miq-spinner', // The CSS class to assign to the spinner
-        zIndex: 2e9, // The z-index (defaults to 2000000000)
-        top: 'auto', // Top position relative to parent in px
-        left: 'auto' // Left position relative to parent in px
-      };
-      ManageIQ.spinner.spinner = new Spinner(opts).spin($('#spinner_div')[0]);
-    } else {
-      ManageIQ.spinner.spinner.spin($('#spinner_div')[0]);
-    }
-  } else {
-    if (ManageIQ.spinner.spinner !== null) {
-      ManageIQ.spinner.spinner.stop();
-    }
-  }
+  var opts = {
+    lines: 15, // The number of lines to draw
+    length: 18, // The length of each line
+    width: 4, // The line thickness
+    radius: 25, // The radius of the inner circle
+    color: '#fff', // #rgb or #rrggbb
+    trail: 60, // Afterglow percentage
+    className: 'miq-spinner', // The CSS class to assign to the spinner
+  };
+
+  $('#spinner_div').spin(status ? opts : false);
 }
 
 // Start/stop the search spinner
 function miqSearchSpinner(status) {
-  if (status) {
-    if ($('#search_notification').length) {
-      $('#search_notification').show();
-    }
-    if (ManageIQ.spinner.searchSpinner === null) {
-      var opts = {
-        lines: 13, // The number of lines to draw
-        length: 20, // The length of each line
-        width: 10, // The line thickness
-        radius: 30, // The radius of the inner circle
-        corners: 1, // Corner roundness (0..1)
-        rotate: 0, // The rotation offset
-        direction: 1, // 1: clockwise, -1: counterclockwise
-        color: '#000', // #rgb or #rrggbb or array of colors
-        speed: 1, // Rounds per second
-        trail: 60, // Afterglow percentage
-        shadow: false, // Whether to render a shadow
-        hwaccel: false, // Whether to use hardware acceleration
-        className: 'miq-spinner', // The CSS class to assign to the spinner
-        zIndex: 2e9, // The z-index (defaults to 2000000000)
-        top: 'auto', // Top position relative to parent in px
-        left: 'auto' // Left position relative to parent in px
-      };
-      ManageIQ.spinner.searchSpinner = new Spinner(opts).spin($('#searching_spinner_center')[0]);
-    } else {
-      ManageIQ.spinner.searchSpinner.spin($('#searching_spinner_center')[0]);
-    }
-  } else {
-    if ($('#search_notification').length) {
-      $('#search_notification').hide();
-    }
-    if (ManageIQ.spinner.searchSpinner !== null) {
-      ManageIQ.spinner.searchSpinner.stop();
-    }
-  }
+  var opts = {
+    lines: 13, // The number of lines to draw
+    length: 20, // The length of each line
+    width: 10, // The line thickness
+    radius: 30, // The radius of the inner circle
+    color: '#000', // #rgb or #rrggbb or array of colors
+    trail: 60, // Afterglow percentage
+    className: 'miq-spinner', // The CSS class to assign to the spinner
+  };
+
+  $('#search_notification').toggle(!! status);
+  $('#searching_spinner_center').spin(status ? opts : false);
 }
 
 /*
@@ -1141,26 +1168,35 @@ $(document).ajaxSend(function (event, request, settings) {
 
 function miqJqueryRequest(url, options) {
   options = options || {};
-  var ajax_options = {};
+  var ajax_options = {
+    type: 'POST',
+  };
 
   if (options.dataType === undefined) {
     ajax_options.accepts = {script: '*/*;q=0.5, ' + $.ajaxSettings.accepts.script};
     ajax_options.dataType = 'script';
   }
 
-  if (options.data) {
-    ajax_options.data = options.data;
-  }
+  // copy selected options over
+  _.extend(ajax_options, _.pick(options, [
+    'data',
+    'contentType',
+    'processData',
+    'cache'
+  ]));
+
   if (options.beforeSend) {
     ajax_options.beforeSend = function (request) {
       miqSparkle(true);
     };
   }
+
   if (options.complete) {
     ajax_options.complete = function (request) {
       miqSparkle(false);
     };
   }
+
   $.ajax(options.no_encoding ? url : encodeURI(url), ajax_options);
 }
 
@@ -1198,6 +1234,9 @@ function miqSelectPickerEvent(element, url, options){
 }
 
 function miqAccordSelect(e) {
+  if (ManageIQ.noCollapseEvent) { // implicitly return true when the noCollapseEvent is set
+    return true;
+  }
   if (!miqCheckForChanges()) {
     return false;
   } else {
@@ -1205,6 +1244,41 @@ function miqAccordSelect(e) {
     miqJqueryRequest(url, {beforeSend: true, complete: true});
     return true;
   }
+}
+
+function miqInitBootstrapSwitch(element, url, options){
+  $("[name="+element+"]").bootstrapSwitch();
+
+  $('#' + element).on('switchChange.bootstrapSwitch', function(event, state){
+    options =  typeof options !== 'undefined' ? options : {}
+    options['no_encoding'] = true;
+
+    var firstarg = ! _.contains(url, '?');
+    miqJqueryRequest(url + (firstarg ? '?' : '&') + element + '=' + state, options);
+    return true;
+  });
+}
+// Function to expand/collapse a pair of accordions
+function miqAccordionSwap(collapse, expand) {
+  /*
+   * Blocked by: https://github.com/twbs/bootstrap/issues/18418
+   * TODO: uncomment this and delete below when the issue is fixed
+   *
+   * // Fire an one-time event after the collapse is done
+   * $(collapse).one('hidden.bs.collapse', function () {
+   *   $(expand).collapse('show');
+   * });
+   * // Fire an one-time event fater the expand is done
+   * $(expand).one('shown.bs.collapse', function () {
+   *   ManageIQ.noCollapseEvent = false;
+   * })
+   * ManageIQ.noCollapseEvent = true;
+   * $(collapse).collapse('hide');
+   *
+   */
+   ManageIQ.noCollapseEvent = true;
+   $(expand).parent().find('.panel-heading a').trigger('click');
+   ManageIQ.noCollapseEvent = false;
 }
 
 // This function is called in miqOnLoad
@@ -1231,26 +1305,22 @@ function miqToolbarOnClick(e) {
     return;
   }
 
-  if (button.data("confirm") && !button.data("popup")) {
-    if (!confirm(button.data('confirm'))) {
+  if (button.data("confirm-tb") && !button.data("popup")) {
+    if (!confirm(button.data('confirm-tb'))) {
       return;
     }
-  } else if (button.data("confirm") && button.data("popup")) {
+  } else if (button.data("confirm-tb") && button.data("popup")) {
     // to open console in a new window
-    if (confirm(button.data('confirm'))) {
-      if (button.data('popup') != "undefined" && button.data('popup')) {
-        if (button.data("console_url")) {
-          window.open(button.data('console_url'));
-        }
+    if (confirm(button.data('confirm-tb'))) {
+      if (button.data("window_url")) {
+        window.open(button.data('window_url'));
       }
     }
     return;
-  } else if (!button.data("confirm") && button.data("popup")) {
+  } else if (!button.data("confirm-tb") && button.data("popup")) {
     // to open readonly report in a new window, doesnt have confirm message
-    if (button.data('popup')) {
-      if (button.data("console_url")) {
-        window.open(button.data('console_url'));
-      }
+    if (button.data("window_url")) {
+      window.open(button.data('window_url'));
     }
     return;
   }
@@ -1326,31 +1396,32 @@ function miqToolbarOnClick(e) {
 
   // TODO:
   // Checking for perf_reload button to not turn off spinning Q (will be done after charts are drawn).
+  // Checking for Report download button to allow controller method to turn off spinner
   // Need to design this feature into the toolbar button support at a later time.
-  if ((button.attr('name') == "perf_reload") ||
-      (button.attr('name') == "vm_perf_reload") ||
-      (button.attr('name').match("_console$"))) {
-    if (typeof params == "undefined") {
-      miqJqueryRequest(tb_url, {beforeSend: true});
-    } else {
-      miqJqueryRequest(tb_url, {beforeSend: true, data: params});
-    }
-  } else {
-    if (typeof params == "undefined") {
-      miqJqueryRequest(tb_url, {beforeSend: true, complete: true});
-    } else {
-      miqJqueryRequest(tb_url, {beforeSend: true, complete: true, data: params});
-    }
-  }
+  var no_complete = _.includes([
+      'perf_reload',
+      'vm_perf_reload',
+      'download_choice__render_report_csv',
+      'download_choice__render_report_pdf',
+      'download_choice__render_report_txt'
+    ], button.attr('name')) || button.attr('name').match(/_console$/);
+
+  var options = {
+    beforeSend: true,
+    complete: ! no_complete,
+    data: params
+  };
+
+  miqJqueryRequest(tb_url, options);
   return false;
 }
 
 function miqSupportCasePrompt(tb_url) {
-  var support_case = prompt('Enter Support Case:', '');
+  var support_case = prompt(__('Enter Support Case:'), '');
   if (support_case === null) {
     return false;
   } else if (support_case.trim() == '') {
-    alert('Support Case must be provided to collect logs');
+    alert(__('Support Case must be provided to collect logs'));
     return false;
   } else {
     tb_url = tb_url + '&support_case=' + encodeURIComponent(support_case);
@@ -1362,7 +1433,7 @@ function miqSupportCasePrompt(tb_url) {
 function miqWidgetToolbarClick(e) {
   var itemId = $(this).data('click');
   if (itemId == "reset") {
-    if (confirm("Are you sure you want to reset this Dashboard's Widgets to the defaults?")) {
+    if (confirm(__("Are you sure you want to reset this Dashboard's Widgets to the defaults?"))) {
       miqAjax("/dashboard/reset_widgets");
     }
   } else if (itemId == "add_widget") {
@@ -1397,3 +1468,54 @@ function miqInitMainContent() {
 
   $('#main-content').css('height', 'calc(100% - ' + height + 'px)')
 }
+
+function miqHideSearchClearButton() {
+  // Hide the clear button if the search input is empty
+  $(".search-pf .has-clear .clear").each(function() {
+    if (!$(this).prev('.form-control').val()) {
+      $(this).hide();
+    }
+  });
+  // Show the clear button upon entering text in the search input
+  $(".search-pf .has-clear .form-control").keyup(function () {
+    var t = $(this);
+    t.next('button').toggle(Boolean(t.val()));
+  });
+  // Upon clicking the clear button, empty the entered text and hide the clear button
+  $(".search-pf .has-clear .clear").click(function () {
+    $(this).prev('.form-control').val('').focus();
+    $(this).hide();
+  });
+}
+
+function toggle_expansion(link) {
+    var link = $(link);
+    link.find("i").toggleClass("fa-angle-right fa-angle-down");
+    link.closest('td').children(0).toggleClass("expanded");
+}
+
+function check_for_ellipsis(){
+    var $element = $('.expand');
+    $.each($element, function( i, value ) {
+        $val = $(value)
+        var $c = $val.clone().css('overflow', 'initial').appendTo('body');
+        if( $c.width() > $val.width() && $val.parent().find('i.fa-angle-right').length == 0) {
+            add_expanding_icon($val.parent())
+        }
+        $c.remove();
+    });
+};
+
+function add_expanding_icon(element){
+    element.find('.pull-right').append( "<a onclick='toggle_expansion(this)'> <i class='fa fa-angle-right'></i>" );
+}
+
+function chartData(type, data, data2) {
+  var config = _.cloneDeep(ManageIQ.charts.c3config[type]);
+  return _.defaultsDeep({}, config, data, data2);
+}
+
+
+$( document ).ready(function() {
+    check_for_ellipsis();
+});

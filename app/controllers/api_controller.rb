@@ -1,4 +1,7 @@
 class ApiController < ApplicationController
+  skip_before_action :get_global_session_data
+  skip_after_action :set_global_session_data
+
   class AuthenticationError < StandardError; end
   class Forbidden < StandardError; end
   class BadRequestError < StandardError; end
@@ -8,7 +11,7 @@ class ApiController < ApplicationController
     head(:ok) if request.request_method == "OPTIONS"
   end
 
-  after_action :set_access_control_headers
+  before_action :set_access_control_headers
   def set_access_control_headers
     headers['Access-Control-Allow-Origin'] = '*'
     headers['Access-Control-Allow-Headers'] = 'origin, content-type, authorization, x-auth-token'
@@ -62,16 +65,18 @@ class ApiController < ApplicationController
   include_concern 'Events'
   include_concern 'Features'
   include_concern 'Hosts'
+  include_concern 'Instances'
   include_concern 'ProvisionRequests'
   include_concern "Rates"
   include_concern "Reports"
   include_concern 'RequestTasks'
   include_concern 'ResourceActions'
   include_concern 'Roles'
+  include_concern 'Services'
   include_concern 'ServiceDialogs'
   include_concern 'ServiceRequests'
-  include_concern 'Software'
   include_concern 'ServiceTemplates'
+  include_concern 'Software'
   include_concern 'Tags'
   include_concern 'Tenants'
   include_concern 'Users'
@@ -115,7 +120,9 @@ class ApiController < ApplicationController
   # not have these. They would instead dealing with the /api/auth
   # mechanism.
   #
-  skip_before_action :verify_authenticity_token, :only => [:show, :update, :destroy, :handle_options_request]
+  if Vmdb::Application.config.action_controller.allow_forgery_protection
+    skip_before_action :verify_authenticity_token, :only => [:show, :update, :destroy, :handle_options_request]
+  end
 
   delegate :base_config, :version_config, :collection_config, :to => self
 

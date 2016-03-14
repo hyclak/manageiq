@@ -5,19 +5,7 @@
 # - Create single automation request    /api/automation_requests    action "create"
 # - Create multiple automation requests /api/automation_requests    action "create"
 #
-require 'spec_helper'
-
 describe ApiController do
-  include Rack::Test::Methods
-
-  before(:each) do
-    init_api_spec_env
-  end
-
-  def app
-    Vmdb::Application
-  end
-
   describe "Automation Requests" do
     let(:approver) { FactoryGirl.create(:user_miq_request_approver) }
     let(:single_automation_request) do
@@ -42,8 +30,8 @@ describe ApiController do
       expect_result_resources_to_include_keys("results", %w(id approval_state type request_type status options))
       expect_results_to_match_hash("results", [expected_hash])
 
-      task_id = @result["results"].first["id"]
-      expect(AutomationRequest.exists?(task_id)).to be_true
+      task_id = response_hash["results"].first["id"]
+      expect(AutomationRequest.exists?(task_id)).to be_truthy
     end
 
     it "supports single request with create action" do
@@ -55,8 +43,8 @@ describe ApiController do
       expect_result_resources_to_include_keys("results", %w(id approval_state type request_type status options))
       expect_results_to_match_hash("results", [expected_hash])
 
-      task_id = @result["results"].first["id"]
-      expect(AutomationRequest.exists?(task_id)).to be_true
+      task_id = response_hash["results"].first["id"]
+      expect(AutomationRequest.exists?(task_id)).to be_truthy
     end
 
     it "supports multiple requests" do
@@ -68,9 +56,9 @@ describe ApiController do
       expect_result_resources_to_include_keys("results", %w(id approval_state type request_type status options))
       expect_results_to_match_hash("results", [expected_hash, expected_hash])
 
-      task_id1, task_id2 = @result["results"].collect { |r| r["id"] }
-      expect(AutomationRequest.exists?(task_id1)).to be_true
-      expect(AutomationRequest.exists?(task_id2)).to be_true
+      task_id1, task_id2 = response_hash["results"].collect { |r| r["id"] }
+      expect(AutomationRequest.exists?(task_id1)).to be_truthy
+      expect(AutomationRequest.exists?(task_id2)).to be_truthy
     end
   end
 end

@@ -1,11 +1,9 @@
-require "spec_helper"
-
 describe WidgetImportValidator do
   let(:widget_import_validator) { described_class.new }
 
   describe "#determine_validity" do
     let(:import_file_upload) do
-      active_record_instance_double("ImportFileUpload", :uploaded_content => uploaded_content)
+      double("ImportFileUpload", :uploaded_content => uploaded_content)
     end
 
     context "when the yaml is valid" do

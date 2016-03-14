@@ -1,5 +1,3 @@
-require "spec_helper"
-
 describe TreeBuilderReportRoles do
   context "#x_get_tree_roots" do
     before do
@@ -11,7 +9,7 @@ describe TreeBuilderReportRoles do
     it "gets roles/group for the specified user" do
       tree = TreeBuilderReportRoles.new("roles_tree", "roles", {})
       roles = JSON.parse(tree.tree_nodes).first['children'].collect { |h| h['title'] }
-      roles.should eq([@group.description])
+      expect(roles).to eq([@group.description])
     end
   end
 end

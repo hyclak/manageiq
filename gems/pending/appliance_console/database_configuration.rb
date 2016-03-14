@@ -73,29 +73,16 @@ module ApplianceConsole
 
     def create_region
       log_and_feedback(__method__) do
-        AwesomeSpawn.run!(
-          "script/rails runner script/rake",
-          :params => ["evm:db:region", "--", {:region => region}],
-          :chdir  => RAILS_ROOT
-        )
+        ApplianceConsole::Utilities.rake("evm:db:region", ["--", {:region => region}])
       end
     end
 
     def join_region
-      require 'tempfile'
-      temp = Tempfile.new(["joinregion", ".rb"], RAILS_ROOT.join("tmp").to_s)
-      params = {nil => ['runner', temp.path]}
-
-      output = nil
-
-      begin
-        temp.write(activation_code)
-        temp.close
-
-        output = LinuxAdmin.run('script/rails', :chdir => RAILS_ROOT, :params => params).output
-      ensure
-        temp.delete
-      end
+      output = AwesomeSpawn.run(
+        'bin/rails runner',
+        :params => [File.expand_path("join_region.rb", __dir__)],
+        :chdir  => RAILS_ROOT
+      ).output
 
       if output.to_s.empty?
         true
@@ -246,21 +233,6 @@ FRIENDLY
           raise ArgumentError, "Invalid argument: #{k}"
         end
       end
-    end
-
-    def activation_code
-      code = <<-RUBY
-require "#{RAILS_ROOT.join('app/models/miq_db_config')}"
-
-saved = MiqDbConfig.current.save
-
-#TODO: Fix MiqDbConfig.save so it doesn't return truthy values on success and failure
-# true => truthy
-# an array of ActiveModels::Error objects is also truthy
-puts saved.full_messages.join("\\n") unless saved == true
-exit 0
-
-RUBY
     end
   end
 end

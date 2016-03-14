@@ -1,5 +1,5 @@
 require 'resource_feeder/common'
-class RssFeed < ActiveRecord::Base
+class RssFeed < ApplicationRecord
   include ResourceFeeder
   validates_presence_of     :name
   validates_uniqueness_of   :name
@@ -36,7 +36,7 @@ class RssFeed < ActiveRecord::Base
     }
 
     feed = Rss.rss_feed_for(find_items, options)
-    local ? feed : {:text => feed, :content_type => Mime::RSS}
+    local ? feed : {:text => feed, :content_type => Mime[:rss]}
   end
 
   def self.to_html(feed, options)

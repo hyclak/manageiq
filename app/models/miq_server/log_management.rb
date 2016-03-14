@@ -16,7 +16,7 @@ module MiqServer::LogManagement
     time.respond_to?(:strftime) ? time.strftime("%Y%m%d_%H%M%S") : "unknown"
   end
 
-  def post_historical_logs(taskid)
+  def post_historical_logs(taskid, log_depot)
     task = MiqTask.find(taskid)
     resource = who_am_i
 
@@ -72,7 +72,7 @@ module MiqServer::LogManagement
         )
 
         logfile.upload
-      rescue StandardError, TimeoutError => err
+      rescue StandardError, Timeout::Error => err
         logfile.update_attributes(:state => "error")
         _log.error("Posting of historical logs failed for #{resource} due to error: [#{err.class.name}] [#{err}]")
         raise
@@ -111,26 +111,25 @@ module MiqServer::LogManagement
   end
 
   def last_log_sync_on
-    rec = LogFile.where(:resource_type => self.class.name, :resource_id => id).order("updated_on DESC").select("updated_on").first
-    rec.nil? ? nil : rec.updated_on
+    log_files.maximum(:updated_on)
   end
 
   def last_log_sync_message
-    last_log = LogFile.where(:resource_type => self.class.name, :resource_id => id).order("updated_on DESC").first
-    return nil if last_log.nil? || last_log.miq_task.nil?
-    last_log.miq_task.message
+    last_log = log_files.order(:updated_on => :desc).first
+    last_log.try(:miq_task).try!(:message)
   end
 
   def post_logs(options)
     taskid = options[:taskid]
     task = MiqTask.find(taskid)
+    context_log_depot = log_depot(options[:context])
 
     # the current queue item and task must be errored out on exceptions so re-raise any caught errors
-    raise "Log depot settings not configured" unless log_depot
-    log_depot.update_attributes(:support_case => options[:support_case].presence)
+    raise "Log depot settings not configured" unless context_log_depot
+    context_log_depot.update_attributes(:support_case => options[:support_case].presence)
 
-    post_historical_logs(taskid) unless options[:only_current]
-    post_current_logs(taskid)
+    post_historical_logs(taskid, context_log_depot) unless options[:only_current]
+    post_current_logs(taskid, context_log_depot)
     task.update_status("Finished", "Ok", "Log files were successfully collected")
   end
 
@@ -155,7 +154,7 @@ module MiqServer::LogManagement
     [pg_data.join("*.conf"), pg_data.join("pg_log/*")]
   end
 
-  def post_current_logs(taskid)
+  def post_current_logs(taskid, log_depot)
     resource = who_am_i
     task = MiqTask.find(taskid)
 
@@ -196,7 +195,7 @@ module MiqServer::LogManagement
       )
 
       logfile.upload
-    rescue StandardError, TimeoutError => err
+    rescue StandardError, Timeout::Error => err
       _log.error("#{log_prefix} Posting of current logs failed for #{resource} due to error: [#{err.class.name}] [#{err}]")
       logfile.update_attributes(:state => "error")
       raise
@@ -207,7 +206,7 @@ module MiqServer::LogManagement
   end
 
   def delete_old_requested_logs
-    LogFile.destroy_all(:historical => false, :resource_id => id, :resource_type => self.class.name)
+    log_files.where(:historical => false).destroy_all
   end
 
   def delete_active_log_collections_queue
@@ -248,8 +247,8 @@ module MiqServer::LogManagement
     MiqTask.exists?(["miq_server_id = ? and name like ? and state != ?", id, "Zipped log retrieval for %", "Finished"])
   end
 
-  def log_depot
-    log_file_depot || zone.log_file_depot
+  def log_depot(context)
+    context == "Zone" ? zone.log_file_depot : log_file_depot
   end
 
   def base_zip_log_name

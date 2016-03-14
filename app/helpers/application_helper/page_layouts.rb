@@ -8,6 +8,7 @@ module ApplicationHelper::PageLayouts
       configuration
       container_dashboard
       container_topology
+      middleware_topology
       diagnostics
       exception
       miq_ae_automate_button
@@ -33,6 +34,8 @@ module ApplicationHelper::PageLayouts
 
     return false if @showtype == "dialog_provision"
 
+    return false if @showtype == "dashboard"
+
     return false if controller.action_name.end_with?("tagging_edit")
 
     true
@@ -55,7 +58,7 @@ module ApplicationHelper::PageLayouts
        (@layout == 'vm' && controller.action_name == 'edit') ||
        (@layout == "report" && ["new", "create", "edit", "copy", "update", "explorer"].include?(controller.action_name))
       return false
-    elsif @layout == "dashboard" || @layout == "container_dashboard" # Dashboard tabs are located in taskbar because they are otherwise hidden behind the taskbar regardless of z-index -->
+    elsif @layout == "dashboard" || @layout == "container_dashboard" || @showtype == 'dashboard' # Dashboard tabs are located in taskbar because they are otherwise hidden behind the taskbar regardless of z-index -->
       return false
     end
     true

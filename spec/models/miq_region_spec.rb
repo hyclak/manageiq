@@ -1,5 +1,3 @@
-require "spec_helper"
-
 describe MiqRegion do
   context "after seeding" do
     before(:each) do
@@ -7,10 +5,10 @@ describe MiqRegion do
     end
 
     it "should increment naming sequence number after each call" do
-      MiqRegion.my_region.next_naming_sequence("namingtest$n{3}", "naming").should == 1
-      MiqRegion.my_region.next_naming_sequence("namingtest$n{3}", "naming").should == 2
-      MiqRegion.my_region.next_naming_sequence("anothertest$n{3}", "naming").should == 1
-      MiqRegion.my_region.next_naming_sequence("anothertest$n{3}", "naming").should == 2
+      expect(MiqRegion.my_region.next_naming_sequence("namingtest$n{3}", "naming")).to eq(1)
+      expect(MiqRegion.my_region.next_naming_sequence("namingtest$n{3}", "naming")).to eq(2)
+      expect(MiqRegion.my_region.next_naming_sequence("anothertest$n{3}", "naming")).to eq(1)
+      expect(MiqRegion.my_region.next_naming_sequence("anothertest$n{3}", "naming")).to eq(2)
     end
 
     context "with cloud and infra EMSes" do
@@ -27,21 +25,29 @@ describe MiqRegion do
       end
 
       it "should be able to return the list of ems_clouds" do
-        @region.ems_clouds.should include(*@ems_clouds)
-        @region.ems_clouds.should_not include(*@ems_infras)
+        expect(@region.ems_clouds).to include(*@ems_clouds)
+        expect(@region.ems_clouds).not_to include(*@ems_infras)
       end
 
       it "should be able to return the list of ems_infras" do
-        @region.ems_infras.should include(*@ems_infras)
-        @region.ems_infras.should_not include(*@ems_clouds)
+        expect(@region.ems_infras).to include(*@ems_infras)
+        expect(@region.ems_infras).not_to include(*@ems_clouds)
       end
     end
+  end
+
+  it ".log_not_under_management" do
+    MiqRegion.seed
+    FactoryGirl.create(:host_vmware)
+    FactoryGirl.create(:vm_vmware)
+    expect($log).to receive(:info).with(/VMs: \[1\], Hosts: \[1\]/)
+    described_class.log_not_under_management("")
   end
 
   context ".seed" do
     before do
       @region_number = 99
-      MiqRegion.stub(:my_region_number => @region_number)
+      allow(MiqRegion).to receive_messages(:my_region_number => @region_number)
       MiqRegion.seed
     end
 
@@ -53,15 +59,15 @@ describe MiqRegion do
 
     it "replaces deleted current region" do
       MiqRegion.where(:region => @region_number).destroy_all
-      MiqRegion.count.should == 0
+      expect(MiqRegion.count).to eq(0)
       MiqRegion.seed
-      MiqRegion.first.region.should == @region_number
+      expect(MiqRegion.first.region).to eq(@region_number)
     end
 
     it "raises Exception if db region_id doesn't match my_region_number" do
       @db = FactoryGirl.create(:miq_database)
-      MiqRegion.stub(:my_region_number => @region_number + 1)
-      -> { MiqRegion.seed }.should raise_error(Exception)
+      allow(MiqRegion).to receive_messages(:my_region_number => @region_number + 1)
+      expect { MiqRegion.seed }.to raise_error(Exception)
     end
   end
 end

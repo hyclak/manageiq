@@ -18,7 +18,7 @@ module ApplicationController::Automate
       begin
         build_results
       rescue MiqAeException::Error => bang
-        add_flash(_("Automation Error: ") << bang.message, :error)
+        add_flash(_("Automation Error: %{error_message}") % {:error_message => bang.message}, :error)
       end
     end
     c_tb = build_toolbar(center_toolbar_filename)
@@ -27,6 +27,7 @@ module ApplicationController::Automate
       if is_browser_ie? && browser_info(:version) == "7"
         page.redirect_to :action => 'resolve'
       else
+        page.replace("left_cell_bottom", :partial => "resolve_form_buttons")
         page.replace("flash_msg_div", :partial => "layouts/flash_msg")
         page.replace_html("main_div", :partial => "results_tabs")
         page << javascript_pf_toolbar_reload('center_tb', c_tb)
@@ -36,32 +37,9 @@ module ApplicationController::Automate
   end
   private :resolve_button_throw
 
-  def resolve_button_save # Save current URI as an automate button
-    # need to strip and pass description as nil, incase button is being deleted
-    @resolve[:button_text] = @resolve[:button_text].strip == "" ? nil : @resolve[:button_text] unless @resolve[:button_text].nil?
-    begin
-      CustomButton.save_as_button(
-        :description      => @resolve[:button_text],
-        :applies_to_class => @resolve[:button_class],
-        :uri              => @resolve[:uri],
-        :userid           => session[:userid]
-      )
-    rescue StandardError => bang
-      add_flash(_("Error during '%s': ") % "save" << bang.message, :error)
-    else
-      if @resolve[:button_text].blank?
-        add_flash(_("Automate button %s has been cleared") % @resolve[:button_number])
-      else
-        add_flash(_("Automate button %{btn_num} has been set to %{btn_txt}") % {:btn_num => @resolve[:button_number], :btn_txt => @resolve[:button_text]})
-      end
-    end
-    render_flash
-  end
-  private :resolve_button_save
-
   def resolve_button_copy # Copy current URI as an automate button
     session[:resolve_object] = copy_hash(@resolve)
-    render :nothing => true
+    head :ok
   end
   private :resolve_button_copy
 
@@ -125,6 +103,7 @@ module ApplicationController::Automate
 
     if params[:simulate] == "simulate"
       @resolve = session[:resolve]
+      @resolve[:ae_result] = nil
     else
       @resolve = {} if params[:button] == "reset" || (@resolve && @resolve[:lastaction] == "simulate")
       @resolve[:lastaction] = nil if @resolve
@@ -149,10 +128,10 @@ module ApplicationController::Automate
     @breadcrumbs = []
     drop_breadcrumb(:name => "Resolve", :url => "/miq_ae_tools/resolve")
     @lastaction = "resolve"
+    @right_cell_text = "Simulation"
 
     case params[:button]
-    when "throw"    then resolve_button_throw
-    when "save"     then resolve_button_save
+    when "throw", "retry" then resolve_button_throw
     when "copy"     then resolve_button_copy
     when "paste"    then resolve_button_paste
     when "simulate" then resolve_button_simulate
@@ -166,13 +145,27 @@ module ApplicationController::Automate
       :fqclass     => @resolve[:new][:starting_object],
       :message     => @resolve[:new][:object_message]
     }
-    @results = MiqAeEngine.resolve_automation_object(@sb[:name],
-                                                     User.current_user,
-                                                     @sb[:attrs],
-                                                     options,
-                                                     @resolve[:new][:readonly]).to_expanded_xml
+    @resolve[:state_attributes] = {} if params[:button] == 'throw'
+    automation_attrs = @sb[:attrs].reverse_merge(@resolve[:state_attributes])
+    ws = MiqAeEngine.resolve_automation_object(@sb[:name],
+                                               User.current_user,
+                                               automation_attrs,
+                                               options,
+                                               @resolve[:new][:readonly])
+    ws.root['ae_result'] ||= 'ok'
+    @results = ws.to_expanded_xml
     @resolve[:uri] = options[:uri]
+    @resolve[:ae_result] = ws.root['ae_result']
+    @resolve[:state_attributes] = ws.root['ae_result'] == 'retry' ? state_attributes(ws) : {}
     @json_tree = ws_tree_from_xml(@results)
+  end
+
+  def state_attributes(ws)
+    state_attrs = {'ae_state_retries' => ws.root['ae_state_retries'],
+                   'ae_state'         => ws.root['ae_state']}
+    state_attrs['ae_state_data'] = ws.persist_state_hash.to_yaml unless ws.persist_state_hash.empty?
+    state_attrs['ae_state_previous'] = ws.current_state_info.to_yaml unless ws.current_state_info.empty?
+    state_attrs
   end
 
   def ready_to_throw
@@ -182,6 +175,7 @@ module ApplicationController::Automate
   def resolve_reset
     c_tb = build_toolbar(center_toolbar_filename)
     render :update do |page|
+      page.replace("left_cell_bottom", :partial => "resolve_form_buttons")
       page.replace("resolve_form_div", :partial => "resolve_form") unless params[:tab_id]
       page.replace("results_tabs",     :partial => "results_tabs")
       page << javascript_pf_toolbar_reload('center_tb', c_tb)

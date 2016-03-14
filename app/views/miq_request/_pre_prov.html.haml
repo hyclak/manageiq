@@ -14,9 +14,10 @@
               {:action => "vm_pre_prov", :sort_choice => h, :id => id.to_s},
               "data-miq_sparkle_on"  => true,
               "data-miq_sparkle_off" => true,
+              "data-method"          => :post,
               :remote                => true)
             - if @edit[:vm_columns][i] == @edit[:vm_sortcol]
-              %img{:src => "/images/icons/16/sort_#{@edit[:vm_sortdir] == 'ASC' ? 'up' : 'down'}.png"}
+              %img{:src => image_path("16/sort_#{@edit[:vm_sortdir] == 'ASC' ? 'up' : 'down'}.png")}
     %tbody
       - @vms.each do |row|
         - @id = row.id

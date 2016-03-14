@@ -12,9 +12,9 @@ class MiqRubyrep
   end
 
   def self.prepare_configuration(config)
-    db_conf  = VMDB::Config.new("database").config[Rails.env.to_sym]
+    db_conf = Rails.configuration.database_configuration[Rails.env].symbolize_keys
 
-    rp_conf  = MiqReplicationWorker.worker_settings[:replication]
+    rp_conf = MiqReplicationWorker.worker_settings[:replication]
     raise "Replication configuration missing" if rp_conf.blank?
     if db_conf.slice(:host, :port, :database) == rp_conf.slice(:host, :port, :database)
       raise "Replication configuration source must not point to destination"
@@ -35,7 +35,7 @@ class MiqRubyrep
       config.options[setting] = value unless value.nil?
     end
 
-    config.options[:rep_prefix] = "rr#{ActiveRecord::Base.my_region_number}"
+    config.options[:rep_prefix] = "rr#{ApplicationRecord.my_region_number}"
 
     config.options[:replicator]                    = :one_way
     config.options[:syncer]                        = :one_way
@@ -49,6 +49,8 @@ class MiqRubyrep
     config.options[:left_record_handling]          = :insert
     config.options[:sync_conflict_handling]        = :left_wins
     config.options[:heartbeat_file]                = heartbeat_file
+
+    config.options[:id_range]                      = ApplicationRecord.rails_sequence_range
 
     rp_conf[:include_tables] ||= %w(.+)
     include_tables = rp_conf[:include_tables].to_a.join("|")

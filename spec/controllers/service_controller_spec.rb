@@ -1,5 +1,3 @@
-require "spec_helper"
-
 describe ServiceController do
   before(:each) do
     set_user_privileges
@@ -18,7 +16,7 @@ describe ServiceController do
                                        :active_tree => :svcs_tree
                                       )
 
-      controller.stub(:replace_right_cell)
+      allow(controller).to receive(:replace_right_cell)
 
       # Now delete the Service
       controller.instance_variable_set(:@_params, :id => svc.id)
@@ -26,42 +24,46 @@ describe ServiceController do
 
       # Check for Service Description to be part of flash message displayed
       flash_messages = assigns(:flash_array)
-      flash_messages.first[:message].should include("Service \"GemFire\": Delete successful")
+      expect(flash_messages.first[:message]).to include("Service \"GemFire\": Delete successful")
 
-      controller.send(:flash_errors?).should_not be_true
+      expect(controller.send(:flash_errors?)).not_to be_truthy
     end
   end
 
   describe 'x_button' do
+    before do
+      ApplicationController.handle_exceptions = true
+    end
+
     describe 'corresponding methods are called for allowed actions' do
       ServiceController::SERVICE_X_BUTTON_ALLOWED_ACTIONS.each_pair do |action_name, method|
         it "calls the appropriate method: '#{method}' for action '#{action_name}'" do
-          controller.should_receive(method)
-          get :x_button, :pressed => action_name
+          expect(controller).to receive(method)
+          get :x_button, :params => { :pressed => action_name }
         end
       end
     end
 
     it 'exception is raised for unknown action' do
-      get :x_button, :pressed => 'random_dude', :format => :html
-      expect { response }.to render_template('layouts/exception')
+      get :x_button, :params => { :pressed => 'random_dude', :format => :html }
+      expect(response).to render_template('layouts/exception')
     end
   end
 
   context "#service_delete" do
     it "replaces right cell after service is deleted" do
       service = FactoryGirl.create(:service)
-      controller.stub(:x_build_dynatree)
+      allow(controller).to receive(:x_build_dynatree)
       controller.instance_variable_set(:@settings, {})
       controller.instance_variable_set(:@sb, {})
       controller.instance_variable_set(:@_params, :id => service.id)
-      controller.should_receive(:render)
+      expect(controller).to receive(:render)
       expect(response.status).to eq(200)
       controller.send(:service_delete)
 
       flash_message = assigns(:flash_array).first
-      flash_message[:message].should include("Delete successful")
-      flash_message[:level].should be(:success)
+      expect(flash_message[:message]).to include("Delete successful")
+      expect(flash_message[:level]).to be(:success)
     end
   end
 end

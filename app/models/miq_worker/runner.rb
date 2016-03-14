@@ -7,7 +7,8 @@ class MiqWorker::Runner
 
   include Vmdb::Logging
   attr_accessor :last_hb, :worker, :worker_settings
-  attr_reader   :vmdb_config, :active_roles, :server
+  attr_reader   :active_roles, :server
+  attr_writer   :vmdb_config
 
   INTERRUPT_SIGNALS = ["SIGINT", "SIGTERM"]
 
@@ -18,15 +19,11 @@ class MiqWorker::Runner
   SAFE_SLEEP_SECONDS = 60
 
   def self.start_worker(*args)
-    cfg = {}
-    opts = OptionParser.new
-    self::OPTIONS_PARSER_SETTINGS.each do |key, desc, type|
-      opts.on("--#{key} VAL", desc, type) { |v| cfg[key] = v }
-    end
-    opts.parse(*args)
+    new(*args).start
+  end
 
-    # Start the worker object
-    new(cfg).start
+  def vmdb_config
+    @vmdb_config ||= VMDB::Config.new("vmdb")
   end
 
   def poll_method
@@ -282,7 +279,7 @@ class MiqWorker::Runner
   end
 
   def sync_config(config = nil)
-    @vmdb_config = config || VMDB::Config.new("vmdb")
+    self.vmdb_config = config
     @my_zone ||= MiqServer.my_zone
     sync_log_level
     sync_worker_settings
@@ -296,11 +293,11 @@ class MiqWorker::Runner
   end
 
   def sync_log_level
-    Vmdb::Loggers.apply_config(@vmdb_config.config[:log])
+    Vmdb::Loggers.apply_config(vmdb_config.config[:log])
   end
 
   def sync_worker_settings
-    @worker_settings = self.class.corresponding_model.worker_settings(:config => @vmdb_config)
+    @worker_settings = self.class.corresponding_model.worker_settings(:config => vmdb_config)
     @poll = @worker_settings[:poll]
     poll_method
   end
@@ -472,10 +469,8 @@ class MiqWorker::Runner
   end
 
   def set_process_title
-    return unless Process.respond_to?(:setproctitle)
-
     type   = @worker.type.sub(/^ManageIQ::Providers::/, "")
-    title  = "#{type} id: #{@worker.id}"
+    title  = "#{MiqWorker::PROCESS_TITLE_PREFIX} #{type} id: #{@worker.id}"
     title << ", queue: #{@worker.queue_name}" if @worker.queue_name
     title << ", uri: #{@worker.uri}" if @worker.uri
 

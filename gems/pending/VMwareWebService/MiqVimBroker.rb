@@ -91,7 +91,6 @@ class MiqVimBroker
       @selectorHash = @@selectorHash
       @cacheScope   = @@cacheScope
 
-      # $SAFE = 1
       acl = ACL.new(%w( deny all allow 127.0.0.1/32 ))
       DRb.install_acl(acl)
       DRb.start_service("druby://127.0.0.1:#{port}", self, :idconv => VimBrokerIdConv.new)
@@ -107,11 +106,6 @@ class MiqVimBroker
 
   # Can be overridden by BrokerSyncDebug.
   def config_lock
-    Sync.new
-  end
-
-  # Can be overridden by BrokerSyncDebug.
-  def sync_for_lock_hash(_key)
     Sync.new
   end
 

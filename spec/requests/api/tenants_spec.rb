@@ -1,13 +1,4 @@
-require "spec_helper"
-
 RSpec.describe "tenants API" do
-  include Rack::Test::Methods
-
-  def app
-    Vmdb::Application
-  end
-
-  before { init_api_spec_env }
   let!(:root_tenant) { Tenant.seed }
 
   it "can list all the tenants" do
@@ -41,7 +32,7 @@ RSpec.describe "tenants API" do
     run_get tenants_url(tenant.id)
 
     expect_result_to_match_hash(
-      @result,
+      response_hash,
       "href"        => tenants_url(tenant.id),
       "id"          => tenant.id,
       "name"        => "Test Tenant",

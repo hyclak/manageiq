@@ -1,4 +1,4 @@
-class TenantQuota < ActiveRecord::Base
+class TenantQuota < ApplicationRecord
   belongs_to :tenant
 
   QUOTA_BASE = {
@@ -49,8 +49,30 @@ class TenantQuota < ActiveRecord::Base
   scope :vms_allocated,       -> { where(:name => :vms_allocated) }
   scope :templates_allocated, -> { where(:name => :templates_allocated) }
 
+  virtual_column :name, :type => :string
+  virtual_column :total, :type => :integer
+  virtual_column :used, :type => :float
+  virtual_column :allocated, :type => :float
+  virtual_column :available, :type => :float
+
+  alias_attribute :total, :value
+
   before_validation(:on => :create) do
     self.unit = default_unit unless unit.present?
+  end
+
+  def self.format_quota_value(field, field_value, tenant_quota_name)
+    if field == "tenant_quotas.name"
+      TenantQuota.tenant_quota_description(tenant_quota_name.to_sym)
+    else
+      row = QUOTA_BASE[tenant_quota_name.to_sym]
+      OpsHelper::TextualSummary.convert_to_format(row[:format], row[:text_modifier], field_value)
+    end
+  end
+
+  def self.can_format_field?(field, tenant_quota_name)
+    table_field, = field.split(".")
+    to_s.tableize == table_field ? NAMES.include?(tenant_quota_name) : false
   end
 
   def self.default_text_for(metric)
@@ -59,7 +81,22 @@ class TenantQuota < ActiveRecord::Base
 
   def self.quota_definitions
     @quota_definitions ||= QUOTA_BASE.each_with_object({}) do |(name, value), h|
-      h[name] = value.merge(:description => I18n.t("dictionary.tenants.#{name}"), :value => nil, :warn_value => nil)
+      h[name] = value.merge(:description => tenant_quota_description(name), :value => nil, :warn_value => nil)
+    end
+  end
+
+  def self.tenant_quota_description(name)
+    case name
+    when :cpu_allocated
+      _("Allocated Virtual CPUs")
+    when :mem_allocated
+      _("Allocated Memory in GB")
+    when :storage_allocated
+      _("Allocated Storage in GB")
+    when :vms_allocated
+      _("Allocated Number of Virtual Machines")
+    when :templates_allocated
+      _("Allocated Number of Templates")
     end
   end
 

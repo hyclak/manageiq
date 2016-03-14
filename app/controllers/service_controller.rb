@@ -32,7 +32,7 @@ class ServiceController < ApplicationController
     end
     send_action
   end
-  hide_action :whitelisted_action
+  private :whitelisted_action
 
   def x_button
     @explorer = true
@@ -45,7 +45,8 @@ class ServiceController < ApplicationController
     if @refresh_partial
       replace_right_cell(action)
     else
-      add_flash(_("Button not yet implemented") + " #{model}:#{action}", :error) unless @flash_array
+      add_flash(_("Button not yet implemented %{model_name}:%{action_name}") %
+        {:model_name => model, :action_name => action}, :error) unless @flash_array
       render :update do |page|
         page.replace("flash_msg_div", :partial => "layouts/flash_msg")
       end
@@ -80,22 +81,10 @@ class ServiceController < ApplicationController
       self.x_node = "#{nodetype}-#{to_cid(id)}"
     end
 
-    # Build the Explorer screen from scratch
-    @trees   = []
-    @accords = []
-    if role_allows(:feature => "service", :any => true)
-      self.x_active_tree ||= 'svcs_tree'
-      self.x_active_accord ||= 'svcs'
-      @trees << build_svcs_tree
-      @accords.push(:name      => "svcs",
-                    :title     => "Services",
-                    :container => "svcs_accord")
-    end
+    build_accordions_and_trees
 
-    params.merge!(session[:exp_parms]) if session[:exp_parms]  # Grab any explorer parm overrides
+    params.instance_variable_get(:@parameters).merge!(session[:exp_parms]) if session[:exp_parms]  # Grab any explorer parm overrides
     session.delete(:exp_parms)
-
-    get_node_info(x_node)
     @in_a_form = false
 
     render :layout => "application"
@@ -111,7 +100,7 @@ class ServiceController < ApplicationController
     respond_to do |format|
       format.js do                  # AJAX, select the node
         @explorer = true
-        params[:id] = x_build_node_id(@record, nil, x_tree(:svcs_tree))  # Get the tree node id
+        params[:id] = x_build_node_id(@record, x_tree(:svcs_tree))  # Get the tree node id
         tree_select
       end
       format.html do                # HTML, redirect to explorer
@@ -119,7 +108,7 @@ class ServiceController < ApplicationController
         session[:exp_parms] = {:id => tree_node_id}
         redirect_to :action => "explorer"
       end
-      format.any { render :nothing => true, :status => 404 }
+      format.any { head :not_found }
     end
   end
 
@@ -144,45 +133,26 @@ class ServiceController < ApplicationController
     assert_privileges("service_edit")
     case params[:button]
     when "cancel"
-      if session[:edit][:rec_id]
-        add_flash(_("Edit of %{model} \"%{name}\" was cancelled by the user") % {:model => "Service", :name => session[:edit][:new][:description]})
-      else
-        add_flash(_("Add of new %s was cancelled by the user") % "Service")
-      end
-      @edit = nil
-      @in_a_form = false
+      service = Service.find_by_id(params[:id])
+      add_flash(_("Edit of Service \"%{name}\" was cancelled by the user") % {:name => service.description})
       replace_right_cell
     when "save", "add"
-      return unless load_edit("service_edit__#{params[:id] || "new"}", "replace_cell__explorer")
-      if @edit[:new][:name].blank?
-        add_flash(_("%s is required") % "Name", :error)
-      end
+      service = Service.find_by_id(params[:id])
+      service_set_record_vars(service)
 
-      if @flash_array
-        render :update do |page|
-          page.replace("flash_msg_div", :partial => "layouts/flash_msg")
-        end
-        return
-      end
-      @service = Service.find_by_id(@edit[:rec_id])
-      service_set_record_vars(@service)
       begin
-        @service.save
+        service.save
       rescue StandardError => bang
-        add_flash(_("Error during '%s': ") % "Service Edit" << bang.message, :error)
+        add_flash(_("Error during 'Service Edit': %{message}") % {:message => bang.message}, :error)
       else
-        add_flash(_("%{model} \"%{name}\" was saved") % {:model => "Service", :name => @edit[:new][:name]})
+        add_flash(_("Service \"%{name}\" was saved") % {:name => service.name})
       end
-      @changed = session[:changed] = false
-      @in_a_form = false
-      @edit = session[:edit] = nil
       replace_right_cell(nil, [:svcs])
     when "reset", nil # Reset or first time in
-      service_set_form_vars
-      if params[:button] == "reset"
-        add_flash(_("All changes have been reset"), :warning)
-      end
-      @changed = session[:changed] = false
+      checked = find_checked_items
+      checked[0] = params[:id] if checked.blank? && params[:id]
+      @service = find_by_id_filtered(Service, checked[0])
+      @in_a_form = true
       replace_right_cell("service_edit")
       return
     end
@@ -193,7 +163,8 @@ class ServiceController < ApplicationController
     st = s.service_template
     ra = st.resource_actions.find_by_action('Reconfigure') if st
     if ra && ra.dialog_id
-      @right_cell_text = _("%{task} %{model} \"%{name}\"") % {:task  => "Reconfigure", :name  => st.name, :model => ui_lookup(:model => "Service")}
+      @right_cell_text = _("Reconfigure %{model} \"%{name}\"") % {:name  => st.name,
+                                                                  :model => ui_lookup(:model => "Service")}
       @explorer = true
       options = {
         :header      => @right_cell_text,
@@ -206,45 +177,27 @@ class ServiceController < ApplicationController
     end
   end
 
-  def service_form_field_changed
-    id = session[:edit][:rec_id] || "new"
-    return unless load_edit("service_edit__#{id}", "replace_cell__explorer")
-    service_get_form_vars
-    changed = (@edit[:new] != @edit[:current])
-    render :update do |page|                    # Use JS to update the display
-      if changed != session[:changed]
-        page << javascript_for_miq_button_visibility(changed)
-        session[:changed] = changed
-      end
-      page << "miqSparkle(false);"
-    end
+  def service_form_fields
+    service = Service.find_by_id(params[:id])
+
+    render :json => {
+      :name        => service.name,
+      :description => service.description
+    }
   end
 
   private
 
-  def service_get_form_vars
-    @edit[:new][:name] = params[:name] if params[:name]
-    @edit[:new][:description] = params[:description] if params[:description]
-  end
-
-  def service_set_form_vars
-    checked = find_checked_items
-    checked[0] = params[:id] if checked.blank? && params[:id]
-    @record = find_by_id_filtered(Service, checked[0])
-    @edit = {}
-    @edit[:key] = "service_edit__#{@record.id || "new"}"
-    @edit[:new] = {}
-    @edit[:current] = {}
-    @edit[:rec_id] = @record.id
-    @edit[:new][:name] = @record.name
-    @edit[:new][:description] = @record.description
-    @edit[:current] = copy_hash(@edit[:new])
-    @in_a_form = true
+  def features
+    [ApplicationController::Feature.new_with_hash(:role     => "service",
+                                                  :role_any => true,
+                                                  :name     => :svcs,
+                                                  :title    => _("Services"))]
   end
 
   def service_set_record_vars(svc)
-    svc.name = @edit[:new][:name]
-    svc.description = @edit[:new][:description]
+    svc.name = params[:name] if params[:name]
+    svc.description = params[:description] if params[:description]
   end
 
   def service_delete
@@ -257,7 +210,7 @@ class ServiceController < ApplicationController
     else # showing 1 element, delete it
       elements = find_checked_items
       if elements.empty?
-        add_flash(_("No %{model} were selected for %{task}") % {:model => ui_lookup(:tables => "service"), :task => "deletion"}, :error)
+        add_flash(_("No %{model} were selected for deletion") % {:model => ui_lookup(:tables => "service")}, :error)
       end
       process_elements(elements, Service, 'destroy') unless elements.empty?
     end
@@ -286,7 +239,7 @@ class ServiceController < ApplicationController
       if x_node == "root"
         typ = x_active_tree == :svcs_tree ? "Service" : "ServiceTemplate"
         process_show_list(:where_clause => "service_id is null")
-        @right_cell_text = _("All %s") % ui_lookup(:models => typ)
+        @right_cell_text = _("All %{models}") % {:models => ui_lookup(:models => typ)}
       else
         show_record(from_cid(id))
         typ = x_active_tree == :svcs_tree ? "Service" : TreeBuilder.get_model_for_prefix(@nodetype)
@@ -306,19 +259,19 @@ class ServiceController < ApplicationController
       action = "dialog_form_button_pressed"
     when "ownership"
       partial = "shared/views/ownership"
-      header = _("Set Ownership for %s") % ui_lookup(:model => "Service")
+      header = _("Set Ownership for %{model}") % {:model => ui_lookup(:model => "Service")}
       action = "ownership_update"
     when "retire"
       partial = "shared/views/retire"
-      header = _("Set/Remove retirement date for %s") % ui_lookup(:model => "Service")
+      header = _("Set/Remove retirement date for %{model}") % {:model => ui_lookup(:model => "Service")}
       action = "retire"
     when "service_edit"
       partial = "service_form"
-      header = _("Editing %{model} \"%{name}\"") % {:name => @record.name, :model => ui_lookup(:model => "Service")}
+      header = _("Editing %{model} \"%{name}\"") % {:name => @service.name, :model => ui_lookup(:model => "Service")}
       action = "service_edit"
     when "tag"
       partial = "layouts/tagging"
-      header = _("Edit Tags for %s") % ui_lookup(:model => "Service")
+      header = _("Edit Tags for %{model}") % {:model => ui_lookup(:model => "Service")}
       action = "service_tag"
     else
       action = nil
@@ -333,10 +286,6 @@ class ServiceController < ApplicationController
     get_node_info(x_node) if !@edit && !@in_a_form && !params[:display]
     replace_trees = @replace_trees if @replace_trees  # get_node_info might set this
     type, = x_node.split("_").last.split("-")
-    trees = {}
-    if replace_trees
-      trees[:svcs] = build_svcs_tree if replace_trees.include?(:svcs)
-    end
     record_showing = type && ["Service"].include?(TreeBuilder.get_model_for_prefix(type))
     if x_active_tree == :svcs_tree && !@in_a_form && !@sb[:action]
       if record_showing && @sb[:action].nil?
@@ -349,25 +298,17 @@ class ServiceController < ApplicationController
     h_tb = build_toolbar("x_history_tb") unless @in_a_form
 
     presenter = ExplorerPresenter.new(
-      :active_tree => x_active_tree,
+      :active_tree     => x_active_tree,
+      :right_cell_text => @right_cell_text
     )
     r = proc { |opts| render_to_string(opts) }
 
-    # Build hash of trees to replace and optional new node to be selected
-    replace_trees.each do |t|
-      tree = trees[t]
-      presenter[:replace_partials]["#{t}_tree_div".to_sym] = r[
-          :partial => 'shared/tree',
-          :locals  => {:tree => tree,
-                       :name => tree.name.to_s
-          }
-      ]
+    if Array(replace_trees).include?(:svcs)
+      replace_trees_by_presenter(presenter, :svcs => build_svcs_tree)
     end
 
-    presenter[:right_cell_text] = @right_cell_text
-
     # Replace right cell divs
-    presenter[:update_partials][:main_div] =
+    presenter.update(:main_div,
       if ["dialog_provision", "ownership", "retire", "service_edit", "tag"].include?(action)
         r[:partial => partial]
       elsif params[:display]
@@ -375,18 +316,16 @@ class ServiceController < ApplicationController
       elsif record_showing
         r[:partial => "service/svcs_show", :locals => {:controller => "service"}]
       else
-        presenter[:update_partials][:paging_div] = r[:partial => "layouts/x_pagingcontrols"]
+        presenter.update(:paging_div, r[:partial => "layouts/x_pagingcontrols"])
         r[:partial => "layouts/x_gtl"]
       end
-    if %w(dialog_provision ownership service_edit tag).include?(action)
-      presenter[:set_visible_elements][:form_buttons_div] = true
-      presenter[:set_visible_elements][:pc_div_1] = false
-      presenter[:set_visible_elements][:toolbar] = false
-      presenter[:set_visible_elements][:paging_div] = true
+    )
+    if %w(dialog_provision ownership tag).include?(action)
+      presenter.show(:form_buttons_div).hide(:pc_div_1, :toolbar).show(:paging_div)
       if action == "dialog_provision"
-        presenter[:update_partials][:form_buttons_div] = r[:partial => "layouts/x_dialog_buttons",
-                                                           :locals  => {:action_url => action_url,
-                                                                        :record_id  => @edit[:rec_id]}]
+        presenter.update(:form_buttons_div, r[:partial => "layouts/x_dialog_buttons",
+                                              :locals  => {:action_url => action_url,
+                                                           :record_id  => @edit[:rec_id]}])
       else
         if action == "tag"
           locals = {:action_url => action_url}
@@ -397,20 +336,15 @@ class ServiceController < ApplicationController
           # need save/cancel buttons on edit screen even tho @record.id is not there
           locals[:multi_record] = true if action == "ownership"
         end
-        presenter[:update_partials][:form_buttons_div] = r[:partial => "layouts/x_edit_buttons", :locals => locals]
+        presenter.update(:form_buttons_div, r[:partial => "layouts/x_edit_buttons", :locals => locals])
       end
     elsif (action != "retire") && (record_showing ||
         (@pages && (@items_per_page == ONE_MILLION || @pages[:items] == 0)))
       # Added so buttons can be turned off even tho div is not being displayed it still pops up Abandon changes box
       # when trying to change a node on tree after saving a record
-      presenter[:set_visible_elements][:buttons_on]  = false
-      presenter[:set_visible_elements][:toolbar]   = true
-      presenter[:set_visible_elements][:paging_div] = false
+      presenter.hide(:buttons_on).show(:toolbar).hide(:paging_div)
     else
-      presenter[:set_visible_elements][:form_buttons_div] = false
-      presenter[:set_visible_elements][:pc_div_1]         = true
-      presenter[:set_visible_elements][:toolbar]        = true
-      presenter[:set_visible_elements][:paging_div] = true
+      presenter.hide(:form_buttons_div).show(:pc_div_1, :toolbar, :paging_div)
     end
 
     # Clear the JS gtl_list_grid var if changing to a type other than list
@@ -426,18 +360,11 @@ class ServiceController < ApplicationController
       end
     end
 
-    presenter[:reload_toolbars][:history] = h_tb
-    presenter[:reload_toolbars][:center]  = c_tb
-    presenter[:reload_toolbars][:view]    = v_tb
-    presenter[:reload_toolbars][:custom]  = cb_tb
+    presenter.reload_toolbars(:history => h_tb, :center => c_tb, :view => v_tb, :custom => cb_tb)
 
-    presenter[:set_visible_elements][:toolbar] = h_tb.present? || c_tb.present? || !v_tb.present?
+    presenter.set_visibility(h_tb.present? || c_tb.present? || !v_tb.present?, :toolbar)
 
-    if @record && !@in_a_form
-      presenter[:record_id] = @record.id
-    else
-      presenter[:record_id] = @edit && @edit[:rec_id] && @in_a_form ? @edit[:rec_id] : nil
-    end
+    presenter[:record_id] = determine_record_id_for_presenter
 
     presenter[:lock_unlock_trees][x_active_tree] = @edit && @edit[:current]
     presenter[:osf_node] = x_node
@@ -468,7 +395,7 @@ class ServiceController < ApplicationController
   end
 
   def get_session_data
-    @title      = "My Services"
+    @title      = _("My Services")
     @layout     = "services"
     @lastaction = session[:svc_lastaction]
     @options    = session[:prov_options]

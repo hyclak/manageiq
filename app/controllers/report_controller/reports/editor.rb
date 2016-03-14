@@ -14,7 +14,7 @@ module ReportController::Reports::Editor
       check_tabs
       build_edit_screen
     else
-      @sb[:miq_tab] = "new_1"
+      @sb[:miq_tab] = "edit_1"
       @rpt          = MiqReport.find(params[:id])
       @rpt.id       = nil # Treat as a new report
       set_form_vars
@@ -30,7 +30,7 @@ module ReportController::Reports::Editor
     when "cancel"
       @edit[:rpt_id] ?
         add_flash(_("Edit of %{model} \"%{name}\" was cancelled by the user") % {:model => ui_lookup(:model => "MiqReport"), :name => @edit[:rpt_title]}) :
-        add_flash(_("Add of new %s was cancelled by the user") % ui_lookup(:model => "MiqReport"))
+        add_flash(_("Add of new %{model} was cancelled by the user") % {:model => ui_lookup(:model => "MiqReport")})
       @edit = session[:edit] = nil # clean out the saved info
       replace_right_cell
     when "add", "save"
@@ -48,7 +48,7 @@ module ReportController::Reports::Editor
       end
       if @edit[:new][:graph_type] && (@edit[:new][:sortby1].blank? || @edit[:new][:sortby1] == NOTHING_STRING)
         add_flash(_("Report can not be saved unless sort field has been configured for Charts"), :error)
-        @sb[:miq_tab] = "new_4"
+        @sb[:miq_tab] = "edit_4"
         build_edit_screen
         replace_right_cell
         return
@@ -63,7 +63,6 @@ module ReportController::Reports::Editor
         # only do this for new reports
         unless @edit[:rpt_id]
           self.x_node = "xx-#{@sb[:rpt_menu].length}_xx-#{@sb[:rpt_menu].length}-0"
-          build_report_listnav
           setnode_for_customreport
         end
         @edit = session[:edit] = nil # clean out the saved info
@@ -91,7 +90,7 @@ module ReportController::Reports::Editor
         check_tabs
         build_edit_screen
       else
-        @sb[:miq_tab] = "new_1"
+        @sb[:miq_tab] = "edit_1"
         @rpt = params[:id] && params[:id] != "new" ? MiqReport.find(params[:id]) :
                 MiqReport.new
         if @rpt.rpt_type == "Default"
@@ -335,31 +334,18 @@ module ReportController::Reports::Editor
   end
 
   def build_tabs
-    #   req = "new" if ["new", "copy", "create"].include?(request.parameters["action"])
-    #   req = "edit" if ["edit", "update"].include?(request.parameters["action"])
-    @edit[:request] ||= "new" if ["miq_report_new", "miq_report_copy"].include?(request.parameters["pressed"])
-    @edit[:request] ||= "edit" if ["miq_report_edit"].include?(request.parameters["pressed"])
-    req = @edit[:request]
+    req = "edit"
     if @edit[:new][:model] == TREND_MODEL
       @tabs = [
         ["#{req}_1", "Columns"],
-        #               ["#{req}_8", "Consolidation"],
-        #               ["#{req}_2", "Formatting"],
         ["#{req}_3", "Filter"],
-        #               ["#{req}_4", "Summary"],
-        #               ["#{req}_5", "Charts"],
-        #               ["#{req}_6", "Timeline"],
         ["#{req}_7", "Preview"]
       ]
     elsif @edit[:new][:model] == "Chargeback"
       @tabs = [
         ["#{req}_1", "Columns"],
-        #               ["#{req}_8", "Consolidation"],
         ["#{req}_2", "Formatting"],
         ["#{req}_3", "Filter"],
-        #               ["#{req}_4", "Summary"],
-        #               ["#{req}_5", "Charts"],
-        #               ["#{req}_6", "Timeline"],
         ["#{req}_7", "Preview"]
       ]
     else
@@ -462,7 +448,7 @@ module ReportController::Reports::Editor
               when :boolean
                 ["DEFAULT", "true"]
               when :integer, :float
-                ["DEFAULT", "", FORMAT_SUB_TYPES.fetch_path(field_sub_type, :units) ? FORMAT_SUB_TYPES.fetch_path(field_sub_type, :units).first : nil]
+                ["DEFAULT", "", MiqExpression::FORMAT_SUB_TYPES.fetch_path(field_sub_type, :units) ? MiqExpression::FORMAT_SUB_TYPES.fetch_path(field_sub_type, :units).first : nil]
               else
                 ["DEFAULT", ""]
               end
@@ -893,7 +879,7 @@ module ReportController::Reports::Editor
 
   def move_cols_right
     if !params[:available_fields] || params[:available_fields].length == 0 || params[:available_fields][0] == ""
-      add_flash(_("No %s were selected to move down") % "fields", :error)
+      add_flash(_("No fields were selected to move down"), :error)
     elsif params[:available_fields].length + @edit[:new][:fields].length > MAX_REPORT_COLUMNS
       add_flash(_("Fields not added: Adding the selected %{count} fields will exceed the maximum of %{max} fields") % {:count => params[:available_fields].length + @edit[:new][:fields].length, :max => MAX_REPORT_COLUMNS},
                 :error)
@@ -923,9 +909,9 @@ module ReportController::Reports::Editor
 
   def move_cols_left
     if !params[:selected_fields] || params[:selected_fields].length == 0 || params[:selected_fields][0] == ""
-      add_flash(_("No %s were selected to move up") % "fields", :error)
+      add_flash(_("No fields were selected to move up"), :error)
     elsif display_filter_contains?(params[:selected_fields])
-      add_flash(_("No %s were moved up") % "fields", :error)
+      add_flash(_("No fields were moved up"), :error)
     else
       @edit[:new][:fields].each do |nf|               # Go thru all new fields
         if params[:selected_fields].include?(nf.last) # See if this col was selected to move
@@ -992,7 +978,8 @@ module ReportController::Reports::Editor
     exp = @edit[:new][:display_filter].inspect
     @edit[:new][:fields].each do |f|          # Go thru all of the selected fields
       if fields.include?(f.last)              # Is this field being removed?
-        add_flash(_("%s is currently being used in the Display Filter") % f.first, :error) if exp.include?(f.last)
+        add_flash(_("%{name} is currently being used in the Display Filter") %
+                  {:name => f.first}, :error) if exp.include?(f.last)
       end
     end
     !@flash_array.nil?
@@ -1000,12 +987,12 @@ module ReportController::Reports::Editor
 
   def move_cols_up
     if !params[:selected_fields] || params[:selected_fields].length == 0 || params[:selected_fields][0] == ""
-      add_flash(_("No %s were selected to move up") % "fields", :error)
+      add_flash(_("No fields were selected to move up"), :error)
       return
     end
     consecutive, first_idx, last_idx = selected_consecutive?
     if !consecutive
-      add_flash(_("Select only one or consecutive %s to move up") % "fields", :error)
+      add_flash(_("Select only one or consecutive fields to move up"), :error)
     else
       if first_idx > 0
         @edit[:new][:fields][first_idx..last_idx].reverse_each do |field|
@@ -1022,12 +1009,12 @@ module ReportController::Reports::Editor
 
   def move_cols_down
     if !params[:selected_fields] || params[:selected_fields].length == 0 || params[:selected_fields][0] == ""
-      add_flash(_("No %s were selected to move down") % "fields", :error)
+      add_flash(_("No fields were selected to move down"), :error)
       return
     end
     consecutive, first_idx, last_idx = selected_consecutive?
     if !consecutive
-      add_flash(_("Select only one or consecutive %s to move down") % "fields", :error)
+      add_flash(_("Select only one or consecutive fields to move down"), :error)
     else
       if last_idx < @edit[:new][:fields].length - 1
         insert_idx = last_idx + 1   # Insert before the element after the last one
@@ -1046,12 +1033,12 @@ module ReportController::Reports::Editor
 
   def move_cols_top
     if !params[:selected_fields] || params[:selected_fields].length == 0 || params[:selected_fields][0] == ""
-      add_flash(_("No %s were selected to move to the top") % "fields", :error)
+      add_flash(_("No fields were selected to move to the top"), :error)
       return
     end
     consecutive, first_idx, last_idx = selected_consecutive?
     if !consecutive
-      add_flash(_("Select only one or consecutive %s to move to the top") % "fields", :error)
+      add_flash(_("Select only one or consecutive fields to move to the top"), :error)
     else
       if first_idx > 0
         @edit[:new][:fields][first_idx..last_idx].reverse_each do |field|
@@ -1068,12 +1055,12 @@ module ReportController::Reports::Editor
 
   def move_cols_bottom
     if !params[:selected_fields] || params[:selected_fields].length == 0 || params[:selected_fields][0] == ""
-      add_flash(_("No %s were selected to move to the bottom") % "fields", :error)
+      add_flash(_("No fields were selected to move to the bottom"), :error)
       return
     end
     consecutive, first_idx, last_idx = selected_consecutive?
     if !consecutive
-      add_flash(_("Select only one or consecutive %s to move to the bottom") % "fields", :error)
+      add_flash(_("Select only one or consecutive fields to move to the bottom"), :error)
     else
       if last_idx < @edit[:new][:fields].length - 1
         @edit[:new][:fields][first_idx..last_idx].each do |field|
@@ -1384,10 +1371,6 @@ module ReportController::Reports::Editor
   # Set form variables for edit
   def set_form_vars
     @edit = {}
-
-    # Remember how this edit started
-    @edit[:type] = ["copy", "new"].include?(params[:pressed]) ? "miq_report_new" : "miq_report_edit"
-
     @edit[:rpt_id] = @rpt.id  # Save a record id to use it later to look a record
     @edit[:rpt_title] = @rpt.title
     @edit[:rpt_name] = @rpt.name
@@ -1621,7 +1604,7 @@ module ReportController::Reports::Editor
     unless @edit[:models] # Only create once
       @edit[:models] = []
       MiqReport.reportable_models.each do |m|
-        @edit[:models].push([Dictionary.gettext(m, :type => :model, :notfound => :titleize).pluralize, m])
+        @edit[:models].push([Dictionary.gettext(m, :type => :model, :notfound => :titleize, :plural => true), m])
       end
     end
 

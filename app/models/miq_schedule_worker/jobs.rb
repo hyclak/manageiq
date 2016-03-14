@@ -16,8 +16,8 @@ class MiqScheduleWorker::Jobs
     queue_work(:class_name  => "MiqWorker", :method_name => "log_status_all", :task_id => "log_status", :server_guid => MiqServer.my_guid, :priority => MiqQueue::HIGH_PRIORITY)
   end
 
-  def miq_db_config_log_statistics
-    queue_work(:class_name  => "MiqDbConfig", :method_name => "log_statistics", :server_guid => MiqServer.my_guid)
+  def vmdb_database_connection_log_statistics
+    queue_work(:class_name  => "VmdbDatabaseConnection", :method_name => "log_statistics", :server_guid => MiqServer.my_guid)
   end
 
   def miq_server_queue_update_registration_status
@@ -26,10 +26,6 @@ class MiqScheduleWorker::Jobs
 
   def miq_server_resync_rhn_mirror
     queue_work(:class_name  => "MiqServer", :instance_id => MiqServer.my_server.id, :method_name => "resync_rhn_mirror", :server_guid => MiqServer.my_guid, :msg_timeout => 60.minutes, :task_id => "resync_rhn_mirror")
-  end
-
-  def host_check_for_vms_to_scan
-    queue_work_on_each_zone(:class_name  => "Host", :method_name => "check_for_vms_to_scan")
   end
 
   def job_check_jobs_for_timeout

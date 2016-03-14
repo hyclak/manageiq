@@ -30,19 +30,19 @@ class MiqTaskController < ApplicationController
 
     if role_allows(:feature => "job_my_smartproxy")
       @tabs ||= [["1", ""]]
-      @tabs.push(["1", "My VM Analysis Tasks"])
+      @tabs.push(["1", _("My VM Analysis Tasks")])
     end
     if role_allows(:feature => "miq_task_my_ui")
       @tabs ||= [["2", ""]]
-      @tabs.push(["2", "My Other UI Tasks"])
+      @tabs.push(["2", _("My Other UI Tasks")])
     end
     if role_allows(:feature => "job_all_smartproxy")
       @tabs ||= [["3", ""]]
-      @tabs.push(["3", "All VM Analysis Tasks"])
+      @tabs.push(["3", _("All VM Analysis Tasks")])
     end
     if role_allows(:feature => "miq_task_all_ui")
       @tabs ||= [["4", ""]]
-      @tabs.push(["4", "All Other Tasks"])
+      @tabs.push(["4", _("All Other Tasks")])
     end
 
     case @tabform
@@ -60,7 +60,7 @@ class MiqTaskController < ApplicationController
   # Show job list for the current user
   def jobs
     build_jobs_tab
-    @title = "Tasks for #{current_user.name}"
+    @title = _("Tasks for %{name}") % {:name => current_user.name}
     @breadcrumbs = []
     @lastaction = "jobs"
 
@@ -73,7 +73,11 @@ class MiqTaskController < ApplicationController
       get_jobs(tasks_condition(@tasks_options[@tabform]))
       render :update do |page|
         page.replace_html("gtl_div", :partial => "layouts/gtl", :locals => {:action_url => @lastaction})
-        page.replace("pc_div_1", :partial => '/layouts/pagingcontrols', :locals => {:pages => @pages, :action_url => @lastaction, :db => @view.db, :headers => @view.headers})
+        page.replace_html("paging_div", :partial => 'layouts/pagingcontrols',
+                                        :locals  => {:pages      => @pages,
+                                                     :action_url => @lastaction,
+                                                     :db         => @view.db,
+                                                     :headers    => @view.headers})
         page << "miqSparkle(false);"  # Need to turn off sparkle in case original ajax element gets replaced
       end
     else                      # Came in from non-ajax, just get the jobs
@@ -87,25 +91,25 @@ class MiqTaskController < ApplicationController
     if @tabform == "tasks_1"
       @layout = "my_tasks"
       @view, @pages = get_view(Job, :conditions => conditions)  # Get the records (into a view) and the paginator
-      drop_breadcrumb(:name => "My VM Analysis Tasks", :url => "/miq_task/index?jobs_tab=tasks")
+      drop_breadcrumb(:name => _("My VM Analysis Tasks"), :url => "/miq_task/index?jobs_tab=tasks")
 
     elsif @tabform == "tasks_2"
       # My UI Tasks
       @layout = "my_ui_tasks"
       @view, @pages = get_view(MiqTask, :conditions => conditions)  # Get the records (into a view) and the paginator
-      drop_breadcrumb(:name => "My Other UI Tasks", :url => "/miq_task/index?jobs_tab=tasks")
+      drop_breadcrumb(:name => _("My Other UI Tasks"), :url => "/miq_task/index?jobs_tab=tasks")
 
     elsif @tabform == "tasks_3" || @tabform == "alltasks_1"
       @layout = "all_tasks"
       @view, @pages = get_view(Job, :conditions => conditions)  # Get the records (into a view) and the paginator
-      drop_breadcrumb(:name => "All VM Analysis Tasks", :url => "/miq_task/index?jobs_tab=alltasks")
+      drop_breadcrumb(:name => _("All VM Analysis Tasks"), :url => "/miq_task/index?jobs_tab=alltasks")
       @user_names = Job.distinct("userid").pluck("userid").delete_if(&:blank?)
 
     elsif @tabform == "tasks_4" || @tabform == "alltasks_2"
       # All UI Tasks
       @layout = "all_ui_tasks"
       @view, @pages = get_view(MiqTask, :conditions => conditions)  # Get the records (into a view) and the paginator
-      drop_breadcrumb(:name => "All Other Tasks", :url => "/miq_task/index?jobs_tab=alltasks")
+      drop_breadcrumb(:name => _("All Other Tasks"), :url => "/miq_task/index?jobs_tab=alltasks")
       @user_names = MiqTask.distinct("userid").pluck("userid").delete_if(&:blank?)
     end
   end
@@ -115,8 +119,7 @@ class MiqTaskController < ApplicationController
     assert_privileges("miq_task_canceljob")
     job_id = find_checked_items
     if job_id.empty?
-      add_flash(_("No %{model} were selected for %{task}") % {:model => ui_lookup(:tables => "miq_task"),
-                                                              :task  => "cancellation"}, :error)
+      add_flash(_("No %{model} were selected for cancellation") % {:model => ui_lookup(:tables => "miq_task")}, :error)
     end
     case @layout
     when "my_tasks", "all_tasks"
@@ -140,8 +143,7 @@ class MiqTaskController < ApplicationController
     assert_privileges("miq_task_delete")
     job_ids = find_checked_items
     if job_ids.empty?
-      add_flash(_("No %{model} were selected for %{task}") % {:model => ui_lookup(:tables => "miq_task"),
-                                                              :task  => "deletion"}, :error)
+      add_flash(_("No %{model} were selected for deletion") % {:model => ui_lookup(:tables => "miq_task")}, :error)
     else
       case @layout
       when "my_tasks", "all_tasks"
@@ -152,11 +154,12 @@ class MiqTaskController < ApplicationController
       db_class.delete_by_id(job_ids)
       AuditEvent.success(:userid       => session[:userid],
                          :event        => "Delete selected tasks",
-                         :message      => "Delete started for record ids: #{job_ids.inspect}",
+                         :message      => _("Delete started for record ids: %{id}") % {:id => job_ids.inspect},
                          :target_class => db_class.base_class.name)
-      add_flash(_("%{task} initiated for %{count_model} from the CFME Database") %
-                  {:task        => "Delete",
-                   :count_model => pluralize(job_ids.length, ui_lookup(:tables => "miq_task"))}) if @flash_array.nil?
+      if @flash_array.nil?
+        add_flash(_("%Delete initiated for %{count_model} from the CFME Database") %
+                    {:count_model => pluralize(job_ids.length, ui_lookup(:tables => "miq_task"))})
+      end
     end
     jobs
     @refresh_partial = "layouts/tasks"
@@ -170,8 +173,7 @@ class MiqTaskController < ApplicationController
       job_ids.push(rec["id"])
     end
     if job_ids.empty?
-      add_flash(_("No %{model} were selected for %{task}") % {:model => ui_lookup(:tables => "miq_task"),
-                                                              :task  => "deletion"}, :error)
+      add_flash(_("No %{model} were selected for deletion") % {:model => ui_lookup(:tables => "miq_task")}, :error)
     else
       case @layout
       when "my_tasks", "all_tasks"
@@ -182,11 +184,12 @@ class MiqTaskController < ApplicationController
       db_class.delete_by_id(job_ids)
       AuditEvent.success(:userid       => session[:userid],
                          :event        => "Delete all finished tasks",
-                         :message      => "Delete started for record ids: #{job_ids.inspect}",
+                         :message      => _("Delete started for record ids: %{id}") % {:id => job_ids.inspect},
                          :target_class => db_class.base_class.name)
-      add_flash(_("%{task} initiated for %{count_model} from the CFME Database") %
-                  {:task        => "Delete",
-                   :count_model => pluralize(job_ids.length, ui_lookup(:tables => "miq_task"))})  if @flash_array.nil?
+      if @flash_array.nil?
+        add_flash(_("Delete initiated for %{count_model} from the CFME Database") %
+                    {:count_model => pluralize(job_ids.length, ui_lookup(:tables => "miq_task"))})
+      end
     end
     jobs
     @refresh_partial = "layouts/tasks"
@@ -206,14 +209,15 @@ class MiqTaskController < ApplicationController
     job = db_class.find_by_id(jobid)
     if job
       db_class.delete_older(job.updated_on, tasks_condition(@tasks_options[@tabform], false))
-      message = "Delete started for records older than #{job.updated_on}, conditions: #{@tasks_options[@tabform].inspect}"
+      message = _("Delete started for records older than %{date}, conditions: %{conditions}") %
+        {:date       => job.updated_on,
+         :conditions => @tasks_options[@tabform].inspect}
       AuditEvent.success(:userid       => session[:userid],
                          :event        => "Delete older tasks",
                          :message      => message,
                          :target_class => db_class.base_class.name)
-      add_flash(_("%{task} initiated for %{count_model} from the CFME Database") %
-                  {:task        => "Delete all older Tasks",
-                   :count_model => pluralize(jobid.length, ui_lookup(:tables => "miq_task"))})
+      add_flash(_("Delete all older Tasks initiated for %{count_model} from the CFME Database") %
+                  {:count_model => pluralize(jobid.length, ui_lookup(:tables => "miq_task"))})
     else
       add_flash(_("The selected job no longer exists, Delete all older Tasks was not completed"), :warning)
     end
@@ -228,12 +232,12 @@ class MiqTaskController < ApplicationController
     when "my_ui_tasks", "all_ui_tasks"
       db_class = MiqTask
     end
-    db_class.find_all_by_id(jobs, :order => "lower(name)").each do |job|
+    db_class.where(:id => jobs).order("lower(name)").each do |job|
       id = job.id
       job_name = job.name
       if task == "destroy"
         audit = {:event        => "jobs_record_delete",
-                 :message      => "[#{job_name}] Record deleted",
+                 :message      => _("[%{name}] Record deleted") % {:name => job_name},
                  :target_id    => id,
                  :target_class => db_class.base_class.name,
                  :userid       => session[:userid]}
@@ -241,9 +245,11 @@ class MiqTaskController < ApplicationController
       begin
         job.send(task.to_sym) if job.respond_to?(task)    # Run the task
       rescue StandardError => bang
-        add_flash(_("%{model} \"%{name}\": Error during '%{task}': ") % {:model => ui_lookup(:model => "MiqTask"),
-                                                                         :name  => job_name,
-                                                                         :task  => task} << bang.message, :error)
+        add_flash(_("%{model} \"%{name}\": Error during '%{task}': %{message}") %
+                    {:model   => ui_lookup(:model => "MiqTask"),
+                     :name    => job_name,
+                     :task    => task,
+                     :message => bang.message}, :error)
       else
         if task == "destroy"
           AuditEvent.success(audit)
@@ -273,7 +279,11 @@ class MiqTaskController < ApplicationController
         else
           page << "miqSetButtons(0, 'center_tb');"                             # Reset the center toolbar
           page.replace_html("main_div", :partial => @refresh_partial)
-          page.replace("pc_div_1", :partial => '/layouts/pagingcontrols', :locals => {:pages => @pages, :action_url => @lastaction, :db => @view.db, :headers => @view.headers})
+          page.replace_html("paging_div", :partial => 'layouts/pagingcontrols',
+                                          :locals  => {:pages      => @pages,
+                                                       :action_url => @lastaction,
+                                                       :db         => @view.db,
+                                                       :headers    => @view.headers})
         end
       end
     end
@@ -316,7 +326,11 @@ class MiqTaskController < ApplicationController
       page.replace("flash_msg_div", :partial => "layouts/flash_msg")
       page << "miqSetButtons(0, 'center_tb');"                             # Reset the center toolbar
       page.replace("main_div", :partial => "layouts/tasks")
-      page.replace("pc_div_1", :partial => '/layouts/pagingcontrols', :locals => {:pages => @pages, :action_url => @lastaction, :db => @view.db, :headers => @view.headers})
+      page.replace_html("paging_div", :partial => 'layouts/pagingcontrols',
+                                      :locals  => {:pages      => @pages,
+                                                   :action_url => @lastaction,
+                                                   :db         => @view.db,
+                                                   :headers    => @view.headers})
       page << "miqSparkle(false);"
     end
   end

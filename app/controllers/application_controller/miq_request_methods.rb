@@ -42,6 +42,13 @@ module ApplicationController::MiqRequestMethods
           page << "ManageIQ.calendar.calDateFrom = new Date(#{@timezone_offset});"
           page << "miqBuildCalendar();"
         end
+        if @edit.fetch_path(:new, :owner_email).blank?
+          page << javascript_hide("lookup_button_on")
+          page << javascript_show("lookup_button_off")
+        else
+          page << javascript_hide("lookup_button_off")
+          page << javascript_show("lookup_button_on")
+        end
         if changed != session[:changed]
           session[:changed] = changed
           page << javascript_for_miq_button_visibility(changed)
@@ -742,9 +749,9 @@ module ApplicationController::MiqRequestMethods
     if @miq_request.workflow_class
       options = {}
       begin
-        options[:wf] = @miq_request.workflow_class.new(@options, current_user)
+        options[:wf] = @miq_request.workflow(@options)
       rescue MiqException::MiqVmError => bang
-        @no_wf_msg = _("Cannot create Request Info, error: ") << bang.message
+        @no_wf_msg = _("Cannot create Request Info, error: %{error_message}") % {:error_message => bang.message}
       end
       if options[:wf]
         options[:wf].init_from_dialog(@options)  # Create a new provision workflow for this edit session
@@ -931,7 +938,7 @@ module ApplicationController::MiqRequestMethods
     [wf_type.new(@edit[:new], current_user, options), pre_prov_values]  # Return the new workflow and any pre_prov_values
   rescue => bang
     # only add this message if showing a list of Catalog items, show screen already handles this
-    @no_wf_msg = _("Cannot create Request Info, error: ") << bang.message
+    @no_wf_msg = _("Cannot create Request Info, error: %{error_message}") % {:error_message => bang.message}
     _log.log_backtrace(bang)
     nil
   end
@@ -947,7 +954,7 @@ module ApplicationController::MiqRequestMethods
         :key         => dc[0],
         :title       => dc[0],
         :tooltip     => dc[0],
-        :icon        => "folder.png",
+        :icon        => ActionController::Base.helpers.image_path("100/folder.png"),
         :cfmeNoClick => true,
         :addClass    => "cfme-bold-node",
         :expand      => true
@@ -960,7 +967,7 @@ module ApplicationController::MiqRequestMethods
           :key     => id,
           :tooltip => ou[0],
           :title   => ou[0],
-          :icon    => "group.png"
+          :icon    => ActionController::Base.helpers.image_path("100/group.png")
         }
         if ldap_ous == ou[1][:ou]
           # expand selected nodes parents when editing existing record
@@ -999,7 +1006,7 @@ module ApplicationController::MiqRequestMethods
       :key     => id,
       :title   => node[0],
       :tooltip => node[0],
-      :icon    => "group.png"
+      :icon    => ActionController::Base.helpers.image_path("100/group.png")
     }
 
     if ldap_ous == node[1][:ou]
@@ -1041,7 +1048,7 @@ module ApplicationController::MiqRequestMethods
         @ci_node[:title] += " *" if t[:single_value]
         @ci_node[:tooltip] = t[:description]
         @ci_node[:addClass] = "cfme-no-cursor-node"      # No cursor pointer
-        @ci_node[:icon] = "folder.png"
+        @ci_node[:icon] = ActionController::Base.helpers.image_path("100/folder.png")
         @ci_node[:hideCheckbox] = @ci_node[:cfmeNoClick] = true
         @ci_node[:addClass] = "cfme-bold-node"  # Show node as different
         @ci_kids = []
@@ -1054,7 +1061,7 @@ module ApplicationController::MiqRequestMethods
           temp[:cfme_parent_key] = t[:id].to_s if t[:single_value]
           temp[:title] = temp[:tooltip] = c[1][:description]
           temp[:addClass] = "cfme-no-cursor-node"
-          temp[:icon] = "tag.png"
+          temp[:icon] = ActionController::Base.helpers.image_path("100/tag.png")
           if edit_mode              # Don't show checkboxes/radio buttons in non-edit mode
             if vm_tags && vm_tags.include?(c[0].to_i)
               temp[:select] = true

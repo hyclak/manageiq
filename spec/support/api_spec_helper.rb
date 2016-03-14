@@ -16,15 +16,8 @@ module ApiSpecHelper
     "Accept"       => "application/json"
   }
 
-  API_STATUS = Rack::Utils::HTTP_STATUS_CODES.merge(0 => "Network Connection Error")
-
-  def parse_response
-    @code    = last_response.status
-    @result  = (@code != Rack::Utils.status_code(:no_content)) ? JSON.parse(last_response.body) : {}
-    @success = @code < 400
-    @status  = API_STATUS[@code] || (@success ? Rack::Utils.status_code(:ok) : Rack::Utils.status_code(:bad_request))
-    @message = @result.fetch_path("error", "message").to_s
-    @success
+  def response_hash
+    JSON.parse(response.body)
   end
 
   def update_headers(headers)
@@ -34,33 +27,29 @@ module ApiSpecHelper
         headers.delete(k)
       end
     end
+    headers.merge!("HTTP_AUTHORIZATION" => @http_authorization) if @http_authorization
     headers.merge(DEF_HEADERS)
   end
 
   def run_get(url, options = {})
     headers = options.delete(:headers) || {}
-    get url, options.stringify_keys, update_headers(headers)
-    parse_response
+    get url, :params => options.stringify_keys, :headers => update_headers(headers)
   end
 
   def run_post(url, body = {}, headers = {})
-    post url, {}, update_headers(headers).merge('RAW_POST_DATA' => body.to_json)
-    parse_response
+    post url, :headers => update_headers(headers).merge('RAW_POST_DATA' => body.to_json)
   end
 
   def run_put(url, body = {}, headers = {})
-    put url, {}, update_headers(headers).merge('RAW_POST_DATA' => body.to_json)
-    parse_response
+    put url, :headers => update_headers(headers).merge('RAW_POST_DATA' => body.to_json)
   end
 
   def run_patch(url, body = {}, headers = {})
-    patch url, {}, update_headers(headers).merge('RAW_POST_DATA' => body.to_json)
-    parse_response
+    patch url, :headers => update_headers(headers).merge('RAW_POST_DATA' => body.to_json)
   end
 
   def run_delete(url, headers = {})
-    delete url, {}, update_headers(headers)
-    parse_response
+    delete url, :headers => update_headers(headers)
   end
 
   def resources_include_suffix?(resources, key, suffix)
@@ -100,15 +89,17 @@ module ApiSpecHelper
     @guid, @server, @zone = EvmSpecHelper.create_guid_miq_server_zone
 
     collections = %w(automation_requests availability_zones categories chargebacks clusters conditions
-                     data_stores events features flavors groups hosts pictures policies policy_actions
+                     data_stores events features flavors groups hosts instances pictures policies policy_actions
                      policy_profiles providers provision_dialogs provision_requests rates
                      reports request_tasks requests resource_pools results roles security_groups
-                     servers service_dialogs service_catalogs service_requests service_templates
-                     services tags tasks templates tenants users vms zones)
+                     servers service_dialogs service_catalogs service_orders service_requests
+                     service_templates services tags tasks templates tenants users vms zones)
 
     define_entrypoint_url_methods
     define_url_methods(collections)
     define_user
+
+    ApplicationController.handle_exceptions = true
   end
 
   def define_entrypoint_url_methods
@@ -136,6 +127,10 @@ module ApiSpecHelper
   def api_basic_authorize(identifier = nil)
     update_user_role(@role, identifier) unless identifier.blank?
     basic_authorize api_config(:user), api_config(:password)
+  end
+
+  def basic_authorize(user, password)
+    @http_authorization = ActionController::HttpAuthentication::Basic.encode_credentials(user, password)
   end
 
   def update_user_role(role, *identifiers)
@@ -191,59 +186,63 @@ module ApiSpecHelper
     value.kind_of?(Symbol) && respond_to?(value) ? public_send(value) : value
   end
 
+  def declare_actions(*names)
+    include("actions" => a_collection_containing_exactly(*names.map { |name| a_hash_including("name" => name) }))
+  end
+
   # Rest API Expects
 
   def expect_request_success
-    expect(@code).to eq(Rack::Utils.status_code(:ok))           # 200
+    expect(response).to have_http_status(:ok)
   end
 
   def expect_request_success_with_no_content
-    expect(@code).to eq(Rack::Utils.status_code(:no_content))   # 204
+    expect(response).to have_http_status(:no_content)
   end
 
   def expect_bad_request(error_message = nil)
-    expect(@code).to eq(Rack::Utils.status_code(:bad_request))  # 400
+    expect(response).to have_http_status(:bad_request)
     return if error_message.blank?
 
-    expect(@result).to have_key("error")
-    expect(@result["error"]["message"]).to match(error_message)
+    expect(response_hash).to have_key("error")
+    expect(response_hash["error"]["message"]).to match(error_message)
   end
 
   def expect_user_unauthorized
-    expect(@code).to eq(Rack::Utils.status_code(:unauthorized)) # 401
+    expect(response).to have_http_status(:unauthorized)
   end
 
   def expect_request_forbidden
-    expect(@code).to eq(Rack::Utils.status_code(:forbidden))    # 403
+    expect(response).to have_http_status(:forbidden)
   end
 
   def expect_resource_not_found
-    expect(@code).to eq(Rack::Utils.status_code(:not_found))    # 404
+    expect(response).to have_http_status(:not_found)
   end
 
   def expect_result_resources_to_include_data(collection, data)
-    expect(@result).to have_key(collection)
+    expect(response_hash).to have_key(collection)
     fetch_value(data).each do |key, value|
       value_list = fetch_value(value)
-      expect(@result[collection].size).to eq(value_list.size)
-      expect(@result[collection].collect { |r| r[key] }).to match_array(value_list)
+      expect(response_hash[collection].size).to eq(value_list.size)
+      expect(response_hash[collection].collect { |r| r[key] }).to match_array(value_list)
     end
   end
 
   def expect_result_resources_to_include_hrefs(collection, hrefs)
-    expect(@result).to have_key(collection)
+    expect(response_hash).to have_key(collection)
     href_list = fetch_value(hrefs)
-    expect(@result[collection].size).to eq(href_list.size)
+    expect(response_hash[collection].size).to eq(href_list.size)
     href_list.each do |href|
-      expect(resources_include_suffix?(@result[collection], "href", href)).to be_true
+      expect(resources_include_suffix?(response_hash[collection], "href", href)).to be_truthy
     end
   end
 
   def expect_result_resources_to_match_key_data(collection, key, values)
     value_list = fetch_value(values)
-    expect(@result).to have_key(collection)
-    expect(@result[collection].size).to eq(value_list.size)
-    @result[collection].zip(value_list).each do |hash, value|
+    expect(response_hash).to have_key(collection)
+    expect(response_hash[collection].size).to eq(value_list.size)
+    value_list.zip(response_hash[collection]) do |value, hash|
       expect(hash).to have_key(key)
       expect(hash[key]).to match(value)
     end
@@ -251,12 +250,12 @@ module ApiSpecHelper
 
   def expect_result_resource_keys_to_match_pattern(collection, key, pattern)
     pattern = fetch_value(pattern)
-    expect(@result).to have_key(collection)
-    expect(@result[collection].all? { |result| result[key].match(pattern) }).to be_true
+    expect(response_hash).to have_key(collection)
+    expect(response_hash[collection].all? { |result| result[key].match(pattern) }).to be_truthy
   end
 
   def expect_result_to_have_keys(keys)
-    expect_hash_to_have_keys(@result, keys)
+    expect_hash_to_have_keys(response_hash, keys)
   end
 
   def expect_hash_to_have_keys(hash, keys)
@@ -264,7 +263,7 @@ module ApiSpecHelper
   end
 
   def expect_result_to_have_only_keys(keys)
-    expect_hash_to_have_only_keys(@result, keys)
+    expect_hash_to_have_only_keys(response_hash, keys)
   end
 
   def expect_hash_to_have_only_keys(hash, keys)
@@ -272,20 +271,17 @@ module ApiSpecHelper
   end
 
   def expect_result_to_match_hash(result, attr_hash)
-    fetch_value(attr_hash).each do |key, value|
-      expect(result).to have_key(key)
+    attr_hash = fetch_value(attr_hash)
+    attr_hash.each do |key, value|
       value = fetch_value(value)
-      if key == "href" || key.ends_with?("_href") || value.kind_of?(Regexp)
-        expect(result[key]).to match(value)
-      else
-        expect(result[key]).to eq(value)
-      end
+      attr_hash[key] = (key == "href" || key.ends_with?("_href")) ? a_string_matching(value) : value
     end
+    expect(result).to include(attr_hash)
   end
 
   def expect_results_to_match_hash(collection, result_hash)
-    expect(@result).to have_key(collection)
-    @result[collection].zip(fetch_value(result_hash)).each do |actual, expected|
+    expect(response_hash).to have_key(collection)
+    fetch_value(result_hash).zip(response_hash[collection]) do |expected, actual|
       expect_result_to_match_hash(actual, expected)
     end
   end
@@ -295,26 +291,26 @@ module ApiSpecHelper
   end
 
   def expect_result_resource_keys_to_be_like_klass(collection, key, klass)
-    expect(@result).to have_key(collection)
-    expect(@result[collection].all? { |result| result[key].kind_of?(klass) }).to be_true
+    expect(response_hash).to have_key(collection)
+    expect(response_hash[collection].all? { |result| result[key].kind_of?(klass) }).to be_truthy
   end
 
   def expect_result_resources_to_include_keys(collection, keys)
-    expect(@result).to have_key(collection)
-    results = @result[collection]
-    fetch_value(keys).each { |key| expect(results.all? { |r| r.key?(key) }).to be_true }
+    expect(response_hash).to have_key(collection)
+    results = response_hash[collection]
+    fetch_value(keys).each { |key| expect(results.all? { |r| r.key?(key) }).to be_truthy, "resource missing: #{key}" }
   end
 
   def expect_result_resources_to_have_only_keys(collection, keys)
     key_list = fetch_value(keys).sort
-    expect(@result).to have_key(collection)
-    expect(@result[collection].all? { |result| result.keys.sort == key_list }).to be_true
+    expect(response_hash).to have_key(collection)
+    expect(response_hash[collection].all? { |result| result.keys.sort == key_list }).to be_truthy
   end
 
   def expect_results_match_key_pattern(collection, key, value)
     pattern = fetch_value(value)
-    expect(@result).to have_key(collection)
-    expect(@result[collection].all? { |result| result[key].match(pattern) }).to be_true
+    expect(response_hash).to have_key(collection)
+    expect(response_hash[collection].all? { |result| result[key].match(pattern) }).to be_truthy
   end
 
   def expect_result_to_represent_task(result)
@@ -326,49 +322,35 @@ module ApiSpecHelper
 
   def expect_empty_query_result(collection)
     expect_request_success
-    expect(@result).to have_key("name")
-    expect(@result["name"]).to eq(collection.to_s)
-    expect(@result["resources"]).to be_empty
+    expect(response_hash).to include("name" => collection.to_s, "resources" => [])
   end
 
   def expect_query_result(collection, subcount, count = nil)
     expect_request_success
-    expect(@result).to have_key("name")
-    expect(@result["name"]).to eq(collection.to_s)
-    expect(@result["subcount"]).to eq(fetch_value(subcount))
-    expect(@result["resources"].size).to eq(fetch_value(subcount))
-    expect(@result["count"]).to eq(fetch_value(count)) if count.present?
+    expect(response_hash).to include("name" => collection.to_s, "subcount" => fetch_value(subcount))
+    expect(response_hash["resources"].size).to eq(fetch_value(subcount))
+    expect(response_hash["count"]).to eq(fetch_value(count)) if count.present?
   end
 
   def expect_single_resource_query(attr_hash = {})
     expect_request_success
-    expect_result_to_match_hash(@result, fetch_value(attr_hash))
+    expect_result_to_match_hash(response_hash, fetch_value(attr_hash))
   end
 
   def expect_single_action_result(options = {})
     expect_request_success
-    if options.key?(:success)
-      expect(@result).to have_key("success")
-      expect(@result["success"]).to eq(options[:success])
-    end
-    if options[:message]
-      expect(@result).to have_key("message")
-      expect(@result["message"]).to match(options[:message])
-    end
-    if options[:href]
-      expect(@result).to have_key("href")
-      expect(@result["href"]).to match(fetch_value(options[:href]))
-    end
-
-    expect_result_to_represent_task(@result) if options[:task]
+    expect(response_hash).to include("success" => options[:success]) if options.key?(:success)
+    expect(response_hash).to include("message" => a_string_matching(options[:message])) if options[:message]
+    expect(response_hash).to include("href" => a_string_matching(fetch_value(options[:href]))) if options[:href]
+    expect_result_to_represent_task(response_hash) if options[:task]
   end
 
   def expect_multiple_action_result(count, options = {})
     expect_request_success
-    expect(@result).to have_key("results")
-    results = @result["results"]
+    expect(response_hash).to have_key("results")
+    results = response_hash["results"]
     expect(results.size).to eq(count)
-    expect(results.all? { |r| r["success"] }).to be_true
+    expect(results.all? { |r| r["success"] }).to be_truthy
 
     results.each { |r| expect_result_to_represent_task(r) } if options[:task]
   end
@@ -376,14 +358,16 @@ module ApiSpecHelper
   def expect_tagging_result(tagging_results)
     expect_request_success
     tag_results = fetch_value(tagging_results)
-    expect(@result).to have_key("results")
-    results = @result["results"]
+    expect(response_hash).to have_key("results")
+    results = response_hash["results"]
     expect(results.size).to eq(tag_results.size)
-    [results, tag_results].transpose do |result, tag_result|
-      expect(result["success"]).to      eq(tag_result[:success])
-      expect(result["href"]).to         match(tag_result[:href])
-      expect(result["tag_category"]).to eq(tag_result[:tag_category])
-      expect(result["tag_name"]).to     eq(tag_result[:tag_name])
+    tag_results.zip(results) do |tag_result, result|
+      expect(result).to include(
+        "success"      => tag_result[:success],
+        "href"         => a_string_matching(tag_result[:href]),
+        "tag_category" => tag_result[:tag_category],
+        "tag_name"     => tag_result[:tag_name]
+      )
     end
   end
 end

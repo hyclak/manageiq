@@ -1,4 +1,4 @@
-ManageIQ.angularApplication.controller('emsCommonFormController', ['$http', '$scope', '$attrs', 'emsCommonFormId', 'miqService', function($http, $scope, $attrs, emsCommonFormId, miqService) {
+ManageIQ.angular.app.controller('emsCommonFormController', ['$http', '$scope', '$attrs', 'emsCommonFormId', 'miqService', function($http, $scope, $attrs, emsCommonFormId, miqService) {
   var init = function() {
     $scope.emsCommonModel = {
       name: '',
@@ -10,6 +10,7 @@ ManageIQ.angularApplication.controller('emsCommonFormController', ['$http', '$sc
       project: '',
       api_port: '',
       api_version: '',
+      security_protocol: '',
       provider_region: '',
       default_userid: '',
       default_password: '',
@@ -37,7 +38,7 @@ ManageIQ.angularApplication.controller('emsCommonFormController', ['$http', '$sc
     $scope.updateUrl = $attrs.updateUrl;
     $scope.model = 'emsCommonModel';
 
-    ManageIQ.angularApplication.$scope = $scope;
+    ManageIQ.angular.scope = $scope;
 
     if (emsCommonFormId == 'new') {
       $scope.newRecord                  = true;
@@ -49,6 +50,7 @@ ManageIQ.angularApplication.controller('emsCommonFormController', ['$http', '$sc
         $scope.emsCommonModel.openstack_infra_providers_exist = data.openstack_infra_providers_exist;
         $scope.emsCommonModel.api_port                        = 5000;
         $scope.emsCommonModel.api_version                     = 'v2';
+        $scope.emsCommonModel.security_protocol               = 'ssl';
         miqService.sparkleOff();
       });
       $scope.afterGet  = true;
@@ -70,6 +72,7 @@ ManageIQ.angularApplication.controller('emsCommonFormController', ['$http', '$sc
 
         $scope.emsCommonModel.api_port                        = data.api_port;
         $scope.emsCommonModel.api_version                     = data.api_version;
+        $scope.emsCommonModel.security_protocol               = data.security_protocol;
         $scope.emsCommonModel.provider_region                 = data.provider_region;
 
         $scope.emsCommonModel.default_userid                  = data.default_userid;
@@ -168,7 +171,7 @@ ManageIQ.angularApplication.controller('emsCommonFormController', ['$http', '$sc
     $scope.$broadcast ('resetClicked');
     $scope.emsCommonModel = angular.copy( $scope.modelCopy );
     $scope.angularForm.$setPristine(true);
-    miqService.miqFlash("warn", "All changes have been reset");
+    miqService.miqFlash("warn", __("All changes have been reset"));
   };
 
   $scope.saveClicked = function($event, formSubmit) {

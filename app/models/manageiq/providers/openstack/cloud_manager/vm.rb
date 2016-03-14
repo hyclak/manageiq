@@ -1,8 +1,15 @@
 class ManageIQ::Providers::Openstack::CloudManager::Vm < ManageIQ::Providers::CloudManager::Vm
   include_concern 'Operations'
   include_concern 'RemoteConsole'
+  include_concern 'Resize'
 
   belongs_to :cloud_tenant
+
+  has_many :cloud_networks, :through => :cloud_subnets
+  alias_method :private_networks, :cloud_networks
+  has_many :cloud_subnets, :through    => :network_ports,
+                           :class_name => "ManageIQ::Providers::Openstack::CloudManager::CloudSubnet"
+  has_many :public_networks, :through => :cloud_subnets
 
   def cloud_network
     # Backwards compatibility layer with simplified architecture where VM has only one network
@@ -31,6 +38,7 @@ class ManageIQ::Providers::Openstack::CloudManager::Vm < ManageIQ::Providers::Cl
     when "ERROR"                 then "non_operational"
     when "BUILD", "REBUILD"      then "wait_for_launch"
     when "DELETED"               then "archived"
+    when "MIGRATING"             then "migrating"
     else                              "unknown"
     end
   end
@@ -83,8 +91,8 @@ class ManageIQ::Providers::Openstack::CloudManager::Vm < ManageIQ::Providers::Cl
     true
   end
 
-  def validate_migrate
-    validate_supported
+  def memory_mb_available?
+    true
   end
 
   def validate_smartstate_analysis

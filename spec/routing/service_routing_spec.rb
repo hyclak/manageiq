@@ -1,4 +1,3 @@
-require "spec_helper"
 require 'routing/shared_examples'
 
 describe 'routes for ServiceController' do
@@ -57,13 +56,6 @@ describe 'routes for ServiceController' do
   describe "#service_edit" do
     it "routes with POST" do
       expect(post("/service/service_edit")).to route_to("service#service_edit")
-    end
-  end
-
-  describe "#service_form_field_changed" do
-    it "routes with POST" do
-      expect(post("/service/service_form_field_changed"))
-        .to route_to("service#service_form_field_changed")
     end
   end
 

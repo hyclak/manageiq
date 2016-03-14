@@ -1,12 +1,11 @@
-require "spec_helper"
-include ApplicationHelper
+include QuadiconHelper
 
 describe "layouts/listnav/_flavor.html.haml" do
   before :each do
     set_controller_for_view("flavor")
     assign(:panels, "ems_prop" => true, "ems_rel" => true)
-    view.stub(:truncate_length).and_return(10)
-    ActionView::Base.any_instance.stub(:role_allows).and_return(true)
+    allow(view).to receive(:truncate_length).and_return(10)
+    allow(view).to receive(:role_allows).and_return(true)
   end
 
   let(:provider) do

@@ -34,5 +34,3 @@ module ArLock
     end
   end
 end
-
-ActiveRecord::Base.send(:include, ArLock)

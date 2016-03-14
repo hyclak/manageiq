@@ -1,12 +1,30 @@
 module ApplicationHelper
+  include_concern 'Chargeback'
   include_concern 'Dialogs'
+  include_concern 'Discover'
   include_concern 'PageLayouts'
   include_concern 'FormTags'
+  include_concern 'Tasks'
   include Sandbox
   include CompressedIds
+  include JsHelper
   include StiRoutingHelper
+  include ToolbarHelper
   include TextualSummaryHelper
+  include NumberHelper
 
+  def settings(*path)
+    @settings ||= {}
+    @settings.fetch_path(*path)
+  end
+
+  def documentation_link(url = nil, documentation_subject = "")
+    if url
+      link_to(_("For more information, visit the %{subject} documentation.") % {:subject => documentation_subject},
+              url, :rel => 'external',
+              :class => 'documentation-link', :target => '_blank')
+    end
+  end
   # Create a collapsed panel based on a condition
   def miq_accordion_panel(title, condition, id, &block)
     content_tag(:div, :class => "panel panel-default") do
@@ -391,49 +409,49 @@ module ApplicationHelper
       title += ": #{title_for_hosts}"
     # Specific titles for certain layouts
     elsif layout == "miq_server"
-      title += ": Servers"
+      title += _(": Servers")
     elsif layout == "usage"
-      title += ": VM Usage"
+      title += _(": VM Usage")
     elsif layout == "scan_profile"
-      title += ": Analysis Profiles"
+      title += _(": Analysis Profiles")
     elsif layout == "miq_policy_rsop"
-      title += ": Policy Simulation"
+      title += _(": Policy Simulation")
     elsif layout == "all_ui_tasks"
-      title += ": All UI Tasks"
+      title += _(": All UI Tasks")
     elsif layout == "my_ui_tasks"
-      title += ": My UI Tasks"
+      title += _(": My UI Tasks")
     elsif layout == "rss"
-      title += ": RSS"
+      title += _(": RSS")
     elsif layout == "storage_manager"
-      title += ": Storage - Storage Managers"
+      title += _(": Storage - Storage Managers")
     elsif layout == "ops"
-      title += ": Configuration"
+      title += _(": Configuration")
     elsif layout == "provider_foreman"
       title += ": #{ui_lookup(:ui_title => "foreman")} #{ui_lookup(:model => "ExtManagementSystem")}"
     elsif layout == "pxe"
-      title += ": PXE"
+      title += _(": PXE")
     elsif layout == "explorer"
       title += ": #{controller_model_name(params[:controller])} Explorer"
     elsif layout == "vm_cloud"
-      title += ": Instances"
+      title += _(": Instances")
     elsif layout == "vm_infra"
-      title += ": Virtual Machines"
+      title += _(": Virtual Machines")
     elsif layout == "vm_or_template"
-      title += ": Workloads"
+      title += _(": Workloads")
     # Specific titles for groups of layouts
     elsif layout.starts_with?("miq_ae_")
-      title += ": Automate"
+      title += _(": Automate")
     elsif layout.starts_with?("miq_policy")
-      title += ": Control"
+      title += _(": Control")
     elsif layout.starts_with?("miq_capacity")
-      title += ": Optimize"
+      title += _(": Optimize")
     elsif layout.starts_with?("miq_request")
-      title += ": Requests"
+      title += _(": Requests")
     elsif layout.starts_with?("cim_",
                               "snia_")
-      title += ": Storage - #{ui_lookup(:tables => layout)}"
+      title += _(": Storage - %{tables}") % {:tables => ui_lookup(:tables => layout)}
     elsif layout == "login"
-      title += ": Login"
+      title += _(": Login")
     # Assume layout is a table name and look up the plural version
     else
       title += ": #{ui_lookup(:tables => layout)}"
@@ -534,7 +552,8 @@ module ApplicationHelper
       key = params[:tree_typ] == 'myco' ? :filters : :belongsto
       future  = @edit[:new][key][params[:id].split('___').last]
       current = @edit[:current][key][params[:id].split('___').last]
-      css_class = future == current ? 'dynatree-title' : 'cfme-blue-bold-node'
+      title_class = params[:tree_typ] == "vat" || params[:tree_typ] == "hac" ? 'cfme-no-cursor-node' : 'dynatree-title'
+      css_class = future == current ? title_class : 'cfme-blue-bold-node'
       js_array << "$('##{tree_name_escaped}box').dynatree('getTree').getNodeByKey('#{params[:id].split('___').last}').data.addClass = '#{css_class}';"
     end
     # need to redraw the tree to change node colors
@@ -611,7 +630,7 @@ module ApplicationHelper
         %w(about chargeback exception miq_ae_automate_button miq_ae_class miq_ae_export
            miq_ae_tools miq_capacity_bottlenecks miq_capacity_planning miq_capacity_utilization
            miq_capacity_waste miq_policy miq_policy_export miq_policy_rsop ops pxe report rss
-           server_build container_topology container_dashboard).include?(@layout) ||
+           server_build container_topology middleware_topology container_dashboard).include?(@layout) ||
         (@layout == "configuration" && @tabform != "ui_4")) && !controller.action_name.end_with?("tagging_edit")
         unless @explorer
           @show_taskbar = true
@@ -716,7 +735,19 @@ module ApplicationHelper
 
   # Return a blank tb if a placeholder is needed for AJAX explorer screens, return nil if no center toolbar to be shown
   def center_toolbar_filename
-    _toolbar_chooser.call
+    _toolbar_chooser.center_toolbar_filename
+  end
+
+  def history_toolbar_filename
+    _toolbar_chooser.history_toolbar_filename
+  end
+
+  def x_view_toolbar_filename
+    _toolbar_chooser.x_view_toolbar_filename
+  end
+
+  def view_toolbar_filename
+    _toolbar_chooser.view_toolbar_filename
   end
 
   def _toolbar_chooser
@@ -741,6 +772,27 @@ module ApplicationHelper
     )
   end
 
+  # Calculate hash of toolbars to render
+  #
+  # keys are toolbar <div> names and values are toobar identifiers (now YAML files)
+  #
+  def calculate_toolbars
+    toolbars = {}
+    if inner_layout_present? # x_taskbar branch
+      toolbars['history_tb'] = history_toolbar_filename
+    elsif display_back_button? # taskbar branch
+      toolbars['summary_center_tb'] = controller.restful? ? "summary_center_restful_tb" : "summary_center_tb"
+    end
+
+    toolbars['center_tb'] = center_toolbar_filename
+    if fname = custom_toolbar_filename
+      toolbars['custom_tb'] = fname
+    end
+
+    toolbars['view_tb'] = inner_layout_present? ? x_view_toolbar_filename : view_toolbar_filename
+    toolbars
+  end
+
   # check if back to summary button needs to be show
   def display_back_button?
     # don't need to back button if @record is not there or @record doesnt have name or
@@ -756,8 +808,9 @@ module ApplicationHelper
   end
 
   def display_adv_search?
-    %w(availability_zone container_group container_node container_service
-       container_route container_project container_replicator container_image container_image_registry
+    %w(availability_zone cloud_volume container_group container_node container_service
+       container_route container_project container_replicator container_image
+       container_image_registry persistent_volume container_build
        ems_container vm miq_template offline retired templates
        host service repository storage ems_cloud ems_cluster flavor
        resource_pool ems_infra ontap_storage_system ontap_storage_volume
@@ -802,7 +855,7 @@ module ApplicationHelper
   end
 
   def model_for_ems(record)
-    raise "Record is not ExtManagementSystem class" unless record.kind_of?(ExtManagementSystem)
+    raise _("Record is not ExtManagementSystem class") unless record.kind_of?(ExtManagementSystem)
     if record.kind_of?(ManageIQ::Providers::CloudManager)
       ManageIQ::Providers::CloudManager
     elsif record.kind_of?(ManageIQ::Providers::ContainerManager)
@@ -813,7 +866,7 @@ module ApplicationHelper
   end
 
   def model_for_vm(record)
-    raise "Record is not VmOrTemplate class" unless record.kind_of?(VmOrTemplate)
+    raise _("Record is not VmOrTemplate class") unless record.kind_of?(VmOrTemplate)
     if record.kind_of?(ManageIQ::Providers::CloudManager::Vm)
       ManageIQ::Providers::CloudManager::Vm
     elsif record.kind_of?(ManageIQ::Providers::InfraManager::Vm)
@@ -866,16 +919,6 @@ module ApplicationHelper
     end
   end
 
-  # Same as li_link_if_condition for cases where the condition is a zero equality
-  # test.
-  #
-  # args (same as link_if_condition) plus:
-  #   :count    --- fixnum  - the number to test and present
-  #
-  def li_link_if_nonzero(args)
-    li_link_if_condition(args.update(:condition => args[:count] != 0))
-  end
-
   # Function returns a HTML fragment that represents a link to related entity
   # or list of related entities of certain type in case of a condition being
   # met or information about non-existence of such entity if condition is not
@@ -894,21 +937,11 @@ module ApplicationHelper
   #     :[action]     --- controller action
   #     :record_id    --- id of record
   #
-  def li_link_if_condition(args)
-    if args.key?(:tables) # plural case
-      entity_name = ui_lookup(:tables => args[:tables])
-      link_text   = args.key?(:link_text) ? "#{args[:link_text]} (#{args[:count]})" : "#{entity_name} (#{args[:count]})"
-      none        = '(0)'
-      title       = "Show all #{entity_name}"
-    else                  # singular case
-      entity_name = ui_lookup(:table  => args[:table])
-      link_text   = args.key?(:link_text) ? args[:link_text] : entity_name
-      link_text   = "#{link_text} (#{args[:count]})" if args.key?(:count)
-      none        = '(0)'
-      title       = "Show #{entity_name}"
-    end
-    title = args[:title] if args.key?(:title)
-    if args[:condition]
+  def li_link(args)
+    args[:if] = (args[:count] != 0) if args[:count]
+    link_text, title = build_link_text(args)
+
+    if args[:if]
       link_params = {
         :action  => args[:action].present? ? args[:action] : 'show',
         :display => args[:display],
@@ -928,11 +961,27 @@ module ApplicationHelper
       end
     else
       content_tag(:li, :class => "disabled") do
-        content_tag(:a, :href => "#") do
-          "#{args.key?(:link_text) ? args[:link_text] : entity_name} #{none}"
-        end
+        link_to(link_text, "#")
       end
     end
+  end
+
+  def build_link_text(args)
+    if args.key?(:tables)
+      entity_name = ui_lookup(:tables => args[:tables])
+      link_text   = args.key?(:link_text) ? "#{args[:link_text]} (#{args[:count]})" : "#{entity_name} (#{args[:count]})"
+      title       = _("Show all %{names}") % {:names => entity_name}
+    elsif args.key?(:text)
+      count     = args[:count] ? "(#{args[:count]})" : ""
+      link_text = "#{args[:text]} #{count}"
+    elsif args.key?(:table)
+      entity_name = ui_lookup(:table => args[:table])
+      link_text   = args.key?(:link_text) ? args[:link_text] : entity_name
+      link_text   = "#{link_text} (#{args[:count]})" if args.key?(:count)
+      title       = _("Show %{name}") % {:name => entity_name}
+    end
+    title = args[:title] if args.key?(:title)
+    return link_text, title
   end
 
   # Function returns a HTML fragment that represents an image with certain
@@ -972,6 +1021,7 @@ module ApplicationHelper
     test_layout = @layout
     # FIXME: exception behavior to remove
     test_layout = 'my_tasks' if %w(my_tasks my_ui_tasks all_tasks all_ui_tasks).include?(@layout)
+    test_layout = 'cloud_volume' if @layout == 'cloud_volume_snapshot'
 
     Menu::Manager.item_in_section?(test_layout, nav_id) ? "active" : "dropdown"
   end
@@ -980,6 +1030,7 @@ module ApplicationHelper
     test_layout = @layout
     # FIXME: exception behavior to remove
     test_layout = 'my_tasks' if %w(my_tasks my_ui_tasks all_tasks all_ui_tasks).include?(@layout)
+    test_layout = 'cloud_volume' if @layout == 'cloud_volume_snapshot'
 
     return "dropdown-menu" if big_iframe
 
@@ -989,6 +1040,8 @@ module ApplicationHelper
   def secondary_nav_class(nav_layout)
     if nav_layout == 'my_tasks' # FIXME: exceptional behavior to remove
       nav_layout = %w(my_tasks my_ui_tasks all_tasks all_ui_tasks).include?(@layout) ? @layout : "my_tasks"
+    elsif nav_layout == 'cloud_volume' && @layout == 'cloud_volume_snapshot'
+      nav_layout = 'cloud_volume_snapshot'
     end
     nav_layout == @layout ? "active" : ""
   end
@@ -1014,7 +1067,7 @@ module ApplicationHelper
   def record_no_longer_exists?(what, model = nil)
     return false unless what.nil?
     add_flash(@bang || model.present? ?
-      _("%s no longer exists") % ui_lookup(:model => model) :
+      _("%{model} no longer exists") % {:model => ui_lookup(:model => model)} :
       _("Error: Record no longer exists in the database"))
     session[:flash_msgs] = @flash_array
     # Error message is displayed in 'show_list' action if such action exists
@@ -1026,9 +1079,10 @@ module ApplicationHelper
     "#{@options[:page_size] || "US-Legal"} #{@options[:page_layout]}"
   end
 
-  GTL_VIEW_LAYOUTS = %w(action availability_zone cim_base_storage_extent cloud_tenant condition container_group
-                        container_route container_project container_replicator container_image container_image_registry
-                        container_topology container_dashboard
+  GTL_VIEW_LAYOUTS = %w(action availability_zone cim_base_storage_extent cloud_tenant cloud_volume cloud_volume_snapshot
+                        condition container_group container_route container_project
+                        container_replicator container_image container_image_registry
+                        container_topology container_dashboard middleware_topology persistent_volume container_build
                         container_node container_service ems_cloud ems_cluster ems_container ems_infra event
                         flavor host miq_schedule miq_template offline ontap_file_share
                         ontap_logical_disk ontap_storage_system ontap_storage_volume orchestration_stack
@@ -1044,7 +1098,7 @@ module ApplicationHelper
   def update_paging_url_parms(action_url, parameter_to_update = {}, post = false)
     url = update_query_string_params(parameter_to_update)
     action, an_id = action_url.split("/", 2)
-    if !post && controller.send(:restful?) && action == 'show'
+    if !post && controller.restful? && action == 'show'
       polymorphic_path(@record, url)
     else
       url[:action] = action
@@ -1067,9 +1121,10 @@ module ApplicationHelper
 
   def render_listnav_filename
     if @lastaction == "show_list" && !session[:menu_click] &&
-       %w(container_node container_service ems_container container_group ems_cloud ems_cluster
-          container_route container_project container_replicator container_image container_image_registry
-          ems_infra host miq_template offline orchestration_stack repository
+       %w(auth_key_pair_cloud cloud_volume cloud_volume_snapshot container_node container_service ems_container container_group ems_cloud
+          ems_cluster container_route container_project container_replicator container_image container_image_registry container_build
+          ems_infra host miq_template offline orchestration_stack persistent_volume repository ems_middleware
+          middleware_server middleware_deployment
           resource_pool retired service storage templates vm).include?(@layout) && !@in_a_form
       "show_list"
     elsif @compare
@@ -1078,9 +1133,10 @@ module ApplicationHelper
       "explorer"
     elsif %w(offline retired templates vm vm_cloud vm_or_template).include?(@layout)
       "vm"
-    elsif %w(action availability_zone cim_base_storage_extent cloud_tenant condition container_group
+    elsif %w(action auth_key_pair_cloud availability_zone cim_base_storage_extent cloud_tenant cloud_volume cloud_volume_snapshot condition container_group
              container_route container_project container_replicator container_image container_image_registry
-             container_node container_service ems_cloud ems_container ems_cluster ems_infra flavor
+             container_build container_node container_service persistent_volume ems_cloud ems_container ems_cluster ems_infra
+             ems_middleware middleware_server middleware_deployment flavor
              host miq_schedule miq_template policy ontap_file_share ontap_logical_disk
              ontap_storage_system ontap_storage_volume orchestration_stack repository resource_pool
              scan_profile security_group service snia_local_file_system storage
@@ -1090,8 +1146,9 @@ module ApplicationHelper
   end
 
   def show_adv_search?
-    show_search = %w(availability_zone cim_base_storage_extent container_group container_node container_service
+    show_search = %w(availability_zone cim_base_storage_extent cloud_volume cloud_volume_snapshot container_group container_node container_service
                      container_route container_project container_replicator container_image container_image_registry
+                     persistent_volume container_build
                      ems_cloud ems_cluster ems_container ems_infra flavor host miq_template offline
                      ontap_file_share ontap_logical_disk ontap_storage_system ontap_storage_volume
                      orchestration_stack repository resource_pool retired security_group service
@@ -1181,15 +1238,14 @@ module ApplicationHelper
   end
 
   def title_for_host(plural = false)
-    key = case Host.node_types
-          when :non_openstack
-            "host_infra"
-          when :openstack
-            "host_openstack"
-          else
-            "host"
-          end
-    ui_lookup(:host_types => plural ? key.pluralize : key)
+    case Host.node_types
+    when :non_openstack
+      plural ? _("Hosts") : _("Host")
+    when :openstack
+      plural ? _("Nodes") : _("Node")
+    else
+      plural ? _("Hosts / Nodes") : _("Host / Node")
+    end
   end
 
   def title_for_clusters
@@ -1197,25 +1253,22 @@ module ApplicationHelper
   end
 
   def title_for_cluster(plural = false)
-    key = case EmsCluster.node_types
-          when :non_openstack
-            "cluster_infra"
-          when :openstack
-            "cluster_openstack"
-          else
-            "cluster"
-          end
-    ui_lookup(:ems_cluster_types => plural ? key.pluralize : key)
+    case EmsCluster.node_types
+    when :non_openstack
+      plural ? _("Clusters") : _("Cluster")
+    when :openstack
+      plural ? _("Deployment Roles") : _("Deployment Role")
+    else
+      plural ? _("Clusters / Deployment Roles") : _("Cluster / Deployment Role")
+    end
   end
 
   def title_for_host_record(record)
-    record.openstack_host? ? ui_lookup(:host_types => 'host_openstack') : ui_lookup(:host_types => 'host_infra')
+    record.openstack_host? ? _("Node") : _("Host")
   end
 
   def title_for_cluster_record(record)
-    record.openstack_cluster? ?
-      ui_lookup(:ems_cluster_types => 'cluster_openstack') :
-      ui_lookup(:ems_cluster_types => 'cluster_infra')
+    record.openstack_cluster? ? _("Deployment Role") : _("Cluster")
   end
 
   def start_page_allowed?(start_page)
@@ -1274,7 +1327,7 @@ module ApplicationHelper
   end
 
   def tree_with_advanced_search?
-    %i(containers images instances providers vandt
+    %i(containers images cs_filter foreman_providers instances providers vandt
      images_filter instances_filter templates_filter templates_images_filter containers_filter
      vms_filter vms_instances_filter).include?(x_tree[:type])
   end
@@ -1284,12 +1337,11 @@ module ApplicationHelper
   end
 
   def listicon_image_tag(db, row)
-    img_path = "/images/icons/"
     img_attr = {:valign => "middle", :width => "20", :height => "20", :alt => nil, :border => "0"}
     if %w(Job MiqTask).include?(db)
       img_attr = {:valign => "middle", :width => "16", :height => "16", :alt => nil}
       if row["state"].downcase == "finished" && row["status"]
-        row_status = _("Status = %s") % row["status"].capitalize
+        row_status = _("Status = %{row}") % {:row => row["status"].capitalize}
         strsearch = row["message"].gsub!("cancel", "cancel")
         if row["status"].downcase == "ok" && strsearch.nil?
           image = "checkmark"
@@ -1310,11 +1362,11 @@ module ApplicationHelper
       end
     elsif %(Vm VmOrTemplate).include?(db)
       vm = @targets_hash[from_cid(@id)]
-      vendor = vm ? vm.vendor.downcase : "unknown"
+      vendor = vm ? vm.vendor : "unknown"
       image = "vendor-#{vendor}"
     elsif db == "Host"
       host = @targets_hash[@id] if @targets_hash
-      vendor = host ? host.vmm_vendor.downcase : "unknown"
+      vendor = host ? host.vmm_vendor_display.downcase : "unknown"
       image = "vendor-#{vendor}"
     elsif db == "MiqAction"
       action = @targets_hash[@id.to_i]
@@ -1333,7 +1385,7 @@ module ApplicationHelper
       image = db.underscore
     end
 
-    image_tag("#{img_path}new/#{image.downcase}.png", img_attr)
+    image_tag(ActionController::Base.helpers.image_path("100/#{image.downcase}.png"), img_attr)
   end
 
   def listicon_glyphicon_tag(db, row)

@@ -2,7 +2,10 @@
 if (typeof(ManageIQ) === 'undefined') {
   var ManageIQ = {
     actionUrl: null, // action URL used in JS function miqGridSort
-    angularApplication: null, // angular application
+    angular: {
+      app: null, // angular application
+      scope: null,  // helper scope, pending refactor
+    },
     browser: null, // browser name
     controller: null, // stored controller, used to build URL
     changes: null, // indicate if there are unsaved changes
@@ -16,6 +19,7 @@ if (typeof(ManageIQ) === 'undefined') {
       IEButtonPressed: null, // pressed save/reset button identificator
       oneTrans: null, // used to generate Ajax request only once for a drawn screen
     },
+    noCollapseEvent: false, // enable/disable events fired after collapsing an accordion
     expEditor: {
       prefillCount: 0, //
       first: {
@@ -36,8 +40,13 @@ if (typeof(ManageIQ) === 'undefined') {
       chartData: null, // data for charts
       charts: {}, // object with registered charts used in jqplot_register_chart
       formatters: {}, // functions corresponding to MiqReport::Formatting
+      c3: {}, // C3 charts by id
+      c3config: null, // C3 chart configuration
     },
     grids: {}, // stored grids on the screen
+    i18n: {
+      mark_translated_strings: false
+    },
     mouse: {
       x: null, // mouse X coordinate for popup menu
       y: null, // mouse Y coordinate for popup menu
@@ -56,10 +65,6 @@ if (typeof(ManageIQ) === 'undefined') {
       slickGrid: null,
       slickRows: null,
       slickDataView: null,
-    },
-    spinner: {
-      spinner: null, // spinner instance
-      searchSpinner: null, // search spinner instance
     },
     widget: {
       dashboardUrl: null, // set dashboard widget drag drop url

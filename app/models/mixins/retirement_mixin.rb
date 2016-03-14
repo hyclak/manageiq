@@ -36,12 +36,16 @@ module RetirementMixin
   end
 
   def retires_on=(timestamp)
-    if retires_on != timestamp
-      self.retired              = false if timestamp.nil? || (timestamp.to_date > Date.today)
-      self.retirement_last_warn = nil # Reset so that a new warning can be sent out when the time is right
-      write_attribute(:retires_on, timestamp)
-      self.retirement_requester = nil
+    return if retires_on == timestamp
+
+    if timestamp.nil? || (timestamp.to_date > Time.zone.today)
+      self.retired = false
+      _log.warn("Resetting retirement state from #{retirement_state}") unless retirement_state.nil?
+      self.retirement_state = nil
     end
+    self.retirement_last_warn = nil # Reset so that a new warning can be sent out when the time is right
+    self[:retires_on] = timestamp
+    self.retirement_requester = nil
   end
 
   def retires_on_date
@@ -193,7 +197,7 @@ module RetirementMixin
     event_hash[retirement_base_model_name.underscore.to_sym] = self
     event_hash[:host] = host if self.respond_to?(:host)
     if requester
-      event_hash[:user_id] = requester
+      event_hash[:userid] = requester
       event_hash[:retirement_initiator] = "user"
     end
     event_hash[:type] ||= self.class.name

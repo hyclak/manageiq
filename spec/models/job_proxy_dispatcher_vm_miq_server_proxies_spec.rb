@@ -1,5 +1,3 @@
-require "spec_helper"
-
 describe "JobProxyDispatcherVmMiqServerProxies" do
   require File.expand_path(File.join(File.dirname(__FILE__), 'job_proxy_dispatcher/job_proxy_dispatcher_helper'))
   include JobProxyDispatcherHelper
@@ -8,7 +6,7 @@ describe "JobProxyDispatcherVmMiqServerProxies" do
     before(:each) do
       @server1 = EvmSpecHelper.local_miq_server
       @server2 = FactoryGirl.create(:miq_server, :zone => @server1.zone)
-      MiqServer.any_instance.stub(:is_vix_disk? => true)
+      allow_any_instance_of(MiqServer).to receive_messages(:is_vix_disk? => true)
     end
 
     context "with hosts with a miq_proxy, vmware vms on storages" do
@@ -23,9 +21,9 @@ describe "JobProxyDispatcherVmMiqServerProxies" do
 
         it "should return both servers" do
           res = @vm.miq_server_proxies
-          res.length.should == 2
-          res.include?(@server1).should be_true
-          res.include?(@server2).should be_true
+          expect(res.length).to eq(2)
+          expect(res.include?(@server1)).to be_truthy
+          expect(res.include?(@server2)).to be_truthy
         end
       end
 
@@ -35,16 +33,16 @@ describe "JobProxyDispatcherVmMiqServerProxies" do
           @server1.save
         end
         it "should return second server" do
-          @vm.miq_server_proxies.should == [@server2]
+          expect(@vm.miq_server_proxies).to eq([@server2])
         end
       end
 
       context "with no vix disk enabled servers, " do
         before(:each) do
-          MiqServer.any_instance.stub(:is_vix_disk? => false)
+          allow_any_instance_of(MiqServer).to receive_messages(:is_vix_disk? => false)
         end
         it "should return no servers" do
-          @vm.miq_server_proxies.should be_empty
+          expect(@vm.miq_server_proxies).to be_empty
         end
       end
 
@@ -53,20 +51,10 @@ describe "JobProxyDispatcherVmMiqServerProxies" do
           @vms_zone = FactoryGirl.create(:zone, :description => "Zone 1", :name => "zone1")
           @server2.zone = @vms_zone
           @server2.save
-          @vm.stub(:my_zone => @vms_zone.name)
+          allow(@vm).to receive_messages(:my_zone => @vms_zone.name)
         end
         it "should return only server2, in same zone" do
-          @vm.miq_server_proxies.should == [@server2]
-        end
-      end
-
-      context "with a non-vmware vm, " do
-        before(:each) do
-          @vm.vendor = "Microsoft"
-          @vm.save
-        end
-        it "should return no servers" do
-          @vm.miq_server_proxies.should be_empty
+          expect(@vm.miq_server_proxies).to eq([@server2])
         end
       end
 
@@ -76,7 +64,7 @@ describe "JobProxyDispatcherVmMiqServerProxies" do
           @vm.save
         end
         it "should return no servers" do
-          @vm.miq_server_proxies.should be_empty
+          expect(@vm.miq_server_proxies).to be_empty
         end
       end
 
@@ -86,7 +74,7 @@ describe "JobProxyDispatcherVmMiqServerProxies" do
           @vm.save
         end
         it "should return no servers" do
-          @vm.miq_server_proxies.should be_empty
+          expect(@vm.miq_server_proxies).to be_empty
         end
       end
 
@@ -96,7 +84,7 @@ describe "JobProxyDispatcherVmMiqServerProxies" do
           host.vm_scan_affinity = [@server2]
         end
         it "should return only servers in the host's affinity list" do
-          @vm.miq_server_proxies.should == [@server2]
+          expect(@vm.miq_server_proxies).to eq([@server2])
         end
       end
 
@@ -107,7 +95,7 @@ describe "JobProxyDispatcherVmMiqServerProxies" do
         end
 
         it "should return only second server (without any scan affinity)" do
-          @vm.miq_server_proxies.should == [@server2]
+          expect(@vm.miq_server_proxies).to eq([@server2])
         end
       end
     end

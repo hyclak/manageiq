@@ -24,15 +24,14 @@ module MiqReport::Seeding
       if typ == "report"
         dir = REPORT_DIR
         pattern = "*/*.yaml"
-        cond = ["rpt_type = 'Default' and (template_type = ? or template_type is null)", typ]
+        cond = {:rpt_type => 'Default', :template_type => [typ, nil]}
       else
         dir = COMPARE_DIR
         pattern = "*.yaml"
-        cond = ["rpt_type = 'Default' and template_type = ?", typ]
+        cond = {:rpt_type => 'Default', :template_type => typ}
       end
 
-      where(cond).each do |f|
-        next unless f.filename
+      where(cond).where.not(:filename => nil).each do |f|
         unless File.exist?(File.join(dir, f.filename))
           $log.info("#{typ.titleize}: file [#{f.filename}] has been deleted from disk, deleting from model")
           f.destroy
@@ -65,7 +64,7 @@ module MiqReport::Seeding
       rpt[:file_mtime] = File.mtime(filename).utc.round
       rpt[:priority] = File.basename(filename).split("_").first.to_i
       # rec = self.find_by_name_and_rpt_group(rpt[:name], rpt[:rpt_group])
-      # rec = self.find_by_name_and_filename(rpt[:name], rpt[:filename])
+      # rec = self.find_by(:name => rpt[:name], :filename => rpt[:filename])
       rpt[:template_type] = typ
       rec = find_by_filename(rpt[:filename])
 

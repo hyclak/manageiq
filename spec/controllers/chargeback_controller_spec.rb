@@ -1,5 +1,3 @@
-require "spec_helper"
-
 describe ChargebackController do
   before { set_user_privileges }
 
@@ -69,17 +67,47 @@ describe ChargebackController do
       controller.instance_variable_set(:@_params, :id => node)
       controller.send(:tree_select)
       expect(response).to                        render_template('layouts/_saved_report_paging_bar')
-      expect(controller.send(:flash_errors?)).to be_false
+      expect(controller.send(:flash_errors?)).to be_falsey
       expect(response.status).to                 eq(200)
     end
   end
 
-  render_views
+  context "#explorer" do
+    render_views
 
-  it "#explorer can be rendered" do
-    EvmSpecHelper.create_guid_miq_server_zone
-    get :explorer
-    expect(response.status).to eq(200)
-    expect(response.body).to_not be_empty
+    it "can be rendered" do
+      EvmSpecHelper.create_guid_miq_server_zone
+      get :explorer
+      expect(response.status).to eq(200)
+      expect(response.body).to_not be_empty
+    end
+  end
+
+  context "#process_cb_rates" do
+    it "delete unassigned" do
+      cbr = FactoryGirl.create(:chargeback_rate, :rate_type => "Storage", :description => "Storage Rate")
+
+      rates = [cbr.id]
+      controller.send(:process_cb_rates, rates, "destroy")
+
+      expect(controller.send(:flash_errors?)).to be_falsey
+
+      flash_array = assigns(:flash_array)
+      expect(flash_array.first[:message]).to include("Delete successful")
+    end
+
+    it "delete assigned" do
+      cbr = FactoryGirl.create(:chargeback_rate, :rate_type => "Storage", :description => "Storage Rate")
+      host = FactoryGirl.create(:host)
+      cbr.assign_to_objects(host)
+
+      rates = [cbr.id]
+      controller.send(:process_cb_rates, rates, "destroy")
+
+      expect(controller.send(:flash_errors?)).to be_truthy
+
+      flash_array = assigns(:flash_array)
+      expect(flash_array.first[:message]).to include("rate is assigned and cannot be deleted")
+    end
   end
 end

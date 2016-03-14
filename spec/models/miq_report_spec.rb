@@ -1,14 +1,90 @@
-require "spec_helper"
+shared_examples "custom_report_with_custom_attributes" do |base_report, custom_attribute_field|
+  let(:options) { {:targets_hash => true, :userid => "admin"} }
+  let(:base_report_downcase) { base_report.downcase }
+  let(:miq_ae_uri) { "/EVM/AUTOMATE/test1?#{base_report}::#{base_report_downcase}=#{@resource.id}" }
+  let(:custom_attributes_field) { custom_attribute_field.to_s.pluralize }
+
+  def invoke_ae
+    MiqAeEngine.instantiate(miq_ae_uri, @user)
+  end
+
+  before do
+    EvmSpecHelper.local_miq_server
+    MiqAutomateHelper.create_service_model_method('SPEC_DOMAIN', 'EVM',
+                                                  'AUTOMATE', 'test1', 'test')
+    @ae_method = ::MiqAeMethod.first
+    ae_result_key = 'foo'
+    @user = FactoryGirl.create(:user_with_group)
+
+    # create custom attributes
+    @key    = 'key1'
+    @value  = 'value1'
+
+    @resource = base_report == "Host" ? FactoryGirl.create(:host) : FactoryGirl.create(:vm_vmware)
+    FactoryGirl.create(custom_attribute_field, :resource => @resource, :name => @key, :value => @value)
+
+    if custom_attribute_field == :ems_custom_attribute
+      custom_get_method = "ems_custom_get"
+    else
+      custom_get_method = "custom_get"
+    end
+
+    method = "$evm.root['#{ae_result_key}'] = $evm.root['#{base_report_downcase}'].#{custom_get_method}('#{@key}')"
+    @ae_method.update_attributes(:data => method)
+    @ae_object = invoke_ae.root(ae_result_key)
+  end
+
+  let(:report) do
+    MiqReport.new(
+      :name      => "Custom VM report",
+      :title     => "Custom VM report",
+      :rpt_group => "Custom",
+      :rpt_type  => "Custom",
+      :db        => base_report == "Host" ? "Host" : "ManageIQ::Providers::InfraManager::Vm",
+      :cols      => %w(name),
+      :include   => {"#{custom_attributes_field}" => {"columns" => %w(name value)}},
+      :col_order => %w(miq_custom_attributes.name miq_custom_attributes.value name),
+      :headers   => ["EVM Custom Attribute Name", "EVM Custom Attribute Value", "Name"],
+      :order     => "Ascending",
+      :sortby    => ["miq_custom_attributes.name"]
+    )
+  end
+
+  it "creates custom report based on #{base_report} with #{custom_attribute_field} field of custom attributes" do
+    expect { @results, _attrs = report.paged_view_search(options) }.not_to raise_error
+
+    custom_attributes_name = "#{custom_attributes_field}.name"
+    custom_attributes_value = "#{custom_attributes_field}.value"
+    expect(@results.data.first[custom_attributes_name]).to eq(@key)
+    expect(@results.data.first[custom_attributes_value]).to eq(@value)
+  end
+end
 
 describe MiqReport do
+  context "Host and MiqCustomAttributes" do
+    include_examples "custom_report_with_custom_attributes", "Host", :miq_custom_attribute
+  end
+
+  context "Vm and MiqCustomAttributes" do
+    include_examples "custom_report_with_custom_attributes", "Vm", :miq_custom_attribute
+  end
+
+  context "Host and EmsCustomAttributes" do
+    include_examples "custom_report_with_custom_attributes", "Host", :ems_custom_attribute
+  end
+
+  context "Vm and EmsCustomAttributes" do
+    include_examples "custom_report_with_custom_attributes", "Vm", :ems_custom_attribute
+  end
+
   it "attr_accessors are serializable via yaml" do
-    result = [{"id" => 5, "vmm_vendor" => "VMware", "vmm_product" => "ESXi", "ipaddress" => "192.168.252.13", "vmm_buildnumber" => "260247", "vmm_version" => "4.1.0", "name" => "VI4ESXM1.manageiq.com"}, {"id" => 3, "vmm_vendor" => "VMware", "vmm_product" => "ESXi", "ipaddress" => "192.168.252.9", "vmm_buildnumber" => "348481", "vmm_version" => "4.1.0", "name" => "vi4esxm2.manageiq.com"}, {"id" => 4, "vmm_vendor" => "VMware", "vmm_product" => "ESX", "ipaddress" => "192.168.252.10", "vmm_buildnumber" => "502767", "vmm_version" => "4.1.0", "name" => "vi4esxm3.manageiq.com"}, {"id" => 1, "vmm_vendor" => "VMware", "vmm_product" => "ESXi", "ipaddress" => "192.168.252.4", "vmm_buildnumber" => "504850", "vmm_version" => "4.0.0", "name" => "per410a-t5.manageiq.com"}]
-    column_names = ["name", "ipaddress", "vmm_vendor", "vmm_product", "vmm_version", "vmm_buildnumber", "id"]
+    result = [{"id" => 5, "vmm_vendor" => "vmware", "vmm_vendor_display" => "VMware", "vmm_product" => "ESXi", "ipaddress" => "192.168.252.13", "vmm_buildnumber" => "260247", "vmm_version" => "4.1.0", "name" => "VI4ESXM1.manageiq.com"}, {"id" => 3, "vmm_vendor" => "VMware", "vmm_product" => "ESXi", "ipaddress" => "192.168.252.9", "vmm_buildnumber" => "348481", "vmm_version" => "4.1.0", "name" => "vi4esxm2.manageiq.com"}, {"id" => 4, "vmm_vendor" => "VMware", "vmm_product" => "ESX", "ipaddress" => "192.168.252.10", "vmm_buildnumber" => "502767", "vmm_version" => "4.1.0", "name" => "vi4esxm3.manageiq.com"}, {"id" => 1, "vmm_vendor" => "VMware", "vmm_product" => "ESXi", "ipaddress" => "192.168.252.4", "vmm_buildnumber" => "504850", "vmm_version" => "4.0.0", "name" => "per410a-t5.manageiq.com"}]
+    column_names = ["name", "ipaddress", "vmm_vendor", "vmm_vendor_display", "vmm_product", "vmm_version", "vmm_buildnumber", "id"]
     fake_ruport_data_table = {:data => result, :column_names => column_names}
     before = MiqReport.new
     before.table = fake_ruport_data_table
     after = YAML.load(YAML.dump(before))
-    after.table.should == fake_ruport_data_table
+    expect(after.table).to eq(fake_ruport_data_table)
   end
 
   it '.get_expressions_by_model' do
@@ -135,9 +211,9 @@ describe MiqReport do
       vm2 = FactoryGirl.create(:vm_vmware)
       vm2.tag_with("/managed/environment/dev", :ns => "*")
 
-      group = FactoryGirl.create(:miq_group)
-      user  = FactoryGirl.create(:user, :miq_groups => [group])
-      User.stub(:server_timezone => "UTC")
+      user  = FactoryGirl.create(:user_with_group)
+      group = user.current_group
+      allow(User).to receive_messages(:server_timezone => "UTC")
       group.update_attributes(:filters => {"managed" => [["/managed/environment/prod"]], "belongsto" => []})
 
       report = MiqReport.new(:db => "Vm")
@@ -148,17 +224,16 @@ describe MiqReport do
       expect(results.length).to eq 1
       expect(results.data.collect(&:name)).to eq [vm1.name]
       expect(report.table.length).to eq 1
-      expect(attrs[:apply_sortby_in_search]).to be_true
-      expect(attrs[:apply_limit_in_sql]).to be_true
+      expect(attrs[:apply_sortby_in_search]).to be_truthy
+      expect(attrs[:apply_limit_in_sql]).to be_truthy
       expect(attrs[:auth_count]).to eq 1
       expect(attrs[:user_filters]["managed"]).to eq [["/managed/environment/prod"]]
       expect(attrs[:total_count]).to eq 2
     end
 
     it "sortby, order, user filters, where sort column is in a sub-table" do
-      group = FactoryGirl.create(:miq_group)
-      user  = FactoryGirl.create(:user, :miq_groups => [group])
-
+      user  = FactoryGirl.create(:user_with_group)
+      group = user.current_group
       vm1 = FactoryGirl.create(:vm_vmware, :name => "VA", :storage => FactoryGirl.create(:storage, :name => "SA"))
       vm2 = FactoryGirl.create(:vm_vmware, :name => "VB", :storage => FactoryGirl.create(:storage, :name => "SB"))
       tag = "/managed/environment/prod"
@@ -166,7 +241,7 @@ describe MiqReport do
       vm1.tag_with(tag, :ns => "*")
       vm2.tag_with(tag, :ns => "*")
 
-      User.stub(:server_timezone => "UTC")
+      allow(User).to receive_messages(:server_timezone => "UTC")
       report = MiqReport.new(:db => "Vm", :sortby => %w(storage.name name), :order => "Ascending", :include => {"storage" => {"columns" => ["name"]}})
       options = {
         :only   => ["name", "storage.name"],
@@ -180,8 +255,8 @@ describe MiqReport do
       expect(results.data.first["name"]).to eq "VA"
       expect(results.data.first["storage.name"]).to eq "SA"
       expect(report.table.length).to eq 2
-      expect(attrs[:apply_sortby_in_search]).to be_true
-      expect(attrs[:apply_limit_in_sql]).to be_true
+      expect(attrs[:apply_sortby_in_search]).to be_truthy
+      expect(attrs[:apply_limit_in_sql]).to be_truthy
       expect(attrs[:auth_count]).to eq 2
       expect(attrs[:user_filters]["managed"]).to eq [[tag]]
       expect(attrs[:total_count]).to eq 2
@@ -222,8 +297,8 @@ describe MiqReport do
     end
 
     it "expression filtering on a virtual column and user filters" do
-      group = FactoryGirl.create(:miq_group)
-      user  = FactoryGirl.create(:user, :miq_groups => [group])
+      user  = FactoryGirl.create(:user_with_group)
+      group = user.current_group
 
       _vm1 = FactoryGirl.create(:vm_vmware, :name => "VA",  :host => FactoryGirl.create(:host, :name => "HA"))
       vm2 =  FactoryGirl.create(:vm_vmware, :name => "VB",  :host => FactoryGirl.create(:host, :name => "HB"))
@@ -235,7 +310,7 @@ describe MiqReport do
       vm2.tag_with(tag, :ns => "*")
       vm3.tag_with(tag, :ns => "*")
 
-      User.stub(:server_timezone => "UTC")
+      allow(User).to receive_messages(:server_timezone => "UTC")
 
       report = MiqReport.new(:db => "Vm")
 
@@ -302,10 +377,61 @@ describe MiqReport do
   end
 
   describe "#generate_table" do
-    before :each do
-      allow(MiqServer).to receive(:my_zone) { "Zone 1" }
-      FactoryGirl.create(:time_profile_utc)
+    it "with has_many through" do
+      ems      = FactoryGirl.create(:ems_vmware_with_authentication)
+      user     = FactoryGirl.create(:user_with_group)
+      group    = user.current_group
+      template = FactoryGirl.create(:template_vmware, :ext_management_system => ems)
+      vm       = FactoryGirl.create(:vm_vmware, :ext_management_system => ems)
+      hardware = FactoryGirl.create(:hardware, :vm => vm)
+      FactoryGirl.create(:disk, :hardware => hardware, :disk_type => "thin")
+
+      options = {
+        :vm_name        => vm.name,
+        :vm_target_name => vm.name,
+        :provision_type => "vmware",
+        :src_vm_id      => [template.id, template.name]
+      }
+
+      provision = FactoryGirl.create(
+        :miq_provision_vmware,
+        :destination  => vm,
+        :source       => template,
+        :userid       => user.userid,
+        :request_type => 'template',
+        :state        => 'finished',
+        :status       => 'Ok',
+        :options      => options
+      )
+
+      template.miq_provisions_from_template << provision
+      template.save
+
+      expect(template.miq_provision_vms.count).to be > 0
+      expect(template.miq_provision_vms.count(&:thin_provisioned)).to be > 0
+
+      report = MiqReport.create(
+        :name          => "VMs based on Disk Type",
+        :title         => "VMs using thin provisioned disks",
+        :rpt_group     => "Custom",
+        :rpt_type      => "Custom",
+        :db            => "MiqTemplate",
+        :cols          => [],
+        :include       => {"miq_provision_vms" => {"columns" => ["name"]}},
+        :col_order     => ["miq_provision_vms.name"],
+        :headers       => ["Name"],
+        :template_type => "report",
+        :miq_group_id  => group.id,
+        :user_id       => user.userid,
+        :conditions    => MiqExpression.new(
+          {"FIND" => {"search" => {"=" => {"field" => "MiqTemplate.miq_provision_vms-thin_provisioned", "value" => "true"}}, "checkall" => {"=" => {"field" => "MiqTemplate.miq_provision_vms-thin_provisioned", "value" => "true"}}}},
+          nil
+        )
+      )
+      report.generate_table
+      expect(report.table.data.collect { |rec| rec.data['miq_provision_vms.name'] }).to eq([vm.name])
     end
+
     let(:report) do
       MiqReport.new(
         :name     => "All Departments with Performance", :title => "All Departments with Performance for last week",
@@ -338,6 +464,126 @@ describe MiqReport do
                                   :report_source => "Requested by user")
           end.not_to raise_error
         end
+      end
+    end
+    context "performance reports" do
+      let(:report) do
+        MiqReport.new(
+          :title   => "vim_perf_daily.yaml",
+          :db      => "VimPerformanceDaily",
+          :cols    => %w(timestamp cpu_usagemhz_rate_average max_derived_cpu_available),
+          :include => { "metric_rollup" => {
+            "columns" => %w(cpu_usagemhz_rate_average_high_over_time_period
+                            cpu_usagemhz_rate_average_low_over_time_period
+                            derived_memory_used_high_over_time_period
+                            derived_memory_used_low_over_time_period)}})
+      end
+      let(:ems) { FactoryGirl.create(:ems_vmware, :zone => @server.zone) }
+
+      it "runs report" do
+        report.generate_table(:userid => "admin")
+      end
+    end
+
+    context "Tenant Quota Report" do
+      include QuotaHelper
+
+      let(:child_tenant) { FactoryGirl.create(:tenant, :parent => @tenant) }
+
+      let!(:tenant_without_quotas) { FactoryGirl.create(:tenant, :name=>"tenant_without_quotas") }
+
+      let(:tenant_quota_cpu) { FactoryGirl.create(:tenant_quota_cpu, :tenant => @tenant, :value => 2) }
+      let(:tenant_quota_mem) { FactoryGirl.create(:tenant_quota_mem, :tenant => @tenant, :value => 4_294_967_296) }
+
+      let(:tenant_quota_storage) do
+        FactoryGirl.create(:tenant_quota_storage, :tenant => @tenant, :value => 4_294_967_296)
+      end
+
+      let(:tenant_quota_vms)       { FactoryGirl.create(:tenant_quota_vms, :tenant => @tenant, :value => 4) }
+      let(:tenant_quota_templates) { FactoryGirl.create(:tenant_quota_templates, :tenant => @tenant, :value => 4) }
+
+      let(:skip_condition) do
+        YAML.load '--- !ruby/object:MiqExpression
+                       exp:
+                         ">":
+                           count: tenants.tenant_quotas
+                           value: 0'
+      end
+
+      let(:report) do
+        include = {"tenant_quotas" => {"columns" => %w(name total used allocated available)}}
+        cols = ["name", "tenant_quotas.name", "tenant_quotas.total", "tenant_quotas.used", "tenant_quotas.allocated",
+                "tenant_quotas.available"]
+        headers = ["Tenant Name", "Quota Name", "Total Quota", "Total Quota", "In Use", "Allocated", "Available"]
+
+        FactoryGirl.create(:miq_report, :title => "Tenant Quotas", :order => 'Ascending', :rpt_group => "Custom",
+                           :priority => 231, :rpt_type => 'Custom', :db => 'Tenant', :include => include, :cols => cols,
+                           :col_order => cols, :template_type => "report", :headers => headers,
+                           :conditions => skip_condition)
+      end
+
+      let(:user_admin) { FactoryGirl.create(:user, :role => "super_administrator") }
+
+      def generate_table_cell(formatted_value)
+        "<td style=\"text-align:right\">#{formatted_value}</td>"
+      end
+
+      def generate_html_row(is_even, tenant_name, formatted_values)
+        row = []
+        row << "<tr class='row#{is_even ? '0' : '1'}-nocursor'><td>#{tenant_name}</td>"
+
+        [:name, :total, :used, :allocated, :available].each do |metric|
+          row << generate_table_cell(formatted_values[metric])
+        end
+
+        row << "</tr>"
+        row.join
+      end
+
+      before do
+        setup_model
+        @tenant.tenant_quotas = [tenant_quota_cpu, tenant_quota_mem, tenant_quota_storage, tenant_quota_vms,
+                                 tenant_quota_templates]
+        @expected_html_rows = []
+
+        formatted_values = {:name => "Allocated Virtual CPUs", :total => "2 Count", :used => "0 Count",
+                            :allocated => "0 Count", :available => "2 Count"}
+        @expected_html_rows.push(generate_html_row(true, @tenant.name, formatted_values))
+
+        formatted_values = {:name => "Allocated Memory in GB", :total => "4.0 GB", :used => "1.0 GB",
+                            :allocated => "0.0 GB", :available => "3.0 GB"}
+        @expected_html_rows.push(generate_html_row(false, @tenant.name, formatted_values))
+
+        formatted_values = {:name => "Allocated Storage in GB", :total => "4.0 GB",
+                            :used => "#{1_000_000.0 / 1.gigabyte} GB", :allocated => "0.0 GB",
+                            :available => "#{(4.gigabytes - 1_000_000.0) / 1.gigabyte} GB"}
+        @expected_html_rows.push(generate_html_row(true, @tenant.name, formatted_values))
+
+        formatted_values = {:name => "Allocated Number of Virtual Machines", :total => "4 Count", :used => "1 Count",
+                            :allocated => "0 Count", :available => "3 Count"}
+        @expected_html_rows.push(generate_html_row(false, @tenant.name, formatted_values))
+
+        formatted_values = {:name => "Allocated Number of Templates", :total => "4 Count", :used => "1 Count",
+                            :allocated => "0 Count", :available => "3 Count"}
+        @expected_html_rows.push(generate_html_row(true, @tenant.name, formatted_values))
+
+        User.current_user = user_admin
+      end
+
+      it "returns expected html outputs with formatted values" do
+        allow(User).to receive(:server_timezone).and_return("UTC")
+        report.generate_table
+        rows_array = report.build_html_rows
+        rows_array.each_with_index do |row, index|
+          expect(@expected_html_rows[index]).to eq(row)
+        end
+      end
+
+      it "returns only rows for tenant with any tenant_quotas" do
+        allow(User).to receive(:server_timezone).and_return("UTC")
+        report.generate_table
+        # 6th row would be for tenant_without_quotas, but skipped now because of skip_condition, so we expecting 5
+        expect(report.table.data.count).to eq(5)
       end
     end
   end

@@ -1,4 +1,4 @@
-class MiqRegion < ActiveRecord::Base
+class MiqRegion < ApplicationRecord
   has_many :metrics,        :as => :resource # Destroy will be handled by purger
   has_many :metric_rollups, :as => :resource # Destroy will be handled by purger
   has_many :vim_performance_states, :as => :resource # Destroy will be handled by purger
@@ -102,9 +102,7 @@ class MiqRegion < ActiveRecord::Base
     active_miq_servers.detect(&:is_master?)
   end
 
-  def self.my_region
-    find_by(:region => my_region_number)
-  end
+  cache_with_timeout(:my_region) { find_by(:region => my_region_number) }
 
   def self.seed
     # Get the region by looking at an existing MiqDatabase instance's id
@@ -120,27 +118,20 @@ class MiqRegion < ActiveRecord::Base
     end
   end
 
-  def self.sync_with_db_region(config = false)
-    # Establish a connection to a different database so that we can sync with the new DB's region
-    if config
-      raise "Failed to retrieve database configuration for Rails.env [#{Rails.env}] in config with keys: #{config.keys.inspect}" unless config.key?(Rails.env)
-      _log.info("establishing connection with #{config[Rails.env].merge("password" => "[PASSWORD]").inspect}")
-      MiqDatabase.establish_connection(config[Rails.env])
+  def self.destroy_region(conn, region, tables = nil)
+    tables ||= conn.tables.reject { |t| t =~ /^schema_migrations|^ar_internal_metadata|^rr/ }.sort
+    tables.each do |t|
+      pk = conn.primary_key(t)
+      if pk
+        conditions = sanitize_conditions(region_to_conditions(region, pk))
+      else
+        id_cols = connection.columns(t).select { |c| c.name.ends_with?("_id") }
+        conditions = id_cols.collect { |c| "(#{sanitize_conditions(region_to_conditions(region, c.name))})" }.join(" OR ")
+      end
+
+      rows = conn.delete("DELETE FROM #{t} WHERE #{conditions}")
+      _log.info "Cleared [#{rows}] rows from table [#{t}]"
     end
-
-    db = MiqDatabase.first
-    return if db.nil?
-
-    my_region = my_region_number(true)
-    region = db.region_id
-    if region != my_region
-      _log.info("Changing region file from: [#{my_region}] to: [#{region}]... restart to use new region")
-      MiqRegion.sync_region_to_file(region)
-    end
-  end
-
-  def self.sync_region_to_file(region)
-    File.open(File.join(Rails.root, "REGION"), "w") { |f| f.write region }
   end
 
   def ems_clouds
@@ -153,6 +144,10 @@ class MiqRegion < ActiveRecord::Base
 
   def ems_containers
     ext_management_systems.select { |e| e.kind_of? ManageIQ::Providers::ContainerManager }
+  end
+
+  def ems_middlewares
+    ext_management_systems.select { |e| e.kind_of? ManageIQ::Providers::MiddlewareManager }
   end
 
   def assigned_roles
@@ -226,7 +221,7 @@ class MiqRegion < ActiveRecord::Base
     total_hosts   = 0
     total_sockets = 0
 
-    ExtManagementSystem.all(:order => :id).each do |e|
+    ExtManagementSystem.all.each do |e|
       vms     = e.all_vms_and_templates.count
       hosts   = e.all_hosts.count
       sockets = e.aggregate_physical_cpus
@@ -242,7 +237,7 @@ class MiqRegion < ActiveRecord::Base
   def self.log_not_under_management(prefix)
     hosts_objs = Host.where(:ems_id => nil)
     hosts      = hosts_objs.count
-    vms        = VmOrTemplate.count(:conditions =>  {:ems_id => nil})
+    vms        = VmOrTemplate.where(:ems_id => nil).count
     sockets    = my_region.aggregate_physical_cpus(hosts_objs)
     $log.info("#{prefix}, Not Under Management: VMs: [#{vms}], Hosts: [#{hosts}], Sockets: [#{sockets}]")
   end
@@ -270,7 +265,7 @@ class MiqRegion < ActiveRecord::Base
     end
 
     # Clear tag association cache instead of full reload.
-    association_cache.except!(:tags, :taggings)
+    @association_cache.except!(:tags, :taggings)
 
     # Set @perf_capture_always since we already know all the answers
     options = options.dup

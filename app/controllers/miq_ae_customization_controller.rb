@@ -37,8 +37,9 @@ class MiqAeCustomizationController < ApplicationController
   def x_button
     @sb[:action] = action = params[:pressed]
 
-    raise ActionController::RoutingError.new('invalid button action') unless
-      AE_CUSTOM_X_BUTTON_ALLOWED_ACTIONS.key?(action)
+    unless AE_CUSTOM_X_BUTTON_ALLOWED_ACTIONS.key?(action)
+      raise ActionController::RoutingError, _('invalid button action')
+    end
 
     send(AE_CUSTOM_X_BUTTON_ALLOWED_ACTIONS[action])
   end
@@ -46,12 +47,12 @@ class MiqAeCustomizationController < ApplicationController
   def upload_import_file
     redirect_options = {:action => :review_import}
 
-    if params[:upload].nil? || params[:upload][:file].nil?
-      add_flash("Use the browse button to locate an import file", :warning)
+    if params[:upload].nil? || params[:upload][:file].blank?
+      add_flash(_("Use the browse button to locate an import file"), :warning)
     else
       begin
         import_file_upload_id = dialog_import_service.store_for_import(params[:upload][:file].read)
-        add_flash(_("Import file was uploaded successfully"), :info)
+        add_flash(_("Import file was uploaded successfully"), :success)
         redirect_options[:import_file_upload_id] = import_file_upload_id
       rescue DialogImportValidator::ImportNonYamlError
         add_flash(_("Error: the file uploaded is not of the supported format"), :error)
@@ -68,11 +69,11 @@ class MiqAeCustomizationController < ApplicationController
   end
 
   def import_service_dialogs
-    import_file_upload = ImportFileUpload.first(:conditions => {:id => params[:import_file_upload_id]})
+    import_file_upload = ImportFileUpload.find_by(:id => params[:import_file_upload_id])
 
     if import_file_upload
       dialog_import_service.import_service_dialogs(import_file_upload, params[:dialogs_to_import])
-      add_flash(_("Service dialogs imported successfully"), :info)
+      add_flash(_("Service dialogs imported successfully"), :success)
     else
       add_flash(_("Error: ImportFileUpload expired"), :error)
     end
@@ -97,7 +98,7 @@ class MiqAeCustomizationController < ApplicationController
 
   def cancel_import
     dialog_import_service.cancel_import(params[:import_file_upload_id])
-    add_flash(_("Service dialog import cancelled"), :info)
+    add_flash(_("Service dialog import cancelled"), :success)
 
     respond_to do |format|
       format.js { render :json => @flash_array.to_json, :status => 200 }
@@ -113,13 +114,13 @@ class MiqAeCustomizationController < ApplicationController
   end
 
   def export_service_dialogs
-    if params[:service_dialogs]
+    if params[:service_dialogs].present?
       dialogs = Dialog.where(:id => params[:service_dialogs])
       dialog_yaml = DialogYamlSerializer.new.serialize(dialogs)
       timestamp = format_timezone(Time.current, Time.zone, "export_filename")
       send_data(dialog_yaml, :filename => "dialog_export_#{timestamp}.yml")
     else
-      add_flash(_("At least %{num} %{model} must be selected for %{action}") % {:num => 1, :model => "item", :action => "export"}, :error)
+      add_flash(_("At least 1 item must be selected for export"), :error)
       @sb[:flash_msg] = @flash_array
       redirect_to :action => :explorer
     end
@@ -137,51 +138,9 @@ class MiqAeCustomizationController < ApplicationController
     @flash_array = @sb[:flash_msg] unless @sb[:flash_msg].blank?
     @explorer = true
     build_resolve_screen
-    self.x_active_tree ||= 'old_dialogs_tree'
-    self.x_active_accord ||= 'old_dialogs'
-    if x_active_tree == :dialog_edit_tree ||
-       x_active_tree == :automate_tree && x_active_accord == :dialogs
-      self.x_active_accord = 'dialogs'
-      self.x_active_tree   = 'dialogs_tree'
-    end
-    @sb[:active_node] ||= {}
-    @sb[:active_node][:ab_tree] ||= "root"
-    @sb[:active_node][:old_dialogs_tree] ||= "root"
-    @sb[:active_node][:dialogs_tree] ||= "root"
-    @sb[:active_node][:dialog_import_export_tree] ||= "root"
 
-    @trees = []
-    @accords = []
+    build_accordions_and_trees
 
-    @trees << old_dialogs_build_tree
-    @accords << {
-      :name      => "old_dialogs",
-      :title     => "Provisioning Dialogs",
-      :container => "old_dialogs_accord"
-    }
-
-    @trees << dialog_build_tree
-    @accords << {
-      :name      => "dialogs",
-      :title     => "Service Dialogs",
-      :container => "dialogs_accord"
-    }
-
-    @trees << ab_build_tree
-    @accords << {
-      :name      => "ab",
-      :title     => "Buttons",
-      :container => "ab_accord"
-    }
-
-    @trees << dialog_import_export_build_tree
-    @accords << {
-      :name      => "dialog_import_export",
-      :title     => "Import/Export",
-      :container => "dialog_import_export_accord"
-    }
-
-    get_node_info
     @collapse_c_cell = true if (x_active_tree == :old_dialogs_tree &&
         x_node == "root") || x_active_tree == :ab_tree
     @lastaction = "automate_button"
@@ -230,6 +189,38 @@ class MiqAeCustomizationController < ApplicationController
 
   private
 
+  def features
+    [{:role     => "old_dialogs_accord",
+      :role_any => true,
+      :name     => :old_dialogs,
+      :title    => _("Provisioning Dialogs")},
+
+     {:role     => "dialog_accord",
+      :role_any => true,
+      :name     => :dialogs,
+      :title    => _("Service Dialogs")},
+
+     {:role     => "ab_buttons_accord",
+      :role_any => true,
+      :name     => :ab,
+      :title    => _("Buttons")},
+
+     {:role     => "miq_ae_class_import_export",
+      :name     => :dialog_import_export,
+      :title    => _("Import/Export")},
+    ].map do |hsh|
+      ApplicationController::Feature.new_with_hash(hsh)
+    end
+  end
+
+  def set_active_elements(feature)
+    if feature
+      self.x_active_tree ||= feature.tree_list_name
+      self.x_active_accord ||= feature.accord_name
+    end
+    get_node_info
+  end
+
   def dialog_import_service
     @dialog_import_service ||= DialogImportService.new
   end
@@ -249,15 +240,7 @@ class MiqAeCustomizationController < ApplicationController
     presenter = ExplorerPresenter.new(:active_tree => x_active_tree)
 
     r = proc { |opts| render_to_string(opts) }
-    trees.each do |tree_name, tree|
-      presenter[:replace_partials]["#{tree_name}_tree_div".to_sym] = r[
-          :partial => "shared/tree",
-          :locals  => {
-            :tree => tree,
-            :name => tree.name
-          }
-      ] if tree
-    end
+    replace_trees_by_presenter(presenter, trees)
     presenter[:osf_node] = x_node unless @in_a_form
 
     if ['dialog_edit', 'dialog_copy'].include?(params[:pressed])
@@ -302,7 +285,7 @@ class MiqAeCustomizationController < ApplicationController
     elsif x_active_tree == :dialog_import_export_tree
       name_sorted_dialogs = Dialog.all.sort_by { |dialog| dialog.name.downcase }
       @dialog_exports = name_sorted_dialogs.collect { |dialog| [dialog.name, dialog.id] }
-      @right_cell_text = "Service Dialog Import / Export"
+      @right_cell_text = _("Service Dialog Import / Export")
     else
       old_dialogs_get_node_info(node)
     end
@@ -312,9 +295,8 @@ class MiqAeCustomizationController < ApplicationController
     if @pages || @in_a_form
       if @pages
         @ajax_paging_buttons = true # FIXME: this should not be done this way
-        presenter[:update_partials][:paging_div] = render_proc[:partial => 'layouts/x_pagingcontrols']
-        presenter[:set_visible_elements][:form_buttons_div] = false
-        presenter[:set_visible_elements][:pc_div_1] = true
+        presenter.update(:paging_div, render_proc[:partial => 'layouts/x_pagingcontrols'])
+        presenter.hide(:form_buttons_div).show(:pc_div_1)
       elsif @in_a_form && @sb[:action]
         action_url = case x_active_tree
                      when :old_dialogs_tree then 'old_dialogs_update'
@@ -334,13 +316,12 @@ class MiqAeCustomizationController < ApplicationController
           :serialize    => @sb[:action].starts_with?('old_dialogs_'),
           :multi_record => @sb[:action] == 'ab_group_reorder',
         }
-        presenter[:update_partials][:form_buttons_div] = render_proc[:partial => "layouts/x_edit_buttons", :locals => locals]
-        presenter[:set_visible_elements][:pc_div_1] = false
-        presenter[:set_visible_elements][:form_buttons_div] = true
+        presenter.update(:form_buttons_div, render_proc[:partial => "layouts/x_edit_buttons", :locals => locals])
+        presenter.hide(:pc_div_1).show(:form_buttons_div)
       end
-      presenter[:set_visible_elements][:paging_div] = true
+      presenter.show(:paging_div)
     else
-      presenter[:set_visible_elements][:paging_div] = false
+      presenter.hide(:paging_div)
     end
   end
 
@@ -356,21 +337,20 @@ class MiqAeCustomizationController < ApplicationController
       if x_active_tree == :dialog_edit_tree && @in_a_form
         nodes = x_node.split('_')
         if nodes.length == 1 && @sb[:node_typ].blank?
-          @sb[:txt] = "Dialog"
+          @sb[:txt] = _("Dialog")
         elsif (nodes.length == 2 && @sb[:node_typ] != "box") || (nodes.length == 1 && @sb[:node_typ] == "tab")
-          @sb[:txt] = "Tab"
+          @sb[:txt] = _("Tab")
         elsif (nodes.length == 3 && @sb[:node_typ] != "element") || (nodes.length == 2 && @sb[:node_typ] == "box")
-          @sb[:txt] = "Box"
+          @sb[:txt] = _("Box")
         elsif nodes.length == 4 || (nodes.length == 3 && @sb[:node_typ] == "element")
-          @sb[:txt] = "Element"
+          @sb[:txt] = _("Element")
         end
         c_tb = build_toolbar(center_toolbar_filename)
       end
     end
 
-    presenter[:set_visible_elements][:toolbar] = h_tb.present? || c_tb.present?
-    presenter[:reload_toolbars][:history] = h_tb
-    presenter[:reload_toolbars][:center]  = c_tb
+    presenter.set_visibility(h_tb.present? || c_tb.present?, :toolbar)
+    presenter.reload_toolbars(:history => h_tb, :center => c_tb)
   end
 
   def render_proc
@@ -378,12 +358,7 @@ class MiqAeCustomizationController < ApplicationController
   end
 
   def set_miq_record_id(presenter)
-    presenter[:record_id] = determine_miq_record_id
-  end
-
-  def determine_miq_record_id
-    return @record.id if @record && !@in_a_form
-    return @edit[:rec_id] if @edit && @edit[:rec_id] && @in_a_form
+    presenter[:record_id] = determine_record_id_for_presenter
   end
 
   def set_right_cell_text(presenter)
@@ -403,10 +378,8 @@ class MiqAeCustomizationController < ApplicationController
     # TODO: move button from sample dialog to bottom cell
 
     if x_active_tree == :dialogs_tree && @sb[:active_tab] == "sample_tab" && nodetype != "root" && @record.buttons
-      presenter[:update_partials][:form_buttons_div] = render_proc[:partial => "dialog_sample_buttons"]
-      presenter[:set_visible_elements][:pc_div_1]         = false
-      presenter[:set_visible_elements][:form_buttons_div] = false
-      presenter[:set_visible_elements][:paging_div] = true
+      presenter.update(:form_buttons_div, render_proc[:partial => "dialog_sample_buttons"])
+      presenter.hide(:pc_div_1, :form_buttons_div).show(:paging_div)
     end
   end
 
@@ -420,53 +393,61 @@ class MiqAeCustomizationController < ApplicationController
     elsif x_active_tree == :old_dialogs_tree
       setup_presenter_for_old_dialogs_tree(nodetype, presenter)
     elsif x_active_tree == :dialog_import_export_tree
-      presenter[:update_partials][:main_div] = render_proc[:partial => "dialog_import_export"]
+      presenter.update(:main_div, render_proc[:partial => "dialog_import_export"])
     end
   end
 
   def setup_presenter_for_ab_tree(nodetype, presenter)
     case nodetype
     when 'button_edit'
-      @right_cell_text = @custom_button && @custom_button.id ?
-        _("Editing %{model} \"%{name}\"") % {:name => @custom_button.name, :model => ui_lookup(:model => "CustomButton")} :
-        _("Adding a new %s") % ui_lookup(:model => "CustomButton")
+      @right_cell_text = if @custom_button && @custom_button.id
+                           _("Editing %{model} \"%{name}\"") % {:name  => @custom_button.name,
+                                                                :model => ui_lookup(:model => "CustomButton")}
+                         else
+                           _("Adding a new %{model}") % {:model => ui_lookup(:model => "CustomButton")}
+                         end
     when 'group_edit'
-      @right_cell_text = @custom_button_set && @custom_button_set.id ?
-        _("Editing %{model} \"%{name}\"") % {:name => @custom_button_set.name, :model => ui_lookup(:model => "CustomButtonSet")} :
-        _("Adding a new %s") % ui_lookup(:model => "CustomButtonSet")
+      @right_cell_text = if @custom_button_set && @custom_button_set.id
+                           _("Editing %{model} \"%{name}\"") % {:name  => @custom_button_set.name,
+                                                                :model => ui_lookup(:model => "CustomButtonSet")}
+                         else
+                           _("Adding a new %{model}") % {:model => ui_lookup(:model => "CustomButtonSet")}
+                         end
     when 'group_reorder'
-      @right_cell_text = _("%s Group Reorder") % ui_lookup(:models => "CustomButton")
+      @right_cell_text = _("%{models} Group Reorder") % {:models => ui_lookup(:models => "CustomButton")}
     end
 
     # Replace right side with based on selected tree node type
-    presenter[:update_partials][:main_div] = render_proc[:partial => "shared/buttons/ab_list"]
+    presenter.update(:main_div, render_proc[:partial => "shared/buttons/ab_list"])
     presenter[:lock_unlock_trees][:ab_tree] = !!@edit
   end
 
   def setup_presenter_for_dialog_edit_tree(presenter)
-    presenter[:update_partials][:main_div] = render_proc[:partial => "dialog_form"]
+    presenter.update(:main_div, render_proc[:partial => "dialog_form"])
     presenter[:cell_a_view] = 'custom'
 
-    @right_cell_text = @record.id.blank? ?
-      _("Adding a new %s") % ui_lookup(:model => "Dialog") :
-      _("Editing %{model} \"%{name}\"") % {:name => @record.label.to_s, :model => "#{ui_lookup(:model => "Dialog")}"}
-    @right_cell_text << " [#{@sb[:txt]} Information]"
+    @right_cell_text = if @record.id.blank?
+                         _("Adding a new %{model}") % {:model => ui_lookup(:model => "Dialog")}
+                       else
+                         _("Editing %{model} \"%{name}\"") % {:name  => @record.label.to_s,
+                                                              :model => ui_lookup(:model => "Dialog")}
+                       end
+    @right_cell_text << _(" [%{text} Information]") % {:text => @sb[:txt]}
 
     # url to be used in url in miqDropComplete method
     presenter[:miq_widget_dd_url] = 'miq_ae_customization/dialog_res_reorder'
     presenter[:init_dashboard] = true
-    presenter[:update_partials][:custom_left_cell] = render_proc[:partial => "dialog_edit_tree"]
-    presenter[:set_visible_elements][:custom_left_cell] = true
-    presenter[:set_visible_elements][:default_left_cell] = false
+    presenter.update(:custom_left_cell, render_proc[:partial => "dialog_edit_tree"])
+    presenter.show(:custom_left_cell).hide(:default_left_cell)
   end
 
   def setup_presenter_for_dialogs_tree(nodetype, presenter)
     nodes = nodetype.split("_")
     if nodetype == "root"
-      presenter[:update_partials][:main_div] = render_proc[:partial => "layouts/x_gtl"]
+      presenter.update(:main_div, render_proc[:partial => "layouts/x_gtl"])
     else
       @sb[:active_tab] = params[:tab_id] ? params[:tab_id] : "sample_tab"
-      presenter[:update_partials][:main_div] = render_proc[:partial => "dialog_details"]
+      presenter.update(:main_div, render_proc[:partial => "dialog_details"])
     end
 
     presenter[:build_calendar] = true
@@ -475,21 +456,28 @@ class MiqAeCustomizationController < ApplicationController
     if %w(save reset).include?(params[:button]) && is_browser_ie?
       presenter[:extra_js] << "ManageIQ.oneTransition.IEButtonPressed = true"
     end
-    presenter[:set_visible_elements][:custom_left_cell] = false
-    presenter[:set_visible_elements][:default_left_cell] = true
+    presenter.hide(:custom_left_cell).show(:default_left_cell)
   end
 
   def setup_presenter_for_old_dialogs_tree(nodetype, presenter)
     nodes = nodetype.split("_")
     if nodetype == "root" || nodes[0].split('-').first != "odg"
       partial = nodetype == 'root' ? 'old_dialogs_list' : 'layouts/x_gtl'
-      presenter[:update_partials][:main_div] = render_proc[:partial => partial]
+      presenter.update(:main_div, render_proc[:partial => partial])
     else
-      presenter[:update_partials][:main_div] = render_proc[:partial => 'old_dialogs_details']
+      presenter.update(:main_div, render_proc[:partial => 'old_dialogs_details'])
       if @dialog.id.blank? && !@dialog.dialog_type
-        @right_cell_text = _("Adding a new %s") % ui_lookup(:model => "MiqDialog")
+        @right_cell_text = _("Adding a new %{model}") % {:model => ui_lookup(:model => "MiqDialog")}
       else
-        title = @edit ? (params[:typ] == "copy" ? "Copy " : "Editing ") : ""
+        title = if @edit
+                  if params[:typ] == "copy"
+                    _("Copy ")
+                  else
+                    _("Editing ")
+                  end
+                else
+                  ""
+                end
         @right_cell_text = _("Editing %{model} \"%{name}\"") % {:name => @dialog.description.gsub(/'/, "\\'"), :model => "#{title} #{ui_lookup(:model => "MiqDialog")}"}
       end
 
@@ -517,7 +505,7 @@ class MiqAeCustomizationController < ApplicationController
   def group_button_add_save(typ)
     # override for AE Customization Buttons - the label doesn't say Description
     if @edit[:new][:description].blank?
-      render_flash(_("%s is required") % "Button Group Hover Text", :error)
+      render_flash(_("Button Group Hover Text is required"), :error)
       return
     end
 

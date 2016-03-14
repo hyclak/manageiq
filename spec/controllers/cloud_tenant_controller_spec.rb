@@ -1,22 +1,22 @@
-require "spec_helper"
-
 describe CloudTenantController do
   context "#button" do
     before(:each) do
       set_user_privileges
       EvmSpecHelper.create_guid_miq_server_zone
+
+      ApplicationController.handle_exceptions = true
     end
 
     it "when Instance Retire button is pressed" do
-      controller.should_receive(:retirevms).once
-      post :button, :pressed => "instance_retire", :format => :js
-      controller.send(:flash_errors?).should_not be_true
+      expect(controller).to receive(:retirevms).once
+      post :button, :params => { :pressed => "instance_retire", :format => :js }
+      expect(controller.send(:flash_errors?)).not_to be_truthy
     end
 
     it "when Instance Tag is pressed" do
-      controller.should_receive(:tag).with(VmOrTemplate)
-      post :button, :pressed => "instance_tag", :format => :js
-      controller.send(:flash_errors?).should_not be_true
+      expect(controller).to receive(:tag).with(VmOrTemplate)
+      post :button, :params => { :pressed => "instance_tag", :format => :js }
+      expect(controller.send(:flash_errors?)).not_to be_truthy
     end
   end
 
@@ -26,7 +26,7 @@ describe CloudTenantController do
       @ct = FactoryGirl.create(:cloud_tenant, :name => "cloud-tenant-01")
       user = FactoryGirl.create(:user, :userid => 'testuser')
       set_user_privileges user
-      @ct.stub(:tagged_with).with(:cat => user.userid).and_return("my tags")
+      allow(@ct).to receive(:tagged_with).with(:cat => user.userid).and_return("my tags")
       classification = FactoryGirl.create(:classification, :name => "department", :description => "D    epartment")
       @tag1 = FactoryGirl.create(:classification_tag,
                                  :name   => "tag1",
@@ -34,7 +34,7 @@ describe CloudTenantController do
       @tag2 = FactoryGirl.create(:classification_tag,
                                  :name   => "tag2",
                                  :parent => classification)
-      Classification.stub(:find_assigned_entries).with(@ct).and_return([@tag1, @tag2])
+      allow(Classification).to receive(:find_assigned_entries).with(@ct).and_return([@tag1, @tag2])
       session[:tag_db] = "CloudTenant"
       edit = {
         :key        => "CloudTenant_edit_tags__#{@ct.id}",
@@ -52,22 +52,41 @@ describe CloudTenantController do
     end
 
     it "builds tagging screen" do
-      post :button, :pressed => "cloud_tenant_tag", :format => :js, :id => @ct.id
-      assigns(:flash_array).should be_nil
+      post :button, :params => { :pressed => "cloud_tenant_tag", :format => :js, :id => @ct.id }
+      expect(assigns(:flash_array)).to be_nil
     end
 
     it "cancels tags edit" do
       session[:breadcrumbs] = [{:url => "cloud_tenant/show/#{@ct.id}"}, 'placeholder']
-      post :tagging_edit, :button => "cancel", :format => :js, :id => @ct.id
-      assigns(:flash_array).first[:message].should include("was cancelled by the user")
-      assigns(:edit).should be_nil
+      post :tagging_edit, :params => { :button => "cancel", :format => :js, :id => @ct.id }
+      expect(assigns(:flash_array).first[:message]).to include("was cancelled by the user")
+      expect(assigns(:edit)).to be_nil
     end
 
     it "save tags" do
       session[:breadcrumbs] = [{:url => "cloud_tenant/show/#{@ct.id}"}, 'placeholder']
-      post :tagging_edit, :button => "save", :format => :js, :id => @ct.id
-      assigns(:flash_array).first[:message].should include("Tag edits were successfully saved")
-      assigns(:edit).should be_nil
+      post :tagging_edit, :params => { :button => "save", :format => :js, :id => @ct.id }
+      expect(assigns(:flash_array).first[:message]).to include("Tag edits were successfully saved")
+      expect(assigns(:edit)).to be_nil
+    end
+  end
+
+  describe "#show" do
+    before do
+      EvmSpecHelper.create_guid_miq_server_zone
+      @tenant = FactoryGirl.create(:cloud_tenant)
+      @user = FactoryGirl.create(:user)
+      login_as @user
+    end
+
+    subject do
+      get :show, :params => {:id => @tenant.id}
+    end
+
+    context "render listnav partial" do
+      render_views
+      it { is_expected.to have_http_status 200 }
+      it { is_expected.to render_template(:partial => "layouts/listnav/_cloud_tenant") }
     end
   end
 end

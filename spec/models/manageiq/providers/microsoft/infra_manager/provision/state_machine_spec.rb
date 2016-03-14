@@ -1,5 +1,3 @@
-require "spec_helper"
-
 describe ManageIQ::Providers::Microsoft::InfraManager::Provision do
   context "::StateMachine" do
     before do
@@ -18,50 +16,50 @@ describe ManageIQ::Providers::Microsoft::InfraManager::Provision do
         :status      => 'Ok',
         :options     => options)
 
-      @task.stub(:miq_request => double("MiqRequest").as_null_object)
-      @task.stub(:dest_host => @host)
-      @task.stub(:dest_storage => @storage)
+      allow(@task).to receive_messages(:miq_request => double("MiqRequest").as_null_object)
+      allow(@task).to receive_messages(:dest_host => @host)
+      allow(@task).to receive_messages(:dest_storage => @storage)
     end
 
     it "#create_destination" do
-      @task.should_receive(:determine_placement)
+      expect(@task).to receive(:determine_placement)
       @task.create_destination
     end
 
     it "#determine_placement" do
-      @task.stub(:placement).and_return(@host, @storage)
-      @task.should_receive(:prepare_provision)
+      allow(@task).to receive(:placement).and_return(@host, @storage)
+      expect(@task).to receive(:prepare_provision)
       @task.determine_placement
     end
 
     it "#start_clone_task" do
-      @task.stub(:update_and_notify_parent)
-      @task.stub(:log_clone_options)
-      @task.stub(:start_clone)
+      allow(@task).to receive(:update_and_notify_parent)
+      allow(@task).to receive(:log_clone_options)
+      allow(@task).to receive(:start_clone)
 
-      @task.should_receive(:poll_clone_complete)
+      expect(@task).to receive(:poll_clone_complete)
       @task.start_clone_task
     end
 
     context "#poll_clone_complete" do
       it "cloning" do
-        @task.should_receive(:clone_complete?).and_return(false)
-        @task.should_receive(:requeue_phase)
+        expect(@task).to receive(:clone_complete?).and_return(false)
+        expect(@task).to receive(:requeue_phase)
         @task.poll_clone_complete
       end
 
       it "clone complete" do
-        @task.should_receive(:clone_complete?).and_return(true)
-        EmsRefresh.should_receive(:queue_refresh)
-        @task.should_receive(:poll_destination_in_vmdb)
+        expect(@task).to receive(:clone_complete?).and_return(true)
+        expect(EmsRefresh).to receive(:queue_refresh)
+        expect(@task).to receive(:poll_destination_in_vmdb)
 
         @task.poll_clone_complete
       end
     end
 
     it "#customize_destination" do
-      @task.stub(:update_and_notify_parent)
-      @task.should_receive(:autostart_destination)
+      allow(@task).to receive(:update_and_notify_parent)
+      expect(@task).to receive(:autostart_destination)
       @task.customize_destination
     end
   end

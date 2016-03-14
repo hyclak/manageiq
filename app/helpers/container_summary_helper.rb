@@ -51,6 +51,14 @@ module ContainerSummaryHelper
     textual_link(@record.container_node)
   end
 
+  def textual_container_builds
+    textual_link(@record.container_builds)
+  end
+
+  def textual_container_build
+    textual_link(@record.container_build)
+  end
+
   def textual_group_container_labels
     textual_key_value_group(@record.labels.to_a)
   end
@@ -71,9 +79,21 @@ module ContainerSummaryHelper
     textual_link(@record.container_images)
   end
 
+  def textual_name
+    @record.name
+  end
+
+  def textual_resource_version
+    @record.resource_version
+  end
+
+  def textual_creation_timestamp
+    format_timezone(@record.ems_created_on)
+  end
+
   def textual_guest_applications
     textual_link(@record.guest_applications, :feature => "container_image_show",
-                                             :label   => "Packages",
+                                             :label   => _("Packages"),
                                              :link    => url_for(:controller => controller.controller_name,
                                                                  :action     => 'guest_applications',
                                                                  :id         => @record,
@@ -82,8 +102,7 @@ module ContainerSummaryHelper
 
   def textual_container_image_registry
     object = @record.container_image_registry
-
-    if object.nil?
+    if object.nil? && @record.respond_to?(:display_registry)
       {
         :label => ui_lookup(:model => ContainerImageRegistry.name),
         :image => "container_image_registry_unknown",
@@ -98,8 +117,20 @@ module ContainerSummaryHelper
     textual_link(@record.container_image_registries)
   end
 
+  def textual_persistent_volume
+    textual_link(@record.persistent_volume)
+  end
+
+  def textual_persistent_volumes
+    textual_link(@record.persistent_volumes)
+  end
+
+  def textual_parent
+    textual_link(@record.parent)
+  end
+
   def textual_tags
-    label = "#{session[:customer_name]} Tags"
+    label = _("%{name} Tags") % {:name => session[:customer_name]}
     h = {:label => label}
     tags = session[:assigned_filters]
     if tags.present?
@@ -112,7 +143,7 @@ module ContainerSummaryHelper
       end
     else
       h[:image] = "smarttag"
-      h[:value] = "No #{label} have been assigned"
+      h[:value] = _("No %{label} have been assigned") % {:label => label}
     end
 
     h

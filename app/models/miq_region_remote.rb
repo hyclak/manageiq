@@ -1,4 +1,4 @@
-class MiqRegionRemote < ActiveRecord::Base
+class MiqRegionRemote < ApplicationRecord
   def self.db_ping(host, port, username, password, database = nil, adapter = nil)
     database, adapter = prepare_default_fields(database, adapter)
     with_remote_connection(host, port, username, password, database, adapter) do |conn|
@@ -11,21 +11,7 @@ class MiqRegionRemote < ActiveRecord::Base
 
     with_remote_connection(host, port, username, password, database, adapter) do |conn|
       _log.info "Clearing region [#{region}] from remote host [#{host}]..."
-
-      tables ||= conn.tables.reject { |t| t =~ /^schema_migrations|^rr/ }.sort
-      tables.each do |t|
-        pk = conn.primary_key(t)
-        if pk
-          conditions = sanitize_conditions(region_to_conditions(region, pk))
-        else
-          id_cols = connection.columns(t).select { |c| c.name.ends_with?("_id") }
-          conditions = id_cols.collect { |c| "(#{sanitize_conditions(region_to_conditions(region, c.name))})" }.join(" OR ")
-        end
-
-        rows = conn.delete("DELETE FROM #{t} WHERE #{conditions}")
-        _log.info "Cleared [#{rows}] rows from table [#{t}]"
-      end
-
+      MiqRegion.destroy_region(conn, region, tables)
       _log.info "Clearing region [#{region}] from remote host [#{host}]...Complete"
     end
   end
@@ -84,9 +70,9 @@ class MiqRegionRemote < ActiveRecord::Base
 
   def self.prepare_default_fields(database, adapter)
     if database.nil? || adapter.nil?
-      db_conf = VMDB::Config.new("database").config[Rails.env.to_sym]
-      database ||= db_conf[:database]
-      adapter ||= db_conf[:adapter]
+      db_conf = Rails.configuration.database_configuration[Rails.env]
+      database ||= db_conf["database"]
+      adapter  ||= db_conf["adapter"]
     end
     return database, adapter
   end
@@ -103,7 +89,7 @@ class MiqRegionRemote < ActiveRecord::Base
     host = host.to_s.strip
     raise ArgumentError, "host cannot be blank" if host.blank?
     if [nil, "", "localhost", "localhost.localdomain", "127.0.0.1", "0.0.0.0"].include?(host)
-      local_database = VMDB::Config.new("database").config.fetch_path(Rails.env.to_sym, :database).to_s.strip
+      local_database = Rails.configuration.database_configuration.fetch_path(Rails.env, "database").to_s.strip
       raise ArgumentError, "host cannot be set to localhost if database matches the local database" if database == local_database
     end
 

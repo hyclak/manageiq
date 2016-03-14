@@ -1,4 +1,4 @@
-class MiqUserRole < ActiveRecord::Base
+class MiqUserRole < ApplicationRecord
   SUPER_ADMIN_ROLE_NAME = "EvmRole-super_administrator"
   ADMIN_ROLE_NAME       = "EvmRole-administrator"
   DEFAULT_TENANT_ROLE_NAME = "EvmRole-tenant_administrator"
@@ -20,7 +20,6 @@ class MiqUserRole < ActiveRecord::Base
 
   include ReportableMixin
 
-  FIXTURE_DIR  = File.join(Rails.root, "db/fixtures")
   FIXTURE_PATH = File.join(FIXTURE_DIR, table_name)
   FIXTURE_YAML = "#{FIXTURE_PATH}.yml"
 

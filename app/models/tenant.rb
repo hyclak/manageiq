@@ -1,12 +1,13 @@
 require 'ancestry'
 
-class Tenant < ActiveRecord::Base
+class Tenant < ApplicationRecord
   HARDCODED_LOGO = "custom_logo.png"
   HARDCODED_LOGIN_LOGO = "custom_login_logo.png"
   DEFAULT_URL = nil
 
   include ReportableMixin
   include ActiveVmAggregationMixin
+
   acts_as_miq_taggable
 
   default_value_for :name,        "My Company"
@@ -19,8 +20,8 @@ class Tenant < ActiveRecord::Base
   has_many :providers
   has_many :ext_management_systems
   has_many :vm_or_templates
-  has_many :vms
-  has_many :miq_templates
+  has_many :vms, :inverse_of => :tenant
+  has_many :miq_templates, :inverse_of => :tenant
   has_many :service_template_catalogs
   has_many :service_templates
 
@@ -32,7 +33,7 @@ class Tenant < ActiveRecord::Base
   has_many :miq_request_tasks, :dependent => :destroy
   has_many :services, :dependent => :destroy
 
-  belongs_to :default_miq_group, :class_name => "MiqGroup", :dependent => :destroy, :inverse_of => :tenant
+  belongs_to :default_miq_group, :class_name => "MiqGroup", :dependent => :destroy
 
   # FUTURE: /uploads/tenant/:id/logos/:basename.:extension # may want style
   has_attached_file :logo,
@@ -64,6 +65,28 @@ class Tenant < ActiveRecord::Base
 
   before_save :nil_blanks
   after_create :create_tenant_group
+  before_destroy :ensure_can_be_destroyed
+
+  def self.scope_by_tenant?
+    true
+  end
+
+  def self.with_current_tenant
+    current_tenant = User.current_user.current_tenant
+    where(:id => current_tenant.id)
+  end
+
+  def self.tenant_id_clause(user_or_group)
+    strategy = Rbac.accessible_tenant_ids_strategy(self)
+    tenant = user_or_group.try(:current_tenant)
+    return [] if tenant.root?
+
+    tenant_ids = tenant.accessible_tenant_ids(strategy)
+
+    return if tenant_ids.empty?
+
+    {table_name => {:id => tenant_ids}}
+  end
 
   def all_subtenants
     self.class.descendants_of(self).where(:divisible => true)
@@ -213,6 +236,10 @@ class Tenant < ActiveRecord::Base
     ae_domains.where(:system => false).order('priority DESC')
   end
 
+  def any_editable_domains?
+    ae_domains.where(:system => false).count > 0
+  end
+
   # The default tenant is the tenant to be used when
   # the url does not map to a known domain or subdomain
   #
@@ -234,6 +261,29 @@ class Tenant < ActiveRecord::Base
   def self.seed
     root_tenant || create!(:use_config_for_attributes => true) do |_|
       _log.info("Creating root tenant")
+    end
+  end
+
+  # tenant
+  #   tenant2
+  #     project4 (!divisible)
+  #   tenant3
+  # @return [Array(Array<Array(String, Numeric)>, Array<Array(String, Numeric)>) ] tenants and projects
+  #   e.g.:
+  #   [
+  #     [["tenant", 1], ["tenant/tenant2", 2]], ["tenant/tenant3", 3]]
+  #     [["tenant/tenant2/project4", 4]]
+  #   ]
+  def self.tenant_and_project_names
+    tenants_and_projects = Tenant.select(:id, :ancestry, :divisible, :use_config_for_attributes, :name)
+                           .to_a.sort_by { |t| [t.ancestry || "", t.name] }
+    tenants_by_id = tenants_and_projects.index_by(&:id)
+
+    tenants_and_projects.partition(&:divisible?).map do |tenants|
+      tenants.map do |t|
+        all_names = (t.ancestor_ids + [t.id]).map { |tid| tenants_by_id[tid] }.map(&:name)
+        [all_names.join("."), t.id]
+      end.sort_by(&:first)
     end
   end
 
@@ -274,6 +324,10 @@ class Tenant < ActiveRecord::Base
   def create_tenant_group
     update_attributes!(:default_miq_group => MiqGroup.create_tenant_group(self)) unless default_miq_group_id
     self
+  end
+
+  def ensure_can_be_destroyed
+    raise "A tenant with groups associated cannot be deleted." if miq_groups.non_tenant_groups.exists?
   end
 
   def validate_default_tenant

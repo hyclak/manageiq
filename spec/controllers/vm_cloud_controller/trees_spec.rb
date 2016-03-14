@@ -1,5 +1,3 @@
-require "spec_helper"
-
 describe VmCloudController do
   render_views
   before :each do
@@ -21,9 +19,9 @@ describe VmCloudController do
         session[:settings] = {}
         seed_session_trees('vm_cloud', tree.to_sym)
 
-        post :tree_select, :id => 'root', :format => :js
+        post :tree_select, :params => { :id => 'root', :format => :js }
 
-        response.should render_template('layouts/gtl/_list')
+        expect(response).to render_template('layouts/gtl/_list')
         expect(response.status).to eq(200)
       end
     end
@@ -34,10 +32,10 @@ describe VmCloudController do
       session[:settings] = {}
       seed_session_trees('vm_cloud', 'instances_tree')
 
-      post :tree_select, :id => "v-#{instance.compressed_id}", :format => :js
+      post :tree_select, :params => { :id => "v-#{instance.compressed_id}", :format => :js }
 
-      response.should render_template('vm_cloud/_main')
-      response.should render_template('shared/summary/_textual_tags')
+      expect(response).to render_template('vm_cloud/_main')
+      expect(response).to render_template('shared/summary/_textual_tags')
       expect(response.status).to eq(200)
     end
   end

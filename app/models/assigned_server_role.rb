@@ -1,4 +1,4 @@
-class AssignedServerRole < ActiveRecord::Base
+class AssignedServerRole < ApplicationRecord
   belongs_to :miq_server
   belongs_to :server_role
 
@@ -13,6 +13,7 @@ class AssignedServerRole < ActiveRecord::Base
 
   def massage_active_field
     self.active = false if active.nil?
+    nil
   end
 
   delegate :name, :to => :server_role

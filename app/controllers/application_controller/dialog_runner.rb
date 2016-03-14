@@ -26,7 +26,7 @@ module ApplicationController::DialogRunner
       begin
         result = @edit[:wf].submit_request
       rescue StandardError => bang
-        add_flash(_("Error during '%s': ") % "Provisioning" << bang.message, :error)
+        add_flash(_("Error during 'Provisioning': %{error_message}") % {:error_message => bang.message}, :error)
         render :update do |page|                    # Use RJS to update the display
           page.replace("flash_msg_div", :partial => "layouts/flash_msg")
         end
@@ -40,21 +40,17 @@ module ApplicationController::DialogRunner
             page.replace("flash_msg_div", :partial => "layouts/flash_msg")
           end
         else
-          flash = _("%s Request was Submitted") % "Order"
+          flash = _("Order Request was Submitted")
           if role_allows(:feature => "miq_request_show_list", :any => true)
             @sb[:action] = @edit = nil
             @in_a_form = false
             if session[:edit][:explorer]
               add_flash(flash)
-              if request.parameters[:controller] == "catalog"
-                # only do this Service PRovision requests
-                render :update do |page|
-                  page.redirect_to :controller => 'miq_request',
-                                   :action     => 'show_list',
-                                   :flash_msg  => flash  # redirect to miq_request show_list screen
-                end
-              else
-                replace_right_cell
+              # redirect to miq_request show_list screen
+              render :update do |page|
+                page.redirect_to :controller => 'miq_request',
+                                 :action     => 'show_list',
+                                 :flash_msg  => flash
               end
             else
               render :update do |page|
@@ -81,7 +77,7 @@ module ApplicationController::DialogRunner
       end
     else
       return unless load_edit("dialog_edit__#{params[:id]}", "replace_cell__explorer")
-      add_flash(_("%s Button not yet implemented") % "#{params[:button].capitalize}", :error)
+      add_flash(_("%{button_name} Button not yet implemented") % {:button_name => params[:button].capitalize}, :error)
       render :update do |page|                    # Use RJS to update the display
         page.replace("flash_msg_div", :partial => "layouts/flash_msg")
       end
@@ -101,11 +97,6 @@ module ApplicationController::DialogRunner
             params.each do |p|
               if p[0] == field.name
                 url = url_for(:action => 'dialog_field_changed', :id => "#{@edit[:rec_id] || "new"}")
-
-                if field.type.include?("TagControl") && field.single_value? && field.required
-                  category_tags = DialogFieldTagControl.category_tags(field.category).map { |cat| [cat[:description], cat[:id]] }
-                  page.replace("#{field.name}", :text => "#{select_tag(field.name, options_for_select(category_tags, p[1]), 'data-miq_sparkle_on' => true, 'data-miq_sparkle_off' => true, 'data-miq_observe' => {:url => url}.to_json)}")
-                end
               end
             end
           end

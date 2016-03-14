@@ -1,8 +1,6 @@
 require 'awesome_spawn'
 
-class MiqAction < ActiveRecord::Base
-  default_scope { where conditions_for_my_region_default_scope }
-
+class MiqAction < ApplicationRecord
   include UuidMixin
   before_validation :default_name_to_guid, :on => :create
   before_destroy    :check_policy_contents_empty_on_destroy
@@ -41,8 +39,6 @@ class MiqAction < ActiveRecord::Base
 
   # Add a instance method to store the sequence and synchronous values from the policy contents
   attr_accessor :sequence, :synchronous, :reserved
-
-  FIXTURE_DIR = Rails.root.join("db/fixtures")
 
   SCRIPT_DIR = Rails.root.join("product/conditions/scripts").expand_path
   SCRIPT_DIR.mkpath
@@ -728,7 +724,7 @@ class MiqAction < ActiveRecord::Base
 
     has_ch = false
     snap   = nil
-    rec.snapshots.all(:order => "create_time DESC").each do |s|
+    rec.snapshots.order("create_time DESC").each do |s|
       if s.is_a_type?(:consolidate_helper)
         has_ch = true
         next
@@ -879,9 +875,15 @@ class MiqAction < ActiveRecord::Base
     automate_attrs[:request] = action.options[:ae_request]
     MiqAeEngine.set_automation_attributes_from_objects([inputs[:policy], inputs[:ems_event]], automate_attrs)
 
+    user = rec.tenant_identity
+    raise "A user is needed to raise an action to automate. [#{rec.class.name}] id:[#{rec.id}] action: [#{action.description}]" unless user
+
     args = {
       :object_type      => rec.class.base_class.name,
       :object_id        => rec.id,
+      :user_id          => user.id,
+      :miq_group_id     => user.current_group.id,
+      :tenant_id        => user.current_tenant.id,
       :attrs            => automate_attrs,
       :instance_name    => "REQUEST",
       :automate_message => action.options[:ae_message] || "create",

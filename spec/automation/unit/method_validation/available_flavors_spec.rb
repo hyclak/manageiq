@@ -1,5 +1,3 @@
-require 'spec_helper'
-
 describe "Available_Flavors Method Validation" do
   let(:user) { FactoryGirl.create(:user_with_group) }
   let(:default_desc) { "<None>" }
@@ -10,8 +8,8 @@ describe "Available_Flavors Method Validation" do
   context "workspace has no service template" do
     it "provides only default value to the flavor list" do
       ws = MiqAeEngine.instantiate("#{@ins}", user)
-      ws.root["values"].should == {nil => default_desc}
-      ws.root["default_value"].should be_nil
+      expect(ws.root["values"]).to eq(nil => default_desc)
+      expect(ws.root["default_value"]).to be_nil
     end
   end
 
@@ -20,8 +18,8 @@ describe "Available_Flavors Method Validation" do
 
     it "provides only default value to the flavor list" do
       ws = MiqAeEngine.instantiate("#{@ins}?ServiceTemplate::service_template=#{service_template.id}", user)
-      ws.root["values"].should == {nil => default_desc}
-      ws.root["default_value"].should be_nil
+      expect(ws.root["values"]).to eq(nil => default_desc)
+      expect(ws.root["default_value"]).to be_nil
     end
   end
 
@@ -42,18 +40,18 @@ describe "Available_Flavors Method Validation" do
 
     it "finds all the flavors and populates the list" do
       ws = MiqAeEngine.instantiate("#{@ins}?ServiceTemplate::service_template=#{service_template.id}", user)
-      ws.root["values"].should include(
+      expect(ws.root["values"]).to include(
         nil           => "<Choose>",
         @flavor1.name => @flavor1.name,
         @flavor2.name => @flavor2.name
       )
-      ws.root["default_value"].should be_nil
+      expect(ws.root["default_value"]).to be_nil
     end
 
     it "provides only default value to the flavor list if orchestration manager does not exist" do
       ws = MiqAeEngine.instantiate("#{@ins}?ServiceTemplate::service_template=#{service_template_no_ems.id}", user)
-      ws.root["values"].should == {nil => default_desc}
-      ws.root["default_value"].should be_nil
+      expect(ws.root["values"]).to eq(nil => default_desc)
+      expect(ws.root["default_value"]).to be_nil
     end
   end
 
@@ -68,18 +66,18 @@ describe "Available_Flavors Method Validation" do
 
     it "finds all the flavors and populates the list" do
       ws = MiqAeEngine.instantiate("#{@ins}?Service::service=#{service.id}", user)
-      ws.root["values"].should include(
+      expect(ws.root["values"]).to include(
         nil           => "<Choose>",
         @flavor1.name => @flavor1.name,
         @flavor2.name => @flavor2.name
       )
-      ws.root["default_value"].should be_nil
+      expect(ws.root["default_value"]).to be_nil
     end
 
     it "provides only default value to the flavor list if orchestration manager does not exist" do
       ws = MiqAeEngine.instantiate("#{@ins}?Service::service=#{service_no_ems.id}", user)
-      ws.root["values"].should == {nil => default_desc}
-      ws.root["default_value"].should be_nil
+      expect(ws.root["values"]).to eq(nil => default_desc)
+      expect(ws.root["default_value"]).to be_nil
     end
   end
 end

@@ -1,5 +1,3 @@
-require "spec_helper"
-
 describe ManageIQ::Providers::Foreman::ConfigurationManager::RefreshParser do
   let(:date1)   { "2014-11-07T20:41:21Z" }
   let(:parser)  { described_class.new }
@@ -125,7 +123,7 @@ describe ManageIQ::Providers::Foreman::ConfigurationManager::RefreshParser do
         :organizations            => organizations,
       )
 
-      expect(result[:needs_provisioning_refresh]).not_to be_true
+      expect(result[:needs_provisioning_refresh]).not_to be_truthy
     end
 
     context "without os flavor" do
@@ -140,7 +138,7 @@ describe ManageIQ::Providers::Foreman::ConfigurationManager::RefreshParser do
           :organizations            => organizations,
         )
 
-        expect(result[:needs_provisioning_refresh]).to be_true
+        expect(result[:needs_provisioning_refresh]).to be_truthy
       end
     end
 

@@ -1,4 +1,4 @@
-class MiqSearch < ActiveRecord::Base
+class MiqSearch < ApplicationRecord
   serialize :options
   serialize :filter
 
@@ -16,14 +16,34 @@ class MiqSearch < ActiveRecord::Base
     read_attribute(:search_type) || "default"
   end
 
-  def search(targets = [], opts = {})
+  def search(opts = {})
     self.options ||= {}
-    Rbac.search(options.merge(:targets => targets, :class => db, :filter => filter).merge(opts))
+    Rbac.search(options.merge(:class => db, :filter => filter).merge(opts))
   end
 
   def filtered(targets, opts = {})
     self.options ||= {}
     Rbac.filtered(targets, options.merge(:class => db, :filter => filter).merge(opts))
+  end
+
+  def self.search(filter_id, klass, opts = {})
+    if filter_id.nil? || filter_id.zero?
+      Rbac.search(opts.merge(:class => klass))
+    else
+      find(filter_id).search(opts)
+    end
+  end
+
+  def self.filtered(filter_id, klass, targets, opts = {})
+    if filter_id.nil? || filter_id.zero?
+      Rbac.filtered(targets, opts.merge(:class => klass))
+    else
+      find(filter_id).filtered(targets, opts)
+    end
+  end
+
+  def self.visible_to_all
+    where("search_type=? or (search_type=? and (search_key is null or search_key<>?))", "global", "default", "_hidden_")
   end
 
   def self.get_expressions_by_model(db)
@@ -34,6 +54,10 @@ class MiqSearch < ActiveRecord::Base
     where(options).each_with_object({}) do |r, hash|
       hash[r.description] = r.id unless r.filter.nil?
     end
+  end
+
+  def self.descriptions
+    Hash[*all.select(:id, :description).flat_map {|x| [x.id.to_s, x.description] }]
   end
 
   FIXTURE_DIR = File.join(Rails.root, "db/fixtures")

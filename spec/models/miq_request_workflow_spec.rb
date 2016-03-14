@@ -1,7 +1,8 @@
-require "spec_helper"
-
 describe MiqRequestWorkflow do
   let(:workflow) { FactoryGirl.build(:miq_provision_workflow) }
+  let(:ems) { FactoryGirl.create(:ext_management_system) }
+  let(:resource_pool) { FactoryGirl.create(:resource_pool) }
+  let(:ems_folder) { FactoryGirl.create(:ems_folder) }
 
   context "#validate" do
     let(:dialog) { workflow.instance_variable_get(:@dialogs) }
@@ -9,23 +10,21 @@ describe MiqRequestWorkflow do
     context "validation_method" do
       it "skips validation if no validation_method is defined" do
         expect(workflow.get_all_dialogs[:customize][:fields][:root_password][:validation_method]).to eq(nil)
-        expect(workflow.validate({})).to be_true
+        expect(workflow.validate({})).to be true
       end
 
       it "calls the validation_method if defined" do
         dialog.store_path(:dialogs, :customize, :fields, :root_password, :validation_method, :some_validation_method)
 
-        expect(workflow).to receive(:respond_to?).with(:some_validation_method).and_return(true)
         expect(workflow).to receive(:some_validation_method).once
-        expect(workflow.validate({})).to be_true
+        expect(workflow.validate({})).to be true
       end
 
       it "returns false when validation fails" do
         dialog.store_path(:dialogs, :customize, :fields, :root_password, :validation_method, :some_validation_method)
 
-        expect(workflow).to receive(:respond_to?).with(:some_validation_method).and_return(true)
         expect(workflow).to receive(:some_validation_method).and_return("Some Error")
-        expect(workflow.validate({})).to be_false
+        expect(workflow.validate({})).to be false
       end
     end
 
@@ -36,7 +35,7 @@ describe MiqRequestWorkflow do
         dialog.store_path(:dialogs, :customize, :fields, :root_password, :display, :hide)
 
         expect(workflow).to_not receive(:some_required_method)
-        expect(workflow.validate({})).to be_true
+        expect(workflow.validate({})).to be true
       end
 
       it "field visible" do
@@ -44,7 +43,7 @@ describe MiqRequestWorkflow do
         dialog.store_path(:dialogs, :customize, :fields, :root_password, :required, true)
 
         expect(workflow).to receive(:some_required_method).and_return("Some Error")
-        expect(workflow.validate({})).to be_false
+        expect(workflow.validate({})).to be false
       end
     end
 
@@ -55,7 +54,7 @@ describe MiqRequestWorkflow do
 
         expect(workflow).to receive(:some_validation_method).and_return("Some Error")
         expect(workflow).to receive(:other_validation_method)
-        expect(workflow.validate({})).to be_false
+        expect(workflow.validate({})).to be false
       end
     end
   end
@@ -297,6 +296,91 @@ describe MiqRequestWorkflow do
       request = workflow.create_request(values)
       expect(request.options[:owner_email]).to eq(owner.email)
       expect(request.options[:owner_group]).to eq(owner.current_group.description)
+    end
+  end
+
+  context "#respool_to_folder" do
+    before do
+      resource_pool.ext_management_system = ems
+      ems_folder.ext_management_system = ems
+      attrs = ems_folder.attributes.merge(:object => ems_folder)
+      xml_hash = XmlHash::Element.new('EmsFolder', attrs)
+      hash = {"ResourcePool_#{resource_pool.id}" => xml_hash}
+      workflow.instance_variable_set("@ems_xml_nodes", hash)
+    end
+
+    it "returns nil if :respool is nil" do
+      src = {:respool => nil}
+      expect(workflow.respool_to_folder(src)).to eq nil
+    end
+
+    it "returns an empty hash if no folders are found" do
+      src = {:respool => resource_pool}
+      expect(workflow.respool_to_folder(src)).to be_empty
+    end
+  end
+
+  context "#folder_to_respool" do
+    before do
+      resource_pool.ext_management_system = ems
+      ems_folder.ext_management_system = ems
+      attrs = resource_pool.attributes.merge(:object => resource_pool, :ems => ems)
+      xml_hash = XmlHash::Element.new('ResourcePool', attrs)
+      hash = {"EmsFolder_#{ems_folder.id}" => xml_hash}
+      workflow.instance_variable_set("@ems_xml_nodes", hash)
+    end
+
+    it "returns nil if :folder is nil" do
+      src = {:folder => nil}
+      expect(workflow.folder_to_respool(src)).to eq nil
+    end
+
+    it "returns an empty hash if no resource pools are found" do
+      src = {:ems =>  ems, :folder => ems_folder}
+      expect(workflow.folder_to_respool(src)).to be_empty
+    end
+  end
+
+  describe '#cast_value' do
+    it 'integer' do
+      expect(workflow.cast_value(1,   :integer)).to eq(1)
+      expect(workflow.cast_value('1', :integer)).to eq(1)
+    end
+
+    it 'float' do
+      expect(workflow.cast_value(1,     :float)).to eq(1.0)
+      expect(workflow.cast_value('1',   :float)).to eq(1.0)
+      expect(workflow.cast_value(2.1,   :float)).to eq(2.1)
+      expect(workflow.cast_value('2.1', :float)).to eq(2.1)
+    end
+
+    it 'boolean' do
+      expect(workflow.cast_value('true', :boolean)).to  be true
+      expect(workflow.cast_value('t', :boolean)).to     be true
+
+      expect(workflow.cast_value('false', :boolean)).to be false
+      expect(workflow.cast_value('f', :boolean)).to     be false
+      expect(workflow.cast_value('1', :boolean)).to     be false
+      expect(workflow.cast_value('0', :boolean)).to     be false
+      expect(workflow.cast_value('test', :boolean)).to  be false
+    end
+
+    it 'time' do
+      time_str   = '2016-02-13 11:00:00.000000000 Z'
+      time_match = Time.zone.parse(time_str)
+      expect(workflow.cast_value(time_str, :time)).to eq(time_match)
+
+      expect(workflow.cast_value('2016-02-13 11:00:00 Z', :time)).to eq(time_match)
+    end
+
+    it 'button' do
+      expect(workflow.cast_value('data', :button)).to eq('data')
+      expect(workflow.cast_value(1, :button)).to      eq(1)
+    end
+
+    it 'other' do
+      expect(workflow.cast_value('data', :other)).to eq('data')
+      expect(workflow.cast_value(1, :other)).to      eq(1)
     end
   end
 end

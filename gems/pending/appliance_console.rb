@@ -5,13 +5,15 @@
 # Simulate rubygems adding the top level appliance_console.rb's directory to the path.
 $LOAD_PATH.push(File.dirname(__FILE__))
 
-ROOT = [
-  "/var/www/miq",
-  File.expand_path(File.join(File.dirname(__FILE__), "../.."))
+require 'pathname'
+
+RAILS_ROOT = [
+  Pathname.new("/var/www/miq/vmdb"),
+  Pathname.new(File.expand_path(File.join(__dir__, "../..")))
 ].detect { |f| File.exist?(f) }
 
 # Set up Environment
-ENV['BUNDLE_GEMFILE'] ||= "#{ROOT}/Gemfile"
+ENV['BUNDLE_GEMFILE'] ||= RAILS_ROOT.join("Gemfile").to_s
 require 'bundler'
 Bundler.setup
 
@@ -21,8 +23,8 @@ require 'highline/system_extensions'
 require 'rubygems'
 require 'bcrypt'
 require 'linux_admin'
-require 'pathname'
 require 'util/vmdb-logger'
+require 'awesome_spawn'
 include HighLine::SystemExtensions
 
 require 'i18n'
@@ -38,12 +40,8 @@ require 'appliance_console/errors'
 
 [:INT, :TERM, :ABRT, :TSTP].each { |s| trap(s) { raise MiqSignalError } }
 
-RAILS_ROOT    = Pathname.new("#{ROOT}/vmdb")
-EVM_PID_FILE  = RAILS_ROOT.join("tmp/pids/evm.pid")
-REGION_FILE   = RAILS_ROOT.join("REGION")
 VERSION_FILE  = RAILS_ROOT.join("VERSION")
-BUILD_FILE    = RAILS_ROOT.join("BUILD")
-LOGFILE       = File.join(RAILS_ROOT, "log", "appliance_console.log")
+LOGFILE       = RAILS_ROOT.join("log", "appliance_console.log")
 DB_RESTORE_FILE = "/tmp/evm_db.backup"
 
 AS_OPTIONS = I18n.t("advanced_settings.menu_order").collect do |item|
@@ -91,6 +89,7 @@ require 'appliance_console/external_httpd_authentication'
 require 'appliance_console/temp_storage_configuration'
 require 'appliance_console/key_configuration'
 require 'appliance_console/scap'
+require 'appliance_console/certificate_authority'
 
 require 'appliance_console/prompts'
 include ApplianceConsole::Prompts
@@ -100,7 +99,7 @@ module ApplianceConsole
   ip = eth0.address
   # Because it takes a few seconds, get the database information once in the outside loop
   configured = ApplianceConsole::DatabaseConfiguration.configured?
-  dbhost, dbtype, database = ApplianceConsole::Utilities.db_host_type_database if configured
+  dbhost, database, region = ApplianceConsole::Utilities.db_host_database_region if configured
 
   clear_screen
 
@@ -125,7 +124,6 @@ module ApplianceConsole
       dns1, dns2 = dns.nameservers
       order      = dns.search_order.join(' ')
       timezone   = LinuxAdmin::TimeDate.system_timezone
-      region     = File.read(REGION_FILE).chomp  if File.exist?(REGION_FILE)
       version    = File.read(VERSION_FILE).chomp if File.exist?(VERSION_FILE)
       configured = ApplianceConsole::DatabaseConfiguration.configured?
 
@@ -140,7 +138,7 @@ module ApplianceConsole
         "MAC Address:", mac,
         "Timezone:", timezone,
         "Local Database:", ApplianceConsole::Utilities.pg_status,
-        "#{I18n.t("product.name")} Database:", configured ? "#{dbtype} @ #{dbhost}" : "not configured",
+        "#{I18n.t("product.name")} Database:", configured ? "postgres @ #{dbhost || "localhost"}" : "not configured",
         "Database/Region:", configured ? "#{database} / #{region || 0}" : "not configured",
         "External Auth:", ExternalHttpdAuthentication.config_status,
         "#{I18n.t("product.name")} Version:", version,
@@ -326,6 +324,27 @@ Date and Time Configuration
           raise MiqSignalError
         end
 
+      when I18n.t("advanced_settings.ca")
+        say("#{selection}\n\n")
+        begin
+          ca = CertificateAuthority.new(:hostname => host)
+          if ca.ask_questions && ca.activate
+            say "\ncertificate result: #{ca.status_string}"
+            unless ca.complete?
+              say "After the certificates are retrieved, rerun to update service configuration files"
+            end
+            press_any_key
+          else
+            say("\nCertificates not fetched.\n")
+            press_any_key
+          end
+        rescue AwesomeSpawn::CommandResultError => e
+          say e.result.output
+          say e.result.error
+          say ""
+          press_any_key
+        end
+
       when I18n.t("advanced_settings.evmstop")
         say("#{selection}\n\n")
         service = LinuxAdmin::Service.new("evmserverd")
@@ -483,7 +502,7 @@ Date and Time Configuration
         if database_configuration.activate
           database_configuration.post_activation
           say("\nConfiguration activated successfully.\n")
-          dbhost, dbtype, database = ApplianceConsole::Utilities.db_host_type_database
+          dbhost, database, region = ApplianceConsole::Utilities.db_host_database_region
           press_any_key
         else
           say("\nConfiguration activation failed!\n")

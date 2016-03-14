@@ -1,4 +1,3 @@
-require "spec_helper"
 require_migration
 
 describe FixMiqGroupSequences do
@@ -11,7 +10,7 @@ describe FixMiqGroupSequences do
 
       migrate
 
-      expect(g1.reload.sequence).to be
+      expect(g1.reload.sequence).to be_truthy
       expect(g2.reload.sequence).to eq(3)
     end
 
@@ -22,7 +21,7 @@ describe FixMiqGroupSequences do
 
       migrate
 
-      expect(g1.reload.guid).to be
+      expect(g1.reload.guid).to be_truthy
       expect(g2.reload.guid).to eq(old_guid)
     end
   end

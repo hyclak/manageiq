@@ -26,16 +26,18 @@ module Menu
           Menu::Item.new('ems_cloud',           N_('Providers'),           'ems_cloud',                 {:feature => 'ems_cloud_show_list'},                     '/ems_cloud'),
           Menu::Item.new('availability_zone',   N_('Availability Zones'),  'availability_zone',         {:feature => 'availability_zone_show_list'},             '/availability_zone'),
           Menu::Item.new('cloud_tenant',        N_('Tenants'),             'cloud_tenant',              {:feature => 'cloud_tenant_show_list'},                  '/cloud_tenant'),
+          Menu::Item.new('cloud_volume',        N_('Volumes'),             'cloud_volume',              {:feature => 'cloud_volume_show_list'},                  '/cloud_volume'),
           Menu::Item.new('flavor',              N_('Flavors'),             'flavor',                    {:feature => 'flavor_show_list'},                        '/flavor'),
           Menu::Item.new('security_group',      N_('Security Groups'),     'security_group',            {:feature => 'security_group_show_list'},                '/security_group'),
           Menu::Item.new('vm_cloud',            N_('Instances'),           'vm_cloud_explorer',         {:feature => 'vm_cloud_explorer_accords', :any => true}, '/vm_cloud/explorer'),
-          Menu::Item.new('orchestration_stack', N_('Stacks'),              'orchestration_stack',       {:feature => 'orchestration_stack_show_list'},           '/orchestration_stack')
+          Menu::Item.new('orchestration_stack', N_('Stacks'),              'orchestration_stack',       {:feature => 'orchestration_stack_show_list'},           '/orchestration_stack'),
+          Menu::Item.new('auth_key_pair_cloud', N_('Key Pairs'),           'auth_key_pair_cloud',       {:feature => 'auth_key_pair_cloud_show_list'},           '/auth_key_pair_cloud')
         ])
       end
 
       def infrastructure_menu_section
-        hosts_name    = hybrid_name(EmsCluster, N_("Hosts"),    N_("Nodes"),            N_("Hosts / Nodes"))
-        clusters_name = hybrid_name(Host,       N_("Clusters"), N_("Deployment Roles"), N_("Clusters / Deployment Roles"))
+        hosts_name    = hybrid_name(Host,       N_("Hosts"),    N_("Nodes"),            N_("Hosts / Nodes"))
+        clusters_name = hybrid_name(EmsCluster, N_("Clusters"), N_("Deployment Roles"), N_("Clusters / Deployment Roles"))
 
         Menu::Section.new(:inf, N_("Infrastructure"), [
           Menu::Item.new('ems_infra',        N_('Providers'),        'ems_infra',     {:feature => 'ems_infra_show_list'},     '/ems_infra'),
@@ -90,6 +92,10 @@ module Menu
                          {:feature => 'containers', :any => true},
                          '/container/explorer'),
           Menu::Item.new('container_node', N_('Container Nodes'), 'container_node', {:feature => 'container_node_show_list'}, '/container_node'),
+          Menu::Item.new('persistent_volume', N_('Volumes'), 'persistent_volume',
+                         {:feature => 'persistent_volume_show_list', :any => true}, '/persistent_volume'),
+          Menu::Item.new('container_build', N_('Container Builds'), 'container_build',
+                         {:feature => 'container_build_show_list'}, '/container_build'),
           Menu::Item.new('container_image_registry',
                          deferred_ui_lookup(:tables => 'container_image_registry'),
                          'container_image_registry',
@@ -102,6 +108,16 @@ module Menu
                          '/container_image'),
           Menu::Item.new('container_topology', N_('Topology'), 'container_topology',
                          {:feature => 'container_topology', :any => true}, '/container_topology')
+        ])
+      end
+
+      def middleware_menu_section
+        Menu::Section.new(:mdl, N_("Middleware"), [
+          Menu::Item.new('ems_middleware', N_('Providers'), 'ems_middleware', {:feature => 'ems_middleware_show_list'}, '/ems_middleware'),
+          Menu::Item.new('middleware_server', deferred_ui_lookup(:tables => 'middleware_server'), 'middleware_server', {:feature => 'middleware_server_show_list'}, '/middleware_server'),
+          Menu::Item.new('middleware_deployment', deferred_ui_lookup(:tables => 'middleware_deployment'), 'middleware_deployment', {:feature => 'middleware_deployment_show_list'}, '/middleware_deployment'),
+          Menu::Item.new('middleware_topology', N_('Topology'), 'middleware_topology', {:feature => 'middleware_topology', :any => true}, '/middleware_topology')
+
         ])
       end
 
@@ -156,7 +172,7 @@ module Menu
         storage_enabled = VMDB::Config.new("vmdb").config[:product][:storage]
 
         [cloud_inteligence_menu_section, services_menu_section, clouds_menu_section, infrastructure_menu_section,
-         container_menu_section, storage_enabled ? storage_menu_section : nil, control_menu_section,
+         container_menu_section, middleware_menu_section, storage_enabled ? storage_menu_section : nil, control_menu_section,
          automate_menu_section, optimize_menu_section, configuration_menu_section].compact
       end
     end

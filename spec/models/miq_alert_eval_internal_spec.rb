@@ -1,5 +1,3 @@
-require "spec_helper"
-
 describe "MiqAlert Evaluation Internal" do
   context "With VM as a target," do
     before(:each) do
@@ -28,8 +26,8 @@ describe "MiqAlert Evaluation Internal" do
       end
 
       it "should result to true" do
-        -> { @result = @alert.evaluate(@vm) }.should_not raise_error
-        @result.should be_true
+        expect { @result = @alert.evaluate(@vm) }.not_to raise_error
+        expect(@result).to be_truthy
       end
     end
 
@@ -58,8 +56,8 @@ describe "MiqAlert Evaluation Internal" do
       end
 
       it "should result to true" do
-        -> { @result = @alert.evaluate(@vm) }.should_not raise_error
-        @result.should be_true
+        expect { @result = @alert.evaluate(@vm) }.not_to raise_error
+        expect(@result).to be_truthy
       end
     end
 
@@ -79,8 +77,8 @@ describe "MiqAlert Evaluation Internal" do
       end
 
       it "should result to false" do
-        -> { @result = @alert.evaluate(@vm) }.should_not raise_error
-        @result.should be_false
+        expect { @result = @alert.evaluate(@vm) }.not_to raise_error
+        expect(@result).to be_falsey
       end
     end
 
@@ -100,8 +98,8 @@ describe "MiqAlert Evaluation Internal" do
       end
 
       it "should result to false" do
-        -> { @result = @alert.evaluate(@vm) }.should_not raise_error
-        @result.should be_false
+        expect { @result = @alert.evaluate(@vm) }.not_to raise_error
+        expect(@result).to be_falsey
       end
     end
 
@@ -127,8 +125,8 @@ describe "MiqAlert Evaluation Internal" do
       end
 
       it "should result to false" do
-        -> { @result = @alert.evaluate(@vm) }.should_not raise_error
-        @result.should be_false
+        expect { @result = @alert.evaluate(@vm) }.not_to raise_error
+        expect(@result).to be_falsey
       end
     end
 
@@ -149,8 +147,8 @@ describe "MiqAlert Evaluation Internal" do
       end
 
       it "should result to true" do
-        -> { @result = @alert.evaluate(@vm) }.should_not raise_error
-        @result.should be_true
+        expect { @result = @alert.evaluate(@vm) }.not_to raise_error
+        expect(@result).to be_truthy
       end
     end
   end
@@ -180,8 +178,8 @@ describe "MiqAlert Evaluation Internal" do
       end
 
       it "should result to false" do
-        -> { @result = @alert.evaluate(@host) }.should_not raise_error
-        @result.should be_false
+        expect { @result = @alert.evaluate(@host) }.not_to raise_error
+        expect(@result).to be_falsey
       end
     end
   end
@@ -201,8 +199,8 @@ describe "MiqAlert Evaluation Internal" do
       end
 
       it "should result to true" do
-        -> { @result = @alert.evaluate(@server) }.should_not raise_error
-        @result.should be_true
+        expect { @result = @alert.evaluate(@server) }.not_to raise_error
+        expect(@result).to be_truthy
       end
     end
   end

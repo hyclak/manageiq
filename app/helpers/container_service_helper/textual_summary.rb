@@ -30,7 +30,7 @@ module ContainerServiceHelper::TextualSummary
   end
 
   def textual_group_relationships
-    %i(ems container_project container_routes container_groups container_nodes)
+    %i(ems container_project container_routes container_groups container_nodes container_image_registry)
   end
 
   def textual_group_smart_management
@@ -42,38 +42,23 @@ module ContainerServiceHelper::TextualSummary
   # Items
   #
 
-  def textual_name
-    @record.name
-  end
-
-  def textual_creation_timestamp
-    format_timezone(@record.creation_timestamp)
-  end
-
-  def textual_resource_version
-    @record.resource_version
-  end
-
   def textual_session_affinity
     @record.session_affinity
   end
 
   def textual_service_type
-    {:label => "Type", :value => @record.service_type}
+    {:label => _("Type"), :value => @record.service_type}
   end
 
   def textual_portal_ip
-    {:label => "Portal IP", :value => @record.portal_ip}
+    {:label => _("Portal IP"), :value => @record.portal_ip}
   end
 
   def textual_port_config(port_conf)
     name = port_conf.name
-
     name = _("<Unnamed>") if name.blank?
-
-    {
-      :label => name,
-      :value => "#{port_conf.protocol} port #{port_conf.port} to pods on target port:'#{port_conf.target_port}'"
-    }
+    {:label => name,
+     :value => _("%{protocol} port %{port} to pods on target port:'%{target_port}'") %
+       {:protocol => port_conf.protocol, :port => port_conf.port, :target_port => port_conf.target_port}}
   end
 end

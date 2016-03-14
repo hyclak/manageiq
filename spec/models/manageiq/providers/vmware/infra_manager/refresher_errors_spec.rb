@@ -1,5 +1,3 @@
-require "spec_helper"
-
 describe ManageIQ::Providers::Vmware::InfraManager::Refresher do
   before(:each) do
     EmsRefresh.debug_failures = false
@@ -21,12 +19,14 @@ describe ManageIQ::Providers::Vmware::InfraManager::Refresher do
   end
 
   def assert_failed_refresh(error)
-    @ems.last_refresh_status.should == "error"
-    @ems.last_refresh_error.should == error
+    expect(@ems.last_refresh_status).to eq("error")
+    expect(@ems.last_refresh_error).to eq(error)
   end
 
   def refresh_ems(ems, error)
-    ManageIQ::Providers::Vmware::InfraManager::Refresher.any_instance.stub(:refresh_targets_for_ems).and_raise(StandardError.new(error))
+    allow_any_instance_of(ManageIQ::Providers::Vmware::InfraManager::Refresher)
+      .to receive(:refresh_targets_for_ems)
+      .and_raise(StandardError.new(error))
     EmsRefresh.refresh(ems)
   end
 end

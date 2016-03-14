@@ -1,6 +1,6 @@
-if !Rails.env.development? && !Rails.env.production?
+if ENV['RAILS_USE_MEMORY_STORE'] || (!Rails.env.development? && !Rails.env.production?)
   Vmdb::Application.config.session_store :memory_store
-elsif MiqEnvironment::Process.is_web_server_worker?
+else
   session_options = {}
   if MiqEnvironment::Command.is_appliance?
     session_options[:secure]   = true
@@ -19,24 +19,18 @@ elsif MiqEnvironment::Process.is_web_server_worker?
   rails_store = case evm_store
                 when "sql" then     :active_record_store
                 when "memory" then  :memory_store
-                when "cache" then   :dalli_store
+                when "cache" then   :mem_cache_store
                 else
-                  raise "session_store, '#{evm_store}', invalid. Should be one of 'sql', 'memory', 'cache'"
+                  raise "session_store, '#{evm_store}', invalid. Should be one of 'sql', 'memory', 'cache'.  Source configuration: #{config_file}"
                 end
 
-  if rails_store == :dalli_store
-    require "action_dispatch/middleware/session/dalli_store"
+  if rails_store == :mem_cache_store
+    require 'dalli'
     memcached_server = config.fetch_path("session", "memcache_server") || "127.0.0.1:11211"
     session_options = session_options.merge(
-      :cache         => Dalli::Client.new(memcached_server, :namespace => "MIQ:VMDB"),
-      :expires_after => 24.hours,
-      # :compress       => true,
-      :key           => "_vmdb_session",
-    # :readonly       => false,
-    # :urlencode      => false,
-    # :logger         => $log,
-    # :socket_timeout => 5,
-    # :failover       => false
+      :cache        => Dalli::Client.new(memcached_server, :namespace => "MIQ:VMDB"),
+      :expire_after => 24.hours,
+      :key          => "_vmdb_session",
     )
   end
 

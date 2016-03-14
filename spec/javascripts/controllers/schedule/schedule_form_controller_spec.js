@@ -1,7 +1,7 @@
 describe('scheduleFormController', function() {
   var $scope, $controller, $httpBackend, miqService, timerOptionService, oneMonthAgo;
 
-  beforeEach(module('ManageIQ.angularApplication'));
+  beforeEach(module('ManageIQ'));
 
   beforeEach(inject(function($rootScope, _$controller_, _$httpBackend_, _miqService_, _timerOptionService_) {
     miqService = _miqService_;
@@ -145,7 +145,7 @@ describe('scheduleFormController', function() {
       });
 
       it('sets the scheduleDate to today', function() {
-        expect($scope.scheduleModel.start_date).toEqual(moment("01/03/2014").format('MM/DD/YYYY'));
+        expect($scope.scheduleModel.start_date).toEqual(moment("01/02/2014").format('MM/DD/YYYY'));
       });
 
       it('sets the scheduleTimerType to once', function() {

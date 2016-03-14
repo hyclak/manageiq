@@ -1,5 +1,3 @@
-require "spec_helper"
-
 module JobProxyDispatcherEmbeddedScanSpec
   describe "dispatch embedded" do
     require File.expand_path(File.join(File.dirname(__FILE__), 'job_proxy_dispatcher/job_proxy_dispatcher_helper'))
@@ -13,7 +11,7 @@ module JobProxyDispatcherEmbeddedScanSpec
 
     def assert_at_most_x_scan_jobs_per_y_resource(x_scans, y_resource)
       vms_in_embedded_scanning = Job.where(["dispatch_status = ? AND state != ? AND agent_class = ? AND target_class = ?", "active", "finished", "MiqServer", "VmOrTemplate"]).select("target_id").collect(&:target_id).compact.uniq
-      vms_in_embedded_scanning.length.should > 0
+      expect(vms_in_embedded_scanning.length).to be > 0
 
       method = case y_resource
                when :ems then 'ems_id'
@@ -36,8 +34,8 @@ module JobProxyDispatcherEmbeddedScanSpec
         end
       end
 
-      resource_hsh.values.detect { |count| count > 0 }.should be_true, "Expected at least one #{y_resource} resource with more than 0 scan jobs. resource_hash: #{resource_hsh.inspect}"
-      resource_hsh.values.detect { |count| count > x_scans }.should be_nil, "Expected no #{y_resource} resource with more than #{x_scans} scan jobs. resource_hash: #{resource_hsh.inspect}"
+      expect(resource_hsh.values.detect { |count| count > 0 }).to be_truthy, "Expected at least one #{y_resource} resource with more than 0 scan jobs. resource_hash: #{resource_hsh.inspect}"
+      expect(resource_hsh.values.detect { |count| count > x_scans }).to be_nil, "Expected no #{y_resource} resource with more than #{x_scans} scan jobs. resource_hash: #{resource_hsh.inspect}"
     end
 
     context "With a zone, server, ems, hosts, vmware vms" do
@@ -48,18 +46,18 @@ module JobProxyDispatcherEmbeddedScanSpec
         end
 
         # TODO: We should be able to set values so we don't need to stub behavior
-        MiqServer.any_instance.stub(:is_vix_disk? => true)
-        MiqServer.any_instance.stub(:is_a_proxy? => true)
-        MiqServer.any_instance.stub(:has_active_role? => true)
-        ManageIQ::Providers::Vmware::InfraManager.any_instance.stub(:authentication_status_ok? => true)
-        Host.any_instance.stub(:authentication_status_ok? => true)
+        allow_any_instance_of(MiqServer).to receive_messages(:is_vix_disk? => true)
+        allow_any_instance_of(MiqServer).to receive_messages(:is_a_proxy? => true)
+        allow_any_instance_of(MiqServer).to receive_messages(:has_active_role? => true)
+        allow_any_instance_of(ManageIQ::Providers::Vmware::InfraManager).to receive_messages(:authentication_status_ok? => true)
+        allow_any_instance_of(Host).to receive_messages(:authentication_status_ok? => true)
 
         @hosts, @proxies, @storages, @vms, @repo_vms = build_hosts_proxies_storages_vms(:hosts => NUM_HOSTS, :storages => NUM_STORAGES, :vms => NUM_VMS, :repo_vms => NUM_REPO_VMS)
       end
 
       context "and a scan job for each vm" do
         before(:each) do
-          MiqVimBrokerWorker.stub(:available_in_zone?).and_return(true)
+          allow(MiqVimBrokerWorker).to receive(:available_in_zone?).and_return(true)
           # JobProxyDispatcher.stub(:start_job_on_proxy).and_return(nil)
 
           @jobs = @vms.collect(&:scan)
@@ -67,13 +65,13 @@ module JobProxyDispatcherEmbeddedScanSpec
 
         context "and embedded scans on ems" do
           before(:each) do
-            ManageIQ::Providers::Vmware::InfraManager::Vm.stub(:scan_via_ems?).and_return(true)
+            allow(ManageIQ::Providers::Vmware::InfraManager::Vm).to receive(:scan_via_ems?).and_return(true)
           end
 
           context "and scans against ems limited to 2 and up to 10 scans per miqserver" do
             before(:each) do
-              MiqServer.any_instance.stub(:concurrent_job_max).and_return(10)
-              JobProxyDispatcher.stub(:coresident_miqproxy).and_return({:concurrent_per_ems => 2})
+              allow_any_instance_of(MiqServer).to receive(:concurrent_job_max).and_return(10)
+              allow(JobProxyDispatcher).to receive(:coresident_miqproxy).and_return({:concurrent_per_ems => 2})
             end
 
             it "should dispatch only 2 scan jobs per ems"  do
@@ -89,8 +87,8 @@ module JobProxyDispatcherEmbeddedScanSpec
 
           context "and scans against ems limited to 4 and up to 10 scans per miqserver" do
             before(:each) do
-              MiqServer.any_instance.stub(:concurrent_job_max).and_return(10)
-              JobProxyDispatcher.stub(:coresident_miqproxy).and_return({:concurrent_per_ems => 4})
+              allow_any_instance_of(MiqServer).to receive(:concurrent_job_max).and_return(10)
+              allow(JobProxyDispatcher).to receive(:coresident_miqproxy).and_return({:concurrent_per_ems => 4})
             end
 
             it "should dispatch only 4 scan jobs per ems"  do
@@ -101,8 +99,8 @@ module JobProxyDispatcherEmbeddedScanSpec
 
           context "and scans against ems limited to 4 and up to 2 scans per miqserver" do
             before(:each) do
-              MiqServer.any_instance.stub(:concurrent_job_max).and_return(2)
-              JobProxyDispatcher.stub(:coresident_miqproxy).and_return({:concurrent_per_ems => 4})
+              allow_any_instance_of(MiqServer).to receive(:concurrent_job_max).and_return(2)
+              allow(JobProxyDispatcher).to receive(:coresident_miqproxy).and_return({:concurrent_per_ems => 4})
             end
 
             it "should dispatch up to 4 per ems and 2 per miqserver"  do
@@ -115,13 +113,13 @@ module JobProxyDispatcherEmbeddedScanSpec
 
         context "and embedded scans on hosts" do
           before(:each) do
-            ManageIQ::Providers::Vmware::InfraManager::Vm.stub(:scan_via_ems?).and_return(false)
+            allow(ManageIQ::Providers::Vmware::InfraManager::Vm).to receive(:scan_via_ems?).and_return(false)
           end
 
           context "and scans against host limited to 2 and up to 10 scans per miqserver" do
             before(:each) do
-              MiqServer.any_instance.stub(:concurrent_job_max).and_return(10)
-              JobProxyDispatcher.stub(:coresident_miqproxy).and_return({:concurrent_per_host => 2})
+              allow_any_instance_of(MiqServer).to receive(:concurrent_job_max).and_return(10)
+              allow(JobProxyDispatcher).to receive(:coresident_miqproxy).and_return({:concurrent_per_host => 2})
             end
 
             it "should dispatch only 2 scan jobs per host"  do
@@ -132,8 +130,8 @@ module JobProxyDispatcherEmbeddedScanSpec
 
           context "and scans against host limited to 4 and up to 10 scans per miqserver" do
             before(:each) do
-              MiqServer.any_instance.stub(:concurrent_job_max).and_return(10)
-              JobProxyDispatcher.stub(:coresident_miqproxy).and_return({:concurrent_per_host => 4})
+              allow_any_instance_of(MiqServer).to receive(:concurrent_job_max).and_return(10)
+              allow(JobProxyDispatcher).to receive(:coresident_miqproxy).and_return({:concurrent_per_host => 4})
             end
 
             it "should dispatch only 4 scan jobs per host"  do
@@ -144,8 +142,8 @@ module JobProxyDispatcherEmbeddedScanSpec
 
           context "and scans against host limited to 4 and up to 2 scans per miqserver" do
             before(:each) do
-              MiqServer.any_instance.stub(:concurrent_job_max).and_return(2)
-              JobProxyDispatcher.stub(:coresident_miqproxy).and_return({:concurrent_per_host => 4})
+              allow_any_instance_of(MiqServer).to receive(:concurrent_job_max).and_return(2)
+              allow(JobProxyDispatcher).to receive(:coresident_miqproxy).and_return({:concurrent_per_host => 4})
             end
 
             it "should dispatch up to 4 per host and 2 per miqserver"  do

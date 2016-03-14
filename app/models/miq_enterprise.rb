@@ -1,4 +1,4 @@
-class MiqEnterprise < ActiveRecord::Base
+class MiqEnterprise < ApplicationRecord
   has_many :metrics,        :as => :resource  # Destroy will be handled by purger
   has_many :metric_rollups, :as => :resource  # Destroy will be handled by purger
   has_many :vim_performance_states, :as => :resource  # Destroy will be handled by purger
@@ -35,7 +35,7 @@ class MiqEnterprise < ActiveRecord::Base
     # Cache the enterprise instance, but clear the association
     #   cache to support keeping the associations fresh
     @my_enterprise ||= in_my_region.first
-    @my_enterprise.clear_association_cache unless @my_enterprise.nil?
+    @my_enterprise.send(:clear_association_cache) unless @my_enterprise.nil?
     @my_enterprise
   end
 
@@ -45,9 +45,7 @@ class MiqEnterprise < ActiveRecord::Base
     MiqRegion.count > 1
   end
 
-  def is_enterprise?
-    self.class.is_enterprise?
-  end
+  delegate :is_enterprise?, :to => :class
 
   def my_zone
     MiqServer.my_zone

@@ -16,7 +16,11 @@ module OpsController::Settings::Tags
   def category_delete
     category = Classification.find(params[:id])
     c_name = category.name
-    audit = {:event => "category_record_delete", :message => "[#{c_name}] Record deleted", :target_id => category.id, :target_class => "Classification", :userid => session[:userid]}
+    audit = {:event        => "category_record_delete",
+             :message      => _("[%{name}] Record deleted") % {:name => c_name},
+             :target_id    => category.id,
+             :target_class => "Classification",
+             :userid       => session[:userid]}
     if category.destroy
       AuditEvent.success(audit)
       add_flash(_("%{model} \"%{name}\": Delete successful") % {:model => ui_lookup(:model => "Classification"), :name => c_name})
@@ -37,7 +41,8 @@ module OpsController::Settings::Tags
     when "cancel"
       @category = session[:edit][:category] if session[:edit] && session[:edit][:category]
       if !@category || @category.id.blank?
-        add_flash(_("Add of new %s was cancelled by the user") % ui_lookup(:model => "Classification"))
+        add_flash(_("Add of new %{model} was cancelled by the user") %
+                    {:model => ui_lookup(:model => "Classification")})
       else
         add_flash(_("Edit of %{model} \"%{name}\" was cancelled by the user") % {:model => ui_lookup(:model => "Classification"), :name => @category.name})
       end
@@ -50,13 +55,13 @@ module OpsController::Settings::Tags
       @ldap_group = @edit[:ldap_group] if @edit && @edit[:ldap_group]
       @category = @edit[:category] if @edit && @edit[:category]
       if @edit[:new][:name].blank?
-        add_flash(_("%s is required") % "Name", :error)
+        add_flash(_("Name is required"), :error)
       end
       if @edit[:new][:description].blank?
-        add_flash(_("%s is required") % "Description", :error)
+        add_flash(_("Description is required"), :error)
       end
       if @edit[:new][:example_text].blank?
-        add_flash(_("%s is required") % "Long Description", :error)
+        add_flash(_("Long Description is required"), :error)
       end
       unless @flash_array.nil?
         render :update do |page|
@@ -73,7 +78,7 @@ module OpsController::Settings::Tags
                                           :example_text => @edit[:new][:example_text],
                                           :show         => @edit[:new][:show])
         rescue StandardError => bang
-          add_flash(_("Error during '%s': ") % "add" << bang.message, :error)
+          add_flash(_("Error during 'add': %{message}") % {:message => bang.message}, :error)
           render :update do |page|
             page.replace("flash_msg_div", :partial => "layouts/flash_msg")
           end
@@ -214,7 +219,12 @@ module OpsController::Settings::Tags
   def ce_delete
     ce_get_form_vars
     entry = @cat.entries.find(params[:id])
-    audit = {:event => "classification_entry_delete", :message => "Category #{@cat.description} [#{entry.name}] record deleted", :target_id => entry.id, :target_class => "Classification", :userid => session[:userid]}
+    audit = {:event        => "classification_entry_delete",
+             :message      => _("Category %{description} [%{name}] record deleted") % {:description => @cat.description,
+                                                                                       :name        => entry.name},
+             :target_id    => entry.id,
+             :target_class => "Classification",
+             :userid       => session[:userid]}
     if entry.destroy
       AuditEvent.success(audit)
       ce_build_screen                               # Build the Classification Edit screen
@@ -248,7 +258,8 @@ module OpsController::Settings::Tags
 
   # Build the audit object when a record is created, including all of the new fields
   def ce_created_audit(entry)
-    msg = "Category #{@cat.description} [#{entry.name}] record created ("
+    msg = _("Category %{description} [%{name}] record created (") % {:description => @cat.description,
+                                                                     :name        => entry.name}
     event = "classification_entry_add"
     i = 0
     params["entry"].each_key do |k|
@@ -262,17 +273,19 @@ module OpsController::Settings::Tags
 
   # Build the audit object when a record is saved, including all of the changed fields
   def ce_saved_audit(entry)
-    msg = "Category #{@cat.description} [#{entry.name}] record updated ("
+    msg = _("Category %{description} [%{name}] record updated (") % {:description => @cat.description,
+                                                                     :name        => entry.name}
     event = "classification_entry_update"
     i = 0
     if entry.name != session[:entry].name
       i += 1
-      msg = msg + "name:[" + session[:entry].name + "] to [" + entry.name + "]"
+      msg += _("name:[%{session}] to [%{name}]") % {:session => session[:entry].name, :name => entry.name}
     end
     if entry.description != session[:entry].description
       msg += ", " if i > 0
       i += 1
-      msg = msg + "description:[" + session[:entry].description + "] to [" + entry.description + "]"
+      msg += _("description:[%{session}] to [%{name}]") % {:session => session[:entry].description,
+                                                           :name    => entry.description}
     end
     msg += ")"
     audit = {:event => event, :target_id => entry.id, :target_class => entry.class.base_class.name, :userid => session[:userid], :message => msg}
@@ -288,13 +301,13 @@ module OpsController::Settings::Tags
     #   elsif params[:show] == "null"
     #     @edit[:new][:show] = false
     #   end
-    @edit[:new][:show] = (params[:show] == "1") if params[:show]
-    @edit[:new][:perf_by_tag] = (params[:perf_by_tag] == "1") if params[:perf_by_tag]
+    @edit[:new][:show] = (params[:show] == 'true') if params[:show]
+    @edit[:new][:perf_by_tag] = (params[:perf_by_tag] == "true") if params[:perf_by_tag]
     @edit[:new][:example_text] = params[:example_text] if params[:example_text]
     #   if !@edit[:new][:name].blank? && !Classification.find_by_name(@edit[:new][:name]) && params[:button] != "add" && params[:single_value]
     #     @edit[:new][:single_value] = (params[:single_value] == "1")
     #   end
-    @edit[:new][:single_value] = (params[:single_value] == "1") if params[:single_value]
+    @edit[:new][:single_value] = (params[:single_value] == "true") if params[:single_value]
   end
 
   def category_get_all

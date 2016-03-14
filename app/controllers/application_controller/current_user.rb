@@ -5,19 +5,19 @@ module ApplicationController::CurrentUser
     helper_method :current_user,  :current_userid
     helper_method :current_group, :current_group_id
     helper_method :admin_user?, :super_admin_user?
-    hide_action :clear_current_user, :current_user=
-    hide_action :admin_user?, :super_admin_user?
-    hide_action :current_user, :current_userid, :current_group_id
+    private :clear_current_user
   end
 
   def clear_current_user
     User.current_user = nil
     session[:userid]  = nil
+    session[:group] = nil
   end
 
   def current_user=(db_user)
     User.current_user = db_user
     session[:userid]  = db_user.userid
+    session[:group]   = db_user.current_group_id
   end
 
   def admin_user?
@@ -29,7 +29,11 @@ module ApplicationController::CurrentUser
   end
 
   def current_user
-    @current_user ||= User.find_by_userid(session[:userid]) if current_userid
+    if current_userid
+      @current_user ||= User.find_by_userid(current_userid).tap do |u|
+        u.current_group_id = session[:group] if session[:group]
+      end
+    end
     @current_user
   end
 

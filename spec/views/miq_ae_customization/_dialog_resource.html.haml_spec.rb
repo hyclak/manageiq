@@ -1,5 +1,3 @@
-require "spec_helper"
-
 describe "miq_ae_customization/_dialog_resource.html.haml" do
   before do
     dt = FactoryGirl.create(:dialog_tab, :label => "tab01")
@@ -12,8 +10,8 @@ describe "miq_ae_customization/_dialog_resource.html.haml" do
                         :obj       => {:id => 0},
                         :parent_id => 0,
                         :typ       => "Tab"}
-    response.should have_selector('div.panel.panel-default')
-    response.should have_selector('div.panel-heading')
-    response.should have_selector('h3.panel-title')
+    expect(response).to have_selector('div.panel.panel-default')
+    expect(response).to have_selector('div.panel-heading')
+    expect(response).to have_selector('h3.panel-title')
   end
 end

@@ -63,7 +63,8 @@ class EmsCloudController < ApplicationController
       update_ems.errors.each do |field, msg|
         add_flash("#{field.to_s.capitalize} #{msg}", :error)
       end
-      drop_breadcrumb(:name => "Edit #{ui_lookup(:table => @table_name)} '#{update_ems.name}'",
+      drop_breadcrumb(:name => _("Edit %{table} '%{name}'") %
+        {:table => ui_lookup(:table => @table_name), :name => update_ems.name},
                       :url  => "/#{@table_name}/edit/#{update_ems.id}")
       @in_a_form = true
       render_flash
@@ -75,8 +76,7 @@ class EmsCloudController < ApplicationController
     set_ems_record_vars(verify_ems, :validate)
     @in_a_form = true
 
-    save = params[:id] == "new" ? false : true
-    result, details = verify_ems.authentication_check(params[:cred_type], :save => save)
+    result, details = verify_ems.authentication_check(params[:cred_type], :save => !params[:id].nil?)
 
     if result
       add_flash(_("Credential validation was successful"))
@@ -115,7 +115,8 @@ class EmsCloudController < ApplicationController
         add_flash("#{ems.class.human_attribute_name(field)} #{msg}", :error)
       end
 
-      drop_breadcrumb(:name => "Add New #{ui_lookup(:tables => table_name)}", :url => new_ems_cloud_path)
+      drop_breadcrumb(:name => _("Add New %{tables}") % {:tables => ui_lookup(:tables => table_name)},
+                      :url  => new_ems_cloud_path)
       render :update do |page|
         page.replace("flash_msg_div", :partial => "layouts/flash_msg")
       end
@@ -163,6 +164,7 @@ class EmsCloudController < ApplicationController
                      :hostname                        => @ems.hostname,
                      :api_port                        => @ems.port,
                      :api_version                     => @ems.api_version ? @ems.api_version : "v2",
+                     :security_protocol               => @ems.security_protocol ? @ems.security_protocol : 'ssl',
                      :provider_region                 => @ems.provider_region,
                      :openstack_infra_providers_exist => retrieve_openstack_infra_providers.length > 0 ? true : false,
                      :default_userid                  => @ems.authentication_userid ? @ems.authentication_userid : "",
@@ -221,6 +223,9 @@ class EmsCloudController < ApplicationController
     if ems.kind_of?(ManageIQ::Providers::Microsoft::InfraManager)
       ems.security_protocol = params[:security_protocol]
       ems.realm = params[:realm]
+    elsif ems.supports_security_protocol?
+      # TODO the behavior should be probably rewritten to support methods
+      ems.security_protocol = params[:security_protocol].strip if params[:security_protocol]
     end
 
     if ems.kind_of?(ManageIQ::Providers::Vmware::InfraManager)
@@ -243,8 +248,8 @@ class EmsCloudController < ApplicationController
       amqp_password = params[:amqp_password] ? params[:amqp_password] : ems.authentication_password(:amqp)
       creds[:amqp] = {:userid => params[:amqp_userid], :password => amqp_password}
     end
-    if ems.supports_authentication?(:service_account) && params[:service_account]
-      creds[:service_account] = {:service_account => params[:service_account], :userid => "_"}
+    if ems.supports_authentication?(:auth_key) && params[:service_account]
+      creds[:default] = {:auth_key => params[:service_account], :userid => "_"}
     end
     if ems.supports_authentication?(:oauth) && !session[:oauth_response].blank?
       auth = session[:oauth_response]
@@ -261,23 +266,25 @@ class EmsCloudController < ApplicationController
   def construct_edit_for_audit(ems)
     @edit ||= {}
     ems.kind_of?(ManageIQ::Providers::Azure::CloudManager) ? azure_tenant_id = ems.azure_tenant_id : azure_tenant_id = nil
-    @edit[:current] = {:name            => ems.name,
-                       :provider_region => ems.provider_region,
-                       :hostname        => ems.hostname,
-                       :azure_tenant_id => azure_tenant_id,
-                       :port            => ems.port,
-                       :api_version     => ems.api_version,
-                       :provider_id     => ems.provider_id,
-                       :zone            => ems.zone
+    @edit[:current] = {:name              => ems.name,
+                       :provider_region   => ems.provider_region,
+                       :hostname          => ems.hostname,
+                       :azure_tenant_id   => azure_tenant_id,
+                       :port              => ems.port,
+                       :api_version       => ems.api_version,
+                       :security_protocol => ems.security_protocol,
+                       :provider_id       => ems.provider_id,
+                       :zone              => ems.zone
     }
-    @edit[:new] = {:name            => params[:name],
-                   :provider_region => params[:provider_region],
-                   :hostname        => params[:hostname],
-                   :azure_tenant_id => params[:azure_tenant_id],
-                   :port            => params[:port],
-                   :api_version     => params[:api_version],
-                   :provider_id     => params[:provider_id],
-                   :zone            => params[:zone]
+    @edit[:new] = {:name              => params[:name],
+                   :provider_region   => params[:provider_region],
+                   :hostname          => params[:hostname],
+                   :azure_tenant_id   => params[:azure_tenant_id],
+                   :port              => params[:port],
+                   :api_version       => params[:api_version],
+                   :security_protocol => params[:security_protocol],
+                   :provider_id       => params[:provider_id],
+                   :zone              => params[:zone]
     }
   end
 

@@ -39,6 +39,12 @@ ul.dynatree-container
 #menu_roles_treebox ul ul ul ul span.dynatree-node:hover {
   background-color: transparent !important;
 }
+// C & U collection tab styling (report names not clickable)
+
+#clhosts_treebox span.dynatree-node a,
+#cu_datastore_treebox span.dynatree-node a{
+  cursor: default !important;
+}
 
 #accordion a.btn {
   margin-right: 10px;
@@ -127,7 +133,7 @@ span.dynatree-drag-helper-img,
 	vertical-align: top;
 	background-repeat: no-repeat;
 	background-position: left;
-	background-image: url(image_path('dynatree/icons.gif'));
+	background-image: image-url('dynatree/icons.gif');
 	background-position: 0 0;
 }
 
@@ -209,7 +215,7 @@ span.dynatree-expander:hover
 .dynatree-loading span.dynatree-expander  /* 'Loading' status overrides all others */
 {
 	background-position: 0 0;
-	background-image: url(image_path('dynatree/loading.gif'));
+	background-image: image-url('dynatree/loading.gif');
 }
 
 /* white arrows on active item - for accordion trees only*/
@@ -325,7 +331,7 @@ span.dynatree-icon /* Default icon */
 
 .dynatree-statusnode-wait span.dynatree-icon
 {
-	background-image: url(image_path('dynatree/loading.gif'));
+	background-image: image-url('dynatree/loading.gif');
 }
 
 .dynatree-statusnode-error span.dynatree-icon

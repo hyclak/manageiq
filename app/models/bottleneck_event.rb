@@ -1,4 +1,4 @@
-class BottleneckEvent < ActiveRecord::Base
+class BottleneckEvent < ApplicationRecord
   belongs_to :resource, :polymorphic => true
 
   include ReportableMixin
@@ -6,15 +6,15 @@ class BottleneckEvent < ActiveRecord::Base
   serialize :context_data
 
   def self.last_created_on(obj)
-    event = where("resource_type = ? AND resource_id = ?", obj.class.name, obj.id).order("created_on DESC").first
+    event = where(:resource => obj).order("created_on DESC").first
     event ? event.created_on : nil
   end
 
   def self.generate_future_events(obj)
-    _log.info("Generating future bottleneck events for: [#{obj.class} - #{obj.name}]...")
+    log_message_uniq_prefix = "Generating future bottleneck events for: [#{obj.class} - #{obj.name}]..."
     last = last_created_on(obj)
     if last && last >= 24.hours.ago.utc
-      _log.info("Generating future bottleneck events for: [#{obj.class} - #{obj.name}]... Skipped, last creation [#{last}] was less than 24 hours ago")
+      _log.info("#{log_message_uniq_prefix} Skipped, last creation [#{last}] was less than 24 hours ago")
       return
     end
     dels = delete_future_events_for_obj(obj)
@@ -31,11 +31,14 @@ class BottleneckEvent < ActiveRecord::Base
       event.timestamp     = result.delete(:timestamp)
       event.context_data  = e[:definition].merge(result)
       event.message       = event.substitute(event.message)
-      event.save
-      adds += 1
+      if event.save
+        adds += 1
+      else
+        _log.warn("#{log_message_uniq_prefix} failed with '#{event.errors.full_messages.join(', ')}'")
+      end
     end
 
-    _log.info("Generating future bottleneck events for: [#{obj.class} - #{obj.name}]... Complete - Added #{adds} / Deleted #{dels}")
+    _log.info("#{log_message_uniq_prefix} Complete - Added #{adds} / Deleted #{dels}")
   end
 
   def self.calculate_future_event(obj, options)
@@ -55,7 +58,7 @@ class BottleneckEvent < ActiveRecord::Base
   end
 
   def self.delete_future_events_for_obj(obj)
-    delete_all(:resource_type => obj.class.name, :resource_id => obj.id, :future => true)
+    where(:resource => obj, :future => true).delete_all
   end
 
   def context

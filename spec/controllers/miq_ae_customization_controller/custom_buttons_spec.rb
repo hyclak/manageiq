@@ -1,6 +1,3 @@
-require "spec_helper"
-include UiConstants
-
 describe MiqAeCustomizationController do
   before(:each) do
     set_user_privileges
@@ -13,14 +10,14 @@ describe MiqAeCustomizationController do
         CustomButton.button_classes.each { |db| target_classes[db] = ui_lookup(:model => db) }
         controller.instance_variable_set(:@sb, :target_classes => target_classes)
         controller.send(:ab_get_node_info, "xx-ab_Host_cbg-10r95_cb-#{custom_button.id}")
-        assigns(:resolve)[:new][:target_class].should == "Host"
+        expect(assigns(:resolve)[:new][:target_class]).to eq("Host")
       end
     end
   end
   render_views
   describe "#ab_form" do
     it "displays the layout" do
-      MiqAeClass.stub(:find_distinct_instances_across_domains => [double(:name => "foo")])
+      allow(MiqAeClass).to receive_messages(:find_distinct_instances_across_domains => [double(:name => "foo")])
       @sb = {:active_tree => :ab_tree,
              :trees       => {:ab_tree => {:tree => :ab_tree}},
              :params      => {:instance_name => 'CustomButton_1'}
@@ -40,7 +37,7 @@ describe MiqAeCustomizationController do
       controller.instance_variable_set(:@edit, edit)
       session[:edit] = edit
       session[:resolve] = {}
-      post :automate_button_field_changed, :instance_name => 'CustomButton', :name => 'test', :button_image => '01'
+      post :automate_button_field_changed, :params => { :instance_name => 'CustomButton', :name => 'test', :button_image => '01' }
       expect(response.status).to eq(200)
     end
   end

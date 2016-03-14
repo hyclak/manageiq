@@ -3,8 +3,7 @@
 module MiqReport::Formatting
   extend ActiveSupport::Concern
 
-  fixture_dir = File.join(Rails.root, "db/fixtures")
-  format_hash = YAML.load_file(File.expand_path(File.join(fixture_dir, "miq_report_formats.yml")))
+  format_hash = YAML.load_file(ApplicationRecord::FIXTURE_DIR.join("miq_report_formats.yml"))
   FORMATS                       = format_hash[:formats].freeze
   FORMAT_DEFAULTS_AND_OVERRIDES = format_hash[:defaults_and_overrides].freeze
 
@@ -119,27 +118,27 @@ module MiqReport::Formatting
   end
 
   def format_number_with_delimiter(val, options = {})
-    av_options = {}
-    av_options[:delimiter] = options[:delimiter] if options.key?(:delimiter)
-    av_options[:separator] = options[:separator] if options.key?(:separator)
+    helper_options = {}
+    helper_options[:delimiter] = options[:delimiter] if options.key?(:delimiter)
+    helper_options[:separator] = options[:separator] if options.key?(:separator)
     val = apply_format_precision(val, options[:precision])
-    val = ActionView::Base.new.number_with_delimiter(val, av_options)
+    val = ApplicationController.helpers.number_with_delimiter(val, helper_options)
     apply_prefix_and_suffix(val, options)
   end
 
   def format_currency_with_delimiter(val, options = {})
-    av_options = {}
-    av_options[:delimiter] = options[:delimiter] if options.key?(:delimiter)
-    av_options[:separator] = options[:separator] if options.key?(:separator)
+    helper_options = {}
+    helper_options[:delimiter] = options[:delimiter] if options.key?(:delimiter)
+    helper_options[:separator] = options[:separator] if options.key?(:separator)
     val = apply_format_precision(val, options[:precision])
-    val = ActionView::Base.new.number_to_currency(val, av_options)
+    val = ApplicationController.helpers.number_to_currency(val, helper_options)
     apply_prefix_and_suffix(val, options)
   end
 
   def format_bytes_to_human_size(val, options = {})
-    av_options = {}
-    av_options[:precision] = options[:precision] || 0  # Precision of 0 returns the significant digits
-    val = ActionView::Base.new.number_to_human_size(val, av_options)
+    helper_options = {}
+    helper_options[:precision] = options[:precision] || 0  # Precision of 0 returns the significant digits
+    val = ApplicationController.helpers.number_to_human_size(val, helper_options)
     apply_prefix_and_suffix(val, options)
   end
 
@@ -156,7 +155,7 @@ module MiqReport::Formatting
   end
 
   def format_mhz_to_human_size(val, options = {})
-    val = ActionView::Base.new.mhz_to_human_size(val, options[:precision])
+    val = ApplicationController.helpers.mhz_to_human_size(val, options[:precision])
     apply_prefix_and_suffix(val, options)
   end
 

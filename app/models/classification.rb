@@ -1,4 +1,4 @@
-class Classification < ActiveRecord::Base
+class Classification < ApplicationRecord
   acts_as_tree
 
   belongs_to :tag
@@ -32,7 +32,7 @@ class Classification < ActiveRecord::Base
   default_value_for :single_value, false
   default_value_for :show,         true
 
-  FIXTURE_FILE = File.join(Rails.root, "db/fixtures/classifications.yml")
+  FIXTURE_FILE = FIXTURE_DIR.join("classifications.yml")
 
   def self.hash_all_by_type_and_name(conditions = {})
     ret = {}
@@ -502,8 +502,7 @@ class Classification < ActiveRecord::Base
     tag = Tag.in_my_region.find_by_name(Classification.name2tag(name, parent_id, ns))
     return if tag.nil?
 
-    tag.taggings.delete_all
-    tag.delete
+    tag.destroy
   end
 
   def delete_tags_and_entries

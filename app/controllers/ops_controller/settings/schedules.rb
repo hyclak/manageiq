@@ -38,7 +38,7 @@ module OpsController::Settings::Schedules
     when "cancel"
       @schedule = MiqSchedule.find_by_id(params[:id])
       if !@schedule || @schedule.id.blank?
-        add_flash(_("Add of new %s was cancelled by the user") % ui_lookup(:model => "MiqSchedule"))
+        add_flash(_("Add of new %{model} was cancelled by the user") % {:model => ui_lookup(:model => "MiqSchedule")})
       else
         add_flash(_("Edit of %{model} \"%{name}\" was cancelled by the user") % {:model => ui_lookup(:model => "MiqSchedule"), :name => @schedule.name})
       end
@@ -66,7 +66,7 @@ module OpsController::Settings::Schedules
       begin
         schedule.save!
       rescue StandardError => bang
-        add_flash(_("Error when adding a new schedule: ") << bang.message, :error)
+        add_flash(_("Error when adding a new schedule: %{message}") % {:message => bang.message}, :error)
         render :update do |page|
           page.replace("flash_msg_div", :partial => "layouts/flash_msg")
         end
@@ -169,7 +169,8 @@ module OpsController::Settings::Schedules
     if !params[:id] # showing a list
       schedules = find_checked_items
       if schedules.empty?
-        add_flash(_("No %{model} were selected for %{task}") % {:model => ui_lookup(:tables => "miq_schedule"), :task => "deletion"}, :error)
+        add_flash(_("No %{model} were selected for deletion") % {:model => ui_lookup(:tables => "miq_schedule")},
+                  :error)
         render :update do |page|
           page.replace("flash_msg_div", :partial => "layouts/flash_msg")
         end
@@ -180,7 +181,7 @@ module OpsController::Settings::Schedules
       replace_right_cell("root", [:settings])
     else # showing 1 schedule, delete it
       if params[:id].nil? || MiqSchedule.find_by_id(params[:id]).nil?
-        add_flash(_("%s no longer exists") % ui_lookup(:table => "miq_schedule"), :error)
+        add_flash(_("%{table} no longer exists") % {:table => ui_lookup(:table => "miq_schedule")}, :error)
         render :update do |page|
           page.replace("flash_msg_div", :partial => "layouts/flash_msg")
         end
@@ -196,20 +197,20 @@ module OpsController::Settings::Schedules
 
   def schedule_toggle(enable)
     msg = if enable
-            _("No %s were selected to be enabled")
+            _("The selected Schedules were enabled")
           else
-            _("No %s were selected to be disabled")
+            _("The selected Schedules were disabled")
           end
 
     schedules = find_checked_items
     if schedules.empty?
-      add_flash(msg % ui_lookup(:models => "MiqSchedule"), :error)
+      add_flash(msg, :error)
       render :update do |page|
         page.replace("flash_msg_div", :partial => "layouts/flash_msg")
       end
     end
     schedule_enable_disable(schedules, enable)  unless schedules.empty?
-    add_flash(msg % ui_lookup(:models => "MiqSchedule"), :info, true) unless flash_errors?
+    add_flash(msg, :info, true) unless flash_errors?
     schedule_build_list
     settings_get_info("st")
     replace_right_cell("root")
@@ -236,7 +237,7 @@ module OpsController::Settings::Schedules
     begin
       MiqSchedule.new.verify_file_depot(uri_settings)
     rescue StandardError => bang
-      add_flash(_("Error during '%s': ") % "Validate" << bang.message, :error)
+      add_flash(_("Error during 'Validate': %{message}") % {:message => bang.message}, :error)
     else
       add_flash(_('Depot Settings successfuly validated'))
     end
@@ -249,7 +250,11 @@ module OpsController::Settings::Schedules
 
   def build_saved_audit_hash(old_schedule_attributes, new_schedule, add)
     name  = new_schedule.respond_to?(:name) ? new_schedule.name : new_schedule.description
-    msg   = "[#{name}] Record #{add ? "added" : "updated"} ("
+    msg   = if add
+              _("[%{name}] Record added (") % {:name => name}
+            else
+              _("[%{name}] Record updated (") % {:name => name}
+            end
     event = "#{new_schedule.class.to_s.downcase}_record_#{add ? "add" : "update"}"
 
     attribute_difference = new_schedule.attributes.to_a - old_schedule_attributes.to_a
@@ -258,7 +263,7 @@ module OpsController::Settings::Schedules
     difference_messages = []
 
     attribute_difference.each do |key, value|
-      difference_messages << "#{key} changed to #{value}"
+      difference_messages << _("%{key} changed to %{value}") % {:key => key, :value => value}
     end
 
     msg = msg + difference_messages.join(", ") + ")"
@@ -382,12 +387,7 @@ module OpsController::Settings::Schedules
     @sortcol = session[:schedule_sortcol].nil? ? 0 : session[:schedule_sortcol].to_i
     @sortdir = session[:schedule_sortdir].nil? ? "ASC" : session[:schedule_sortdir]
 
-    # don't include db_backup records if backup not supported
-    if !DatabaseBackup.backup_supported?
-      @view, @pages = get_view(MiqSchedule, :conditions => ["towhat!=? And (prod_default!=? or prod_default IS NULL) And adhoc IS NULL", "DatabaseBackup", "system"]) # Get the records (into a view) and the paginator
-    else
-      @view, @pages = get_view(MiqSchedule, :conditions => ["prod_default!=? or prod_default IS NULL And adhoc IS NULL", "system"]) # Get the records (into a view) and the paginator
-    end
+    @view, @pages = get_view(MiqSchedule, :conditions => ["prod_default!=? or prod_default IS NULL And adhoc IS NULL", "system"]) # Get the records (into a view) and the paginator
 
     @current_page = @pages[:current] unless @pages.nil? # save the current page number
     session[:schedule_sortcol] = @sortcol
@@ -399,11 +399,11 @@ module OpsController::Settings::Schedules
     if params[:action_typ] != "db_backup"
       if %w(global my).include?(params[:filter_typ])
         if params[:filter_value].blank?  # Check for search filter chosen
-          add_flash(_("%s must be selected") % "filter", :error)
+          add_flash(_("Filter must be selected"), :error)
           valid = false
         end
       elsif sched.filter.exp.keys.first != "IS NOT NULL" && params[:filter_value].blank? # Check for empty filter value
-        add_flash(_("%s must be selected") % "filter value", :error)
+        add_flash(_("Filter value must be selected"), :error)
         valid = false
       end
     end
@@ -536,61 +536,65 @@ module OpsController::Settings::Schedules
 
   def build_schedule_options_for_select
     @action_type_options_for_select = [
-      ["VM Analysis", "vm"],
-      ["Template Analysis", "miq_template"],
-      ["Host Analysis", "host"],
-      ["#{ui_lookup(:model => 'EmsCluster')} Analysis", "emscluster"],
-      ["#{ui_lookup(:model => 'Storage')} Analysis", "storage"]
+      [_("VM Analysis"), "vm"],
+      [_("Template Analysis"), "miq_template"],
+      [_("Host Analysis"), "host"],
+      [_("%{model} Analysis") % {:model => ui_lookup(:model => 'EmsCluster')}, "emscluster"],
+      [_("%{model} Analysis") % {:model => ui_lookup(:model => 'Storage')}, "storage"]
     ]
-    @action_type_options_for_select.push(["VM Compliance Check", "vm_check_compliance"]) if role_allows(:feature => "vm_check_compliance")
-    @action_type_options_for_select.push(["Host Compliance Check", "host_check_compliance"]) if role_allows(:feature => "host_check_compliance")
-    @action_type_options_for_select.push(["Database Backup", "db_backup"]) if DatabaseBackup.backup_supported?
+    if role_allows(:feature => "vm_check_compliance")
+      @action_type_options_for_select.push([_("VM Compliance Check"), "vm_check_compliance"])
+    end
+    if role_allows(:feature => "host_check_compliance")
+      @action_type_options_for_select.push([_("Host Compliance Check"), "host_check_compliance"])
+    end
+    @action_type_options_for_select.push([_("Database Backup"), "db_backup"])
 
     @vm_options_for_select = [
-      ["All VMs", "all"],
-      ["All VMs for #{ui_lookup(:table => "ext_management_systems")}", "ems"],
-      ["All VMs for #{ui_lookup(:table => "ems_clusters")}", "cluster"],
-      ["All VMs for Host", "host"],
-      ["A single VM", "vm"]
+      [_("All VMs"), "all"],
+      [_("All VMs for %{table}") % {:table => ui_lookup(:table => "ext_management_systems")}, "ems"],
+      [_("All VMs for %{table}") % {:table => ui_lookup(:table => "ems_clusters")}, "cluster"],
+      [_("All VMs for Host"), "host"],
+      [_("A single VM"), "vm"]
     ] +
-                             (@vm_global_filters.empty? ? [] : [["Global Filters", "global"]]) +
-                             (@vm_my_filters.empty? ? [] : [["My Filters", "my"]])
+                             (@vm_global_filters.empty? ? [] : [[_("Global Filters"), "global"]]) +
+                             (@vm_my_filters.empty? ? [] : [[_("My Filters"), "my"]])
 
     @template_options_for_select = [
-      ["All Templates", "all"],
-      ["All Templates for #{ui_lookup(:table => "ext_management_systems")}", "ems"],
-      ["All Templates for #{ui_lookup(:table => "ems_clusters")}", "cluster"],
-      ["All Templates for Host", "host"],
-      ["A single Template", "miq_template"]
+      [_("All Templates"), "all"],
+      [_("All Templates for %{table}") % {:table => ui_lookup(:table => "ext_management_systems")}, "ems"],
+      [_("All Templates for %{table}") % {:table => ui_lookup(:table => "ems_clusters")}, "cluster"],
+      [_("All Templates for Host"), "host"],
+      [_("A single Template"), "miq_template"]
     ] +
-                                   (@miq_template_global_filters.empty? ? [] : [["Global Filters", "global"]]) +
-                                   (@miq_template_my_filters.empty? ? [] : [["My Filters", "my"]])
+                                   (@miq_template_global_filters.empty? ? [] : [[_("Global Filters"), "global"]]) +
+                                   (@miq_template_my_filters.empty? ? [] : [[_("My Filters"), "my"]])
 
     @host_options_for_select = [
-      ["All Hosts", "all"],
-      ["All Hosts for #{ui_lookup(:table => "ext_management_systems")}", "ems"],
-      ["All Hosts for #{ui_lookup(:table => "ems_clusters")}", "cluster"],
-      ["A single Host", "host"]
+      [_("All Hosts"), "all"],
+      [_("All Hosts for %{table}") % {:table => ui_lookup(:table => "ext_management_systems")}, "ems"],
+      [_("All Hosts for %{table}") % {:table => ui_lookup(:table => "ems_clusters")}, "cluster"],
+      [_("A single Host"), "host"]
     ] +
-                               (@host_global_filters.empty? ? [] : [["Global Filters", "global"]]) +
-                               (@host_my_filters.empty? ? [] : [["My Filters", "my"]])
+                               (@host_global_filters.empty? ? [] : [[_("Global Filters"), "global"]]) +
+                               (@host_my_filters.empty? ? [] : [[_("My Filters"), "my"]])
 
     @cluster_options_for_select = [
-      ["All Clusters", "all"],
-      ["All Clusters for #{ui_lookup(:table => "ext_management_systems")}", "ems"],
-      ["A single Cluster", "cluster"]
+      [_("All Clusters"), "all"],
+      [_("All Clusters for %{table}") % {:table => ui_lookup(:table => "ext_management_systems")}, "ems"],
+      [_("A single Cluster"), "cluster"]
     ] +
-                                  (@cluster_global_filters.empty? ? [] : [["Global Filters", "global"]]) +
-                                  (@cluster_my_filters.empty? ? [] : [["My Filters", "my"]])
+                                  (@cluster_global_filters.empty? ? [] : [[_("Global Filters"), "global"]]) +
+                                  (@cluster_my_filters.empty? ? [] : [[_("My Filters"), "my"]])
 
     @storage_options_for_select = [
-      ["All Datastores", "all"],
-      ["All Datastores for Host", "host"],
-      ["All Datastores for #{ui_lookup(:table => "ext_management_systems")}", "ems"],
-      ["A single Datastore", "storage"]
+      [_("All Datastores"), "all"],
+      [_("All Datastores for Host"), "host"],
+      [_("All Datastores for %{table}") % {:table => ui_lookup(:table => "ext_management_systems")}, "ems"],
+      [_("A single Datastore"), "storage"]
     ] +
-                                  (@storage_global_filters.empty? ? [] : [["Global Filters", "global"]]) +
-                                  (@storage_my_filters.empty? ? [] : [["My Filters", "my"]])
+                                  (@storage_global_filters.empty? ? [] : [[_("Global Filters"), "global"]]) +
+                                  (@storage_my_filters.empty? ? [] : [[_("My Filters"), "my"]])
 
     build_db_options_for_select
   end

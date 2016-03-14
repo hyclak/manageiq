@@ -1,11 +1,7 @@
 #
 # REST API Request Tests - /api/vms
 #
-require 'spec_helper'
-
 describe ApiController do
-  include Rack::Test::Methods
-
   let(:zone)       { FactoryGirl.create(:zone, :name => "api_zone") }
   let(:miq_server) { FactoryGirl.create(:miq_server, :guid => miq_server_guid, :zone => zone) }
   let(:ems)        { FactoryGirl.create(:ems_vmware, :zone => zone) }
@@ -28,14 +24,6 @@ describe ApiController do
   let(:vm_url)             { vms_url(vm.id) }
 
   let(:invalid_vm_url) { vms_url(999_999) }
-
-  before(:each) do
-    init_api_spec_env
-  end
-
-  def app
-    Vmdb::Application
-  end
 
   def update_raw_power_state(state, *vms)
     vms.each { |vm| vm.update_attributes!(:raw_power_state => state) }
@@ -929,6 +917,166 @@ describe ApiController do
       run_post(vm_url, gen_request(:retire, :date => date.strftime("%m/%d/%Y")))
 
       expect_single_action_result(:success => true, :message => /#{vm.id}.* retiring/i, :href => :vm_url)
+    end
+  end
+
+  context "Vm reset action" do
+    it "to an invalid vm" do
+      api_basic_authorize action_identifier(:vms, :reset)
+
+      run_post(invalid_vm_url, gen_request(:reset))
+
+      expect_resource_not_found
+    end
+
+    it "to an invalid vm without appropriate role" do
+      api_basic_authorize
+
+      run_post(invalid_vm_url, gen_request(:reset))
+
+      expect_request_forbidden
+    end
+
+    it "to a single Vm" do
+      api_basic_authorize action_identifier(:vms, :reset)
+
+      run_post(vm_url, gen_request(:reset))
+
+      expect_single_action_result(:success => true, :message => /#{vm.id}.* resetting/i, :href => :vm_url)
+    end
+
+    it "to multiple Vms" do
+      api_basic_authorize collection_action_identifier(:vms, :reset)
+
+      run_post(vms_url, gen_request(:reset, [{"href" => vm1_url}, {"href" => vm2_url}]))
+
+      expect_multiple_action_result(2)
+      expect_result_resources_to_include_hrefs("results", :vms_list)
+      expect_result_resources_to_match_key_data(
+        "results",
+        "message",
+        [/#{vm1.id}.* resetting/i, /#{vm2.id}.* resetting/i]
+      )
+    end
+  end
+
+  context "Vm shutdown guest action" do
+    it "to an invalid vm" do
+      api_basic_authorize action_identifier(:vms, :shutdown_guest)
+
+      run_post(invalid_vm_url, gen_request(:shutdown_guest))
+
+      expect_resource_not_found
+    end
+
+    it "to an invalid vm without appropriate role" do
+      api_basic_authorize
+
+      run_post(invalid_vm_url, gen_request(:shutdown_guest))
+
+      expect_request_forbidden
+    end
+
+    it "to a single Vm" do
+      api_basic_authorize action_identifier(:vms, :shutdown_guest)
+
+      run_post(vm_url, gen_request(:shutdown_guest))
+
+      expect_single_action_result(:success => true, :message => /#{vm.id}.* shutting down/i, :href => :vm_url)
+    end
+
+    it "to multiple Vms" do
+      api_basic_authorize collection_action_identifier(:vms, :shutdown_guest)
+
+      run_post(vms_url, gen_request(:shutdown_guest, [{"href" => vm1_url}, {"href" => vm2_url}]))
+
+      expect_multiple_action_result(2)
+      expect_result_resources_to_include_hrefs("results", :vms_list)
+      expect_result_resources_to_match_key_data(
+        "results",
+        "message",
+        [/#{vm1.id}.* shutting down/i, /#{vm2.id}.* shutting down/i]
+      )
+    end
+  end
+
+  context "Vm refresh action" do
+    it "to an invalid vm" do
+      api_basic_authorize action_identifier(:vms, :refresh)
+
+      run_post(invalid_vm_url, gen_request(:refresh))
+
+      expect_resource_not_found
+    end
+
+    it "to an invalid vm without appropriate role" do
+      api_basic_authorize
+
+      run_post(invalid_vm_url, gen_request(:refresh))
+
+      expect_request_forbidden
+    end
+
+    it "to a single Vm" do
+      api_basic_authorize action_identifier(:vms, :refresh)
+
+      run_post(vm_url, gen_request(:refresh))
+
+      expect_single_action_result(:success => true, :message => /#{vm.id}.* refreshing/i, :href => :vm_url)
+    end
+
+    it "to multiple Vms" do
+      api_basic_authorize collection_action_identifier(:vms, :refresh)
+
+      run_post(vms_url, gen_request(:refresh, [{"href" => vm1_url}, {"href" => vm2_url}]))
+
+      expect_multiple_action_result(2)
+      expect_result_resources_to_include_hrefs("results", :vms_list)
+      expect_result_resources_to_match_key_data(
+        "results",
+        "message",
+        [/#{vm1.id}.* refreshing/i, /#{vm2.id}.* refreshing/i]
+      )
+    end
+  end
+
+  context "Vm reboot guest action" do
+    it "to an invalid vm" do
+      api_basic_authorize action_identifier(:vms, :reboot_guest)
+
+      run_post(invalid_vm_url, gen_request(:reboot_guest))
+
+      expect_resource_not_found
+    end
+
+    it "to an invalid vm without appropriate role" do
+      api_basic_authorize
+
+      run_post(invalid_vm_url, gen_request(:reboot_guest))
+
+      expect_request_forbidden
+    end
+
+    it "to a single Vm" do
+      api_basic_authorize action_identifier(:vms, :reboot_guest)
+
+      run_post(vm_url, gen_request(:reboot_guest))
+
+      expect_single_action_result(:success => true, :message => /#{vm.id}.* rebooting/i, :href => :vm_url)
+    end
+
+    it "to multiple Vms" do
+      api_basic_authorize collection_action_identifier(:vms, :reboot_guest)
+
+      run_post(vms_url, gen_request(:reboot_guest, [{"href" => vm1_url}, {"href" => vm2_url}]))
+
+      expect_multiple_action_result(2)
+      expect_result_resources_to_include_hrefs("results", :vms_list)
+      expect_result_resources_to_match_key_data(
+        "results",
+        "message",
+        [/#{vm1.id}.* rebooting/i, /#{vm2.id}.* rebooting/i]
+      )
     end
   end
 end

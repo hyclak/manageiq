@@ -11,7 +11,6 @@ module OpsController::Settings::RHN
 
   SUBSCRIPTION_TYPES =
     [['Red Hat Subscription Management', 'sm_hosted'],
-     ['Red Hat Satellite 5',             'rhn_satellite'],
      ['Red Hat Satellite 6',             'rhn_satellite6']]
 
   def rhn_subscription_types
@@ -23,29 +22,26 @@ module OpsController::Settings::RHN
   end
 
   included do
-    hide_action(:rhn_subscription_map)
-    hide_action(:rhn_update_information)
-    hide_action(:rhn_subscription)
-    hide_action(:rhn_save_subscription)
-    hide_action(:rhn_credentials_from_edit)
-    hide_action(:rhn_fire_available_organizations)
-    hide_action(:rhn_load_session)
-    hide_action(:rhn_gather_checks)
+    private(:rhn_subscription_map)
+    private(:rhn_update_information)
+    private(:rhn_subscription)
+    private(:rhn_save_subscription)
+    private(:rhn_credentials_from_edit)
+    private(:rhn_fire_available_organizations)
+    private(:rhn_load_session)
+    private(:rhn_gather_checks)
 
     helper_method(:rhn_subscription_types)
-    hide_action(:rhn_subscription_types)
+    private(:rhn_subscription_types)
 
     helper_method(:rhn_address_string)
-    hide_action(:rhn_address_string)
+    private(:rhn_address_string)
 
     helper_method(:rhn_account_info_string)
-    hide_action(:rhn_account_info_string)
-
-    helper_method(:rhn_validate_enabled)
-    hide_action(:rhn_validate_enabled)
+    private(:rhn_account_info_string)
 
     helper_method(:rhn_default_enabled)
-    hide_action(:rhn_default_enabled)
+    private(:rhn_default_enabled)
   end
 
   def rhn_address_string
@@ -55,11 +51,11 @@ module OpsController::Settings::RHN
   end
 
   def rhn_account_info_string
-    "Enter your Red Hat#{@edit[:new][:register_to] == "sm_hosted" ? "" : " Network Satellite"} account information"
-  end
-
-  def rhn_validate_enabled
-    @edit[:new][:register_to] != 'rhn_satellite'
+    if @edit[:new][:register_to] == "sm_hosted"
+      _("Enter your Red Hat account information")
+    else
+      _("Enter your Red Hat Network Satellite account information")
+    end
   end
 
   def rhn_default_enabled
@@ -173,7 +169,7 @@ module OpsController::Settings::RHN
     if params[:task_id] # wait_for_task is done --> read the task record
       miq_task = MiqTask.find(params[:task_id])
       if miq_task.status != 'Ok'
-        add_flash(_("Credential validation returned: %s") % miq_task.message, :error)
+        add_flash(_("Credential validation returned: %{message}") % {:message => miq_task.message}, :error)
       else
         # task succeeded, we have the array of organization names in miq_task.task_results
         add_flash(_("Credential validation was successful"))
@@ -208,11 +204,11 @@ module OpsController::Settings::RHN
   end
 
   RHN_OBLIGATORY_FIELD_NAMES = {
-    :customer_userid   => 'RHN Login',
-    :customer_password => 'RHN Password',
-    :server_url        => 'Server Address',
-    :repo_name         => 'Repository Name',
-    :proxy_address     => 'HTTP Proxy Address',
+    :customer_userid   => _('RHN Login'),
+    :customer_password => _('RHN Password'),
+    :server_url        => _('Server Address'),
+    :repo_name         => _('Repository Name'),
+    :proxy_address     => _('HTTP Proxy Address'),
   }.freeze
 
   # FIXME: once we have a way to separately allow 'Save' and 'Reset' buttons
@@ -226,7 +222,7 @@ module OpsController::Settings::RHN
       if @edit[:new][field].present?
         false
       else
-        add_flash(_("%s is required") % RHN_OBLIGATORY_FIELD_NAMES[field], :error)
+        add_flash(_("%{name} is required") % {:name => RHN_OBLIGATORY_FIELD_NAMES[field]}, :error)
         true
       end
     end.empty?
@@ -304,9 +300,9 @@ module OpsController::Settings::RHN
             MiqServer.queue_apply_updates(server_ids)
           end
 
-          add_flash(_("%s has been initiated for the selected Servers") % verb)
+          add_flash(_("%{item} has been initiated for the selected Servers") % {:item => verb})
         rescue => error
-          add_flash(_("Error occured when queuing action: %s") % error.message, :error)
+          add_flash(_("Error occured when queuing action: %{message}") % {:message => error.message}, :error)
         end
       end
     end
@@ -350,6 +346,6 @@ module OpsController::Settings::RHN
   private
 
   def reset_repo_name_from_default
-    MiqDatabase.registration_default_value_for_update_repo_name(@edit[:new][:register_to])
+    MiqDatabase.registration_default_value_for_update_repo_name
   end
 end

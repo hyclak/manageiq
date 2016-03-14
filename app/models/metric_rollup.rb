@@ -1,14 +1,8 @@
-class MetricRollup < ActiveRecord::Base
+class MetricRollup < ApplicationRecord
   include Metric::Common
 
-  def self.find_all_by_interval_and_time_range(interval, start_time, end_time = nil, count = :all, options = {})
-    my_cond = ["capture_interval_name = ? and timestamp > ? and timestamp <= ?", interval, start_time, end_time]
-
-    passed_cond = options.delete(:conditions)
-    options[:conditions] = passed_cond.nil? ? my_cond : "( #{send(:sanitize_sql_for_conditions, my_cond)} ) AND ( #{send(:sanitize_sql, passed_cond)} )"
-
-    _log.debug("Find options: #{options.inspect}")
-    find(count, options)
+  def self.find_all_by_interval_and_time_range(interval, start_time, end_time)
+    where(:capture_interval_name => interval, :timestamp => start_time..end_time)
   end
 
   #
@@ -46,5 +40,13 @@ class MetricRollup < ActiveRecord::Base
     else
       return val
     end
+  end
+
+  def self.latest_rollups(resource_type, resource_ids = nil, capture_interval_name = nil)
+    capture_interval_name ||= "hourly"
+    metrics = where(:resource_type => resource_type, :capture_interval_name => capture_interval_name)
+    metrics = metrics.where(:resource_id => resource_ids) if resource_ids
+    metrics = metrics.order(:resource_id, :timestamp => :desc)
+    metrics.select('DISTINCT ON (metric_rollups.resource_id) metric_rollups.*')
   end
 end

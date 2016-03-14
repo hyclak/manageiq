@@ -1,41 +1,39 @@
-require "spec_helper"
-
 describe Tag do
   context ".filter_ns" do
     it "normal case" do
       tag1 = double
-      tag1.stub(:name).and_return("/managed/abc")
-      described_class.filter_ns([tag1], "/managed").should == ["abc"]
+      allow(tag1).to receive(:name).and_return("/managed/abc")
+      expect(described_class.filter_ns([tag1], "/managed")).to eq(["abc"])
     end
 
     it "tag == namespace" do
       tag1 = double
-      tag1.stub(:name).and_return("/managed")
-      described_class.filter_ns([tag1], "/managed").should == []
+      allow(tag1).to receive(:name).and_return("/managed")
+      expect(described_class.filter_ns([tag1], "/managed")).to eq([])
     end
 
     it "tag == namespace and a second tag" do
       tag1 = double
-      tag1.stub(:name).and_return("/managed")
+      allow(tag1).to receive(:name).and_return("/managed")
 
       tag2 = double
-      tag2.stub(:name).and_return("/managed/abc")
-      described_class.filter_ns([tag1, tag2], "/managed").should == ["abc"]
+      allow(tag2).to receive(:name).and_return("/managed/abc")
+      expect(described_class.filter_ns([tag1, tag2], "/managed")).to eq(["abc"])
     end
 
     it "empty tag" do
       tag1 = double
-      tag1.stub(:name).and_return("/managed/")
+      allow(tag1).to receive(:name).and_return("/managed/")
 
-      described_class.filter_ns([tag1], "/managed").should == []
+      expect(described_class.filter_ns([tag1], "/managed")).to eq([])
     end
 
     it "nil namespace" do
-      described_class.filter_ns(["/managed/abc"], nil).should == ["/managed/abc"]
+      expect(described_class.filter_ns(["/managed/abc"], nil)).to eq(["/managed/abc"])
     end
 
     it "nil namespace with nil tag" do
-      described_class.filter_ns([nil, "/managed/abc"], nil).should == ["/managed/abc"]
+      expect(described_class.filter_ns([nil, "/managed/abc"], nil)).to eq(["/managed/abc"])
     end
   end
 
@@ -76,18 +74,39 @@ describe Tag do
     end
 
     it "finds tag by name" do
-      Tag.find_by_classification_name("test_category").should_not.nil?
-      Tag.find_by_classification_name("test_category").name.should == '/managed/test_category'
+      expect(Tag.find_by_classification_name("test_category")).not_to be_nil
+      expect(Tag.find_by_classification_name("test_category").name).to eq('/managed/test_category')
     end
 
     it "doesn't find non tag" do
-      Tag.find_by_classification_name("test_entry").should.nil?
+      expect(Tag.find_by_classification_name("test_entry")).to be_nil
     end
 
     it "finds tag by name and ns" do
       ns = '/managed/test_category'
-      Tag.find_by_classification_name("test_entry", nil, ns).should_not.nil?
-      Tag.find_by_classification_name("test_entry", nil, ns).name.should == "#{ns}/test_entry"
+      expect(Tag.find_by_classification_name("test_entry", nil, ns)).not_to be_nil
+      expect(Tag.find_by_classification_name("test_entry", nil, ns).name).to eq("#{ns}/test_entry")
+    end
+  end
+
+  describe "#destroy" do
+    let(:miq_group)       { FactoryGirl.create(:miq_group) }
+    let(:other_miq_group) { FactoryGirl.create(:miq_group) }
+    let(:filters)         { [["/managed/prov_max_memory/test"], ["/managed/my_name/test"]] }
+    let(:tag)             { FactoryGirl.create(:tag, :name => "/managed/my_name/test") }
+
+    before :each do
+      miq_group.set_managed_filters(filters)
+      other_miq_group.set_managed_filters(filters)
+      [miq_group, other_miq_group].each(&:save)
+    end
+
+    it "destroys tag and remove it from all groups's managed filters" do
+      tag.destroy
+
+      expected_filters = [["/managed/prov_max_memory/test"]]
+      MiqGroup.all.each { |group| expect(group.get_managed_filters).to match_array(expected_filters) }
+      expect(Tag.all).to be_empty
     end
   end
 end

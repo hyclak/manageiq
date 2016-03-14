@@ -70,10 +70,6 @@ module ContainerGroupHelper::TextualSummary
   # Items
   #
 
-  def textual_name
-    @record.name
-  end
-
   def textual_phase
     @record.phase
   end
@@ -86,33 +82,25 @@ module ContainerGroupHelper::TextualSummary
     @record.reason
   end
 
-  def textual_creation_timestamp
-    format_timezone(@record.creation_timestamp)
-  end
-
-  def textual_resource_version
-    @record.resource_version
-  end
-
   def textual_restart_policy
     @record.restart_policy
   end
 
   def textual_dns_policy
-    {:label => "DNS Policy", :value => @record.dns_policy}
+    {:label => _("DNS Policy"), :value => @record.dns_policy}
   end
 
   def textual_ip
-    {:label => "IP Address", :value => @record.ipaddress}
+    {:label => _("IP Address"), :value => @record.ipaddress}
   end
 
   def textual_lives_on
     lives_on_ems = @record.container_node.try(:lives_on).try(:ext_management_system)
     return nil if lives_on_ems.nil?
     # TODO: handle the case where the node is a bare-metal
-    lives_on_entity_name = lives_on_ems.kind_of?(EmsCloud) ? "Instance" : "Virtual Machine"
+    lives_on_entity_name = lives_on_ems.kind_of?(EmsCloud) ? _("Instance") : _("Virtual Machine")
     {
-      :label => "Underlying #{lives_on_entity_name}",
+      :label => _("Underlying %{name}") % {:name => lives_on_entity_name},
       :image => "vendor-#{lives_on_ems.image_name}",
       :value => "#{@record.container_node.lives_on.name}",
       :link  => url_for(
@@ -121,5 +109,25 @@ module ContainerGroupHelper::TextualSummary
         :id         => @record.container_node.lives_on.id
       )
     }
+  end
+
+  def textual_container_statuses_summary
+    %i(waiting running terminated)
+  end
+
+  def container_statuses_summary
+    @container_statuses_summary ||= @record.container_states_summary
+  end
+
+  def textual_waiting
+    container_statuses_summary[:waiting] || 0
+  end
+
+  def textual_running
+    container_statuses_summary[:running] || 0
+  end
+
+  def textual_terminated
+    container_statuses_summary[:terminated] || 0
   end
 end

@@ -455,6 +455,93 @@
       :feature_type: control
       :identifier: cloud_tenant_tag
 
+# CloudVolume
+- :name: Cloud Volumes
+  :description: Everything under Cloud Volumes
+  :feature_type: node
+  :identifier: cloud_volume
+  :children:
+  - :name: View
+    :description: View Volumes
+    :feature_type: view
+    :identifier: cloud_volume_view
+    :children:
+    - :name: List
+      :description: Display Lists of Volumes
+      :feature_type: view
+      :identifier: cloud_volume_show_list
+    - :name: Show
+      :description: Display Individual Volumes
+      :feature_type: view
+      :identifier: cloud_volume_show
+  - :name: Operate
+    :description: Perform Operations on Volumes
+    :feature_type: control
+    :identifier: cloud_volume_control
+    :children:
+    - :name: Edit Tags
+      :description: Edit Tags of Volumes
+      :feature_type: control
+      :identifier: cloud_volume_tag
+
+# AuthKeyPair
+- :name: Auth Key Pairs
+  :description: Everything under Auth Key Pairs
+  :feature_type: node
+  :identifier: auth_key_pair_cloud
+  :children:
+  - :name: View
+    :description: View Key Pairs
+    :feature_type: view
+    :identifier: auth_key_pair_cloud_view
+    :children:
+    - :name: List
+      :description: Display Lists of Key Pairs
+      :feature_type: view
+      :identifier: auth_key_pair_cloud_show_list
+    - :name: Show
+      :description: Display Individual Key Pairs
+      :feature_type: view
+      :identifier: auth_key_pair_cloud_show
+  - :name: Operate
+    :description: Perform Operations on Key Pairs
+    :feature_type: control
+    :identifier: auth_key_pair_cloud_control
+    :children:
+    - :name: Edit Tags
+      :description: Edit Tags of Key Pairs
+      :feature_type: control
+      :identifier: auth_key_pair_cloud_tag
+
+# CloudVolumeSnapshot
+- :name: Cloud Volume Snapshots
+  :description: Everything under Cloud Volume Snapshots
+  :feature_type: node
+  :identifier: cloud_volume_snapshot
+  :children:
+  - :name: View
+    :description: View Snapshots
+    :feature_type: view
+    :identifier: cloud_volume_snapshot_view
+    :children:
+    - :name: List
+      :description: Display Lists of Snapshots
+      :feature_type: view
+      :identifier: cloud_volume_snapshot_show_list
+    - :name: Show
+      :description: Display Individual Snapshots
+      :feature_type: view
+      :identifier: cloud_volume_snapshot_show
+  - :name: Operate
+    :description: Perform Operations on Snapshots
+    :feature_type: control
+    :identifier: cloud_volume_snapshot_control
+    :children:
+    - :name: Edit Tags
+      :description: Edit Tags of Snapshots
+      :feature_type: control
+      :identifier: cloud_volume_snapshot_tag
+
 # Security Group
 - :name: Security Groups
   :description: Everything under Security Groups
@@ -3027,6 +3114,10 @@
       :description: Display Individual Containers Providers
       :feature_type: view
       :identifier: ems_container_show
+    - :name: Utilization
+      :description: Show Capacity & Utilization data of Providers
+      :feature_type: view
+      :identifier: ems_container_perf
     - :name: Timeline
       :description: Display Timelines for Containers Providers
       :feature_type: view
@@ -3061,6 +3152,160 @@
       :description: Add a Containers Provider
       :feature_type: admin
       :identifier: ems_container_new
+
+  # EmsMiddleware
+  - :name: Providers
+    :description: Everything under Middleware Providers
+    :feature_type: node
+    :identifier: ems_middleware
+    :children:
+    - :name: View
+      :description: View Middleware Providers
+      :feature_type: view
+      :identifier: ems_middleware_view
+      :children:
+      - :name: List
+        :description: Display Lists of Middleware Providers
+        :feature_type: view
+        :identifier: ems_middleware_show_list
+      - :name: Show
+        :description: Display Individual Middleware Providers
+        :feature_type: view
+        :identifier: ems_middleware_show
+      - :name: Timeline
+        :description: Display Timelines for Middleware Providers
+        :feature_type: view
+        :identifier: ems_middleware_timeline
+    - :name: Operate
+      :description: Perform Operations on Middleware Providers
+      :feature_type: control
+      :identifier: ems_middleware_control
+      :children:
+      - :name: Refresh
+        :description: Refresh Middleware Providers
+        :feature_type: control
+        :identifier: ems_middleware_refresh
+      - :name: Edit Tags
+        :description: Edit Tags of Middleware Providers
+        :feature_type: control
+        :identifier: ems_middleware_tag
+    - :name: Modify
+      :description: Modify Middleware Providers
+      :feature_type: admin
+      :identifier: ems_middleware_admin
+      :children:
+      - :name: Remove
+        :description: Remove Middleware Providers from the VMDB
+        :feature_type: admin
+        :identifier: ems_middleware_delete
+      - :name: Edit
+        :description: Edit a Middleware Provider
+        :feature_type: admin
+        :identifier: ems_middleware_edit
+      - :name: Add
+        :description: Add a Middleware Provider
+        :feature_type: admin
+        :identifier: ems_middleware_new
+
+  # MiddlewareServer
+  - :name: MiddlewareServer
+    :description: Everything under Middleware Servers
+    :feature_type: node
+    :identifier: middleware_server
+    :children:
+    - :name: View
+      :description: View Middleware Servers
+      :feature_type: view
+      :identifier: middleware_server_view
+      :children:
+      - :name: List
+        :description: Display Lists of Middleware Servers
+        :feature_type: view
+        :identifier: middleware_server_show_list
+      - :name: Show
+        :description: Display Individual Middleware Servers
+        :feature_type: view
+        :identifier: middleware_server_show
+      - :name: Timeline
+        :description: Display Timelines for Middleware Servers
+        :feature_type: view
+        :identifier: middleware_server_timeline
+      - :name: Utilization
+        :description: Show Capacity & Utilization data of Middleware Servers
+        :feature_type: view
+        :identifier: middleware_server_perf
+    - :name: Modify
+      :description: Modify Middleware Servers
+      :feature_type: admin
+      :identifier: middleware_server_admin
+      :children:
+      - :name: Remove
+        :description: Remove Middleware Servers from the VMDB
+        :feature_type: admin
+        :identifier: middleware_server_delete
+      - :name: Edit
+        :description: Edit a Middleware Server
+        :feature_type: admin
+        :identifier: middleware_server_edit
+      - :name: Add
+        :description: Add a Middleware Server
+        :feature_type: admin
+        :identifier: middleware_server_new
+    - :name: Operate
+      :description: Perform Operations on Middleware Servers
+      :feature_type: control
+      :identifier: middleware_server_control
+      :children:
+      - :name: Edit Tags
+        :description: Edit Tags of Middleware Servers
+        :feature_type: control
+        :identifier: middleware_server_tag
+
+  # MiddlewareDeployment
+  - :name: MiddlewareDeployment
+    :description: Everything under Middleware Deployments
+    :feature_type: node
+    :identifier: middleware_deployment
+    :children:
+    - :name: View
+      :description: View Middleware Deployments
+      :feature_type: view
+      :identifier: middleware_deployment_view
+      :children:
+      - :name: List
+        :description: Display Lists of Middleware Deployments
+        :feature_type: view
+        :identifier: middleware_deployment_show_list
+      - :name: Show
+        :description: Display Individual Middleware Deployments
+        :feature_type: view
+        :identifier: middleware_deployment_show
+    - :name: Modify
+      :description: Modify Middleware Deployments
+      :feature_type: admin
+      :identifier: middleware_deployment_admin
+      :children:
+      - :name: Remove
+        :description: Remove Middleware Deployments from the VMDB
+        :feature_type: admin
+        :identifier: middleware_deployment_delete
+      - :name: Edit
+        :description: Edit a Middleware Deployment
+        :feature_type: admin
+        :identifier: middleware_deployment_edit
+      - :name: Add
+        :description: Add a Middleware Deployment
+        :feature_type: admin
+        :identifier: middleware_deployment_new
+    - :name: Operate
+      :description: Perform Operations on Middleware Deployments
+      :feature_type: control
+      :identifier: middleware_deployment_control
+      :children:
+      - :name: Edit Tags
+        :description: Edit Tags of Middleware Deployments
+        :feature_type: control
+        :identifier: middleware_deployment_tag
 
 # ContainerGroup
 - :name: Pods
@@ -3189,6 +3434,10 @@
       :description: Display Individual Container Replicators
       :feature_type: view
       :identifier: container_replicator_show
+    - :name: Utilization
+      :description: Show Capacity & Utilization data of Replicators
+      :feature_type: view
+      :identifier: container_replicator_perf
     - :name: Timeline
       :description: Display Timelines for container Replicators
       :feature_type: view
@@ -3300,6 +3549,98 @@
       :feature_type: control
       :identifier: container_image_registry_tag
 
+# PersistentVolume
+- :name: Volumes
+  :description: Everything under Persistent Volumes
+  :feature_type: node
+  :identifier: persistent_volume
+  :children:
+  - :name: View
+    :description: View Persistent Volumes
+    :feature_type: node
+    :identifier: persistent_volume_view
+    :children:
+    - :name: List
+      :description: Display Lists of Persistent Volumes
+      :feature_type: view
+      :identifier: persistent_volume_show_list
+    - :name: Show
+      :description: Display Individual Persistent Volume
+      :feature_type: view
+      :identifier: persistent_volume_show
+  - :name: Modify
+    :description: Modify Persistent Volumes
+    :feature_type: admin
+    :identifier: persistent_volume_admin
+    :children:
+    - :name: Remove
+      :description: Remove Persistent Volumes from the VMDB
+      :feature_type: admin
+      :identifier: persistent_volume_delete
+    - :name: Edit
+      :description: Edit a Persistent Volume
+      :feature_type: admin
+      :identifier: persistent_volume_edit
+    - :name: Add
+      :description: Add a Persistent Volume
+      :feature_type: admin
+      :identifier: persistent_volume_new
+  - :name: Operate
+    :description: Perform Operations on Persistent Volumes
+    :feature_type: control
+    :identifier: persistent_volume_control
+    :children:
+    - :name: Edit Tags
+      :description: Edit Tags of Persistent Volumes
+      :feature_type: control
+      :identifier: persistent_volume_tag
+
+# ContainerBuild
+- :name: Builds
+  :description: Everything under Container Build
+  :feature_type: node
+  :identifier: container_build
+  :children:
+  - :name: View
+    :description: View Container Build
+    :feature_type: node
+    :identifier: container_build_view
+    :children:
+    - :name: List
+      :description: Display Lists of Container Build
+      :feature_type: view
+      :identifier: container_build_show_list
+    - :name: Show
+      :description: Display Individual Container Build
+      :feature_type: view
+      :identifier: container_build_show
+  - :name: Modify
+    :description: Modify Container Build
+    :feature_type: admin
+    :identifier: container_build_admin
+    :children:
+    - :name: Remove
+      :description: Remove Container Build from the VMDB
+      :feature_type: admin
+      :identifier: container_build_delete
+    - :name: Edit
+      :description: Edit a Container Build
+      :feature_type: admin
+      :identifier: container_build_edit
+    - :name: Add
+      :description: Add a Container Build
+      :feature_type: admin
+      :identifier: container_build_new
+  - :name: Operate
+    :description: Perform Operations on Container Build
+    :feature_type: control
+    :identifier: container_build_control
+    :children:
+    - :name: Edit Tags
+      :description: Edit Tags of Container Build
+      :feature_type: control
+      :identifier: container_build_tag
+
 # ContainerService
 - :name: Services
   :description: Everything under Container Services
@@ -3319,6 +3660,10 @@
       :description: Display Individual Container Services
       :feature_type: view
       :identifier: container_service_show
+    - :name: Utilization
+      :description: Show Capacity & Utilization data of Service
+      :feature_type: view
+      :identifier: container_service_perf
   - :name: Modify
     :description: Modify Container Services
     :feature_type: admin
@@ -3394,6 +3739,10 @@
       :description: Display Individual Container Routes
       :feature_type: view
       :identifier: container_project_show
+    - :name: Utilization
+      :description: Show Capacity & Utilization data of Project
+      :feature_type: view
+      :identifier: container_project_perf
     - :name: Timeline
       :description: Display Timelines for container Projects
       :feature_type: view
@@ -3482,6 +3831,17 @@
         :description: View Containers Topology
         :feature_type: view
         :identifier: container_topology_view
+
+  # Middleware Topology
+  - :name: Middleware Topology
+    :description: Middleware Topology
+    :feature_type: node
+    :identifier: middleware_topology
+    :children:
+      - :name: View
+        :description: View Middleware Topology
+        :feature_type: view
+        :identifier: middleware_topology_view
 
 # Foreman
 - :name: Configuration Management
@@ -4120,4 +4480,3 @@
     :description: View Containers Dashboard
     :feature_type: view
     :identifier: container_dashboard_view
-

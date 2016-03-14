@@ -1,5 +1,3 @@
-require "spec_helper"
-
 describe ManageIQ::Providers::Redhat::InfraManager::ProvisionViaIso do
   context "::StateMachine" do
     before do
@@ -11,14 +9,12 @@ describe ManageIQ::Providers::Redhat::InfraManager::ProvisionViaIso do
       @task = FactoryGirl.create(:miq_provision_redhat_via_iso, :source => template, :destination => vm, :state => 'pending', :status => 'Ok', :options => options)
     end
 
-    it "#customize_destination" do
-      @task.stub(:update_and_notify_parent)
+    include_examples "common rhev state machine methods"
 
-      @task.should_receive(:configure_container)
-      @task.should_receive(:attach_floppy_payload)
-      @task.should_receive(:boot_from_cdrom)
-
-      @task.customize_destination
+    it "#configure_destination" do
+      expect(@task).to receive(:attach_floppy_payload)
+      expect(@task).to receive(:boot_from_cdrom)
+      @task.configure_destination
     end
   end
 end

@@ -1,5 +1,3 @@
-require "spec_helper"
-
 describe MiqReport do
   before(:each) do
     EvmSpecHelper.local_miq_server
@@ -18,7 +16,7 @@ describe MiqReport do
     @show_title   = true
     @options = MiqReport.graph_options(600, 400)
 
-    Charting.stub(:detect_available_plugin).and_return(JqplotCharting)
+    allow(Charting).to receive(:detect_available_plugin).and_return(JqplotCharting)
   end
 
   context 'graph_options' do
@@ -35,10 +33,12 @@ describe MiqReport do
       rpt = FactoryGirl.create(:miq_report)
 
       # Can't create a graph without a sortby column
-      expect { rpt.to_chart(@report_theme, @show_title, @options) }.to raise_exception
+      expect { rpt.to_chart(@report_theme, @show_title, @options) }
+        .to raise_error(RuntimeError, /Can't create a graph without a sortby column/)
 
       # Graph type not specified
-      expect { rpt.to_chart(@report_theme, @show_title, @options) }.to raise_exception
+      expect { rpt.to_chart(@report_theme, @show_title, @options) }
+        .to raise_error(RuntimeError, /Can't create a graph without a sortby column/)
     end
 
     it "returns an empty chart for a report with empty results" do

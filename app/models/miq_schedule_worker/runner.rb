@@ -67,7 +67,7 @@ class MiqScheduleWorker::Runner < MiqWorker::Runner
     keys    = [keys] unless keys.kind_of?(Array)
     value   = worker_settings.fetch_path(keys)
     value ||= begin
-      fq_keys = [:workers] + @worker.class.path_to_my_worker_settings + keys
+      fq_keys = @worker.class.config_settings_path + keys
       v = VMDB::Config.new("vmdb").template_configuration.fetch_path(fq_keys)
       v = v.to_i_with_method if v.number_with_method?
       v
@@ -123,7 +123,7 @@ class MiqScheduleWorker::Runner < MiqWorker::Runner
       interval,
       :first_in => 1.minute,
       :tags     => [:log_statistics, schedule_category]
-    ) { enqueue :miq_db_config_log_statistics }
+    ) { enqueue :vmdb_database_connection_log_statistics }
 
     # Schedule - Periodic check for updates on appliances only
     if MiqEnvironment::Command.is_appliance?
@@ -150,12 +150,6 @@ class MiqScheduleWorker::Runner < MiqWorker::Runner
     # These schedules need to run only once in a zone per interval, so let the single scheduler role handle them
     return unless @active_roles.include?("scheduler")
     @schedules[:scheduler] ||= []
-
-    # Schedule - Check for VMs to scan
-    every = worker_setting_or_default(:vm_scan_interval)
-    @schedules[:scheduler] << system_schedule_every(every, :first_in => every) do
-      enqueue :host_check_for_vms_to_scan
-    end
 
     # Schedule - Check for timed out jobs
     every = worker_setting_or_default(:job_timeout_interval)

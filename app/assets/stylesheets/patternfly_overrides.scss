@@ -8,6 +8,22 @@
   margin: 0;
 }
 
+/* overrides toolbar form group styling for pf-search */
+
+.toolbar-pf .form-group.search-button {
+  padding-left: 0;
+}
+
+.toolbar-pf .form-group.has-clear {
+  border-right: 0;
+  padding-right: 0;
+}
+
+.toolbar-pf .form-group.text {
+  line-height: 26px;
+}
+
+
 #main-content {
   overflow: auto;
 }
@@ -55,16 +71,17 @@
 
 /* Overrides patternfly style for disabled accordion items */
 
-.nav-stacked > li.disabled > a {
-  color: #ccc;
-}
-
 .nav-stacked > li.disabled:hover > a {
   background: transparent;
   border: transparent;
   margin-top: 1px;
   margin-bottom: 1px;
-  color: #ccc;
+}
+
+/* styling for  report menu editor accordion */
+
+.panel-heading.active {
+  background: #ddd !important
 }
 
 /* Style changes applied when customer logo is active */
@@ -144,7 +161,13 @@ li.brand-white-label.whitelabeled {
 
 table.table td {
   word-break: break-all
- }
+}
+
+//Enable normal word wrapping in List View
+
+#gtl_div table.table td {
+  word-break: normal !important;
+}
 
 table.table tbody td img {
   height: 20px;
@@ -252,6 +275,7 @@ table.table.table-selectable tbody tr.selected td {
       @include text-overflow();
     }
     dd {
+      word-break: break-all;
       margin-left: 110px;
     }
   }
@@ -316,7 +340,7 @@ iframe, .iframe {
 
 /* Adds padding between buttons when they wrap */
 
-.toolbar-pf#toolbar .toolbar-pf-actions .form-group {
+.toolbar-pf .toolbar-pf-actions .form-group {
   margin-bottom: 10px !important
 }
 
@@ -344,4 +368,24 @@ iframe, .iframe {
 .db_widgets_target {
   padding-top: 20px;  // same as .panel's margin-bottom
   min-height: 78px; // .panel.height + (2 * 20px)
+}
+
+/* Sets font icon styling for view buttons on Default Views screen */
+
+#tab_div ul.list-inline a{
+  font-size: 16px;
+  color: #222222 !important
+}
+
+#tab_div ul.list-inline li.active {
+  font-size: 16px;
+  color: $link-color !important
+}
+
+.icon-green {
+  color: green;
+}
+
+.icon-red {
+  color: red;
 }

@@ -58,6 +58,9 @@ module EmsRefresh::SaveInventoryInfra
     # Save and link other subsections
     save_child_inventory(ems, hashes, child_keys, target)
 
+    link_floating_ips_to_network_ports(hashes[:floating_ips]) if hashes.key?(:floating_ips)
+    link_cloud_subnets_to_network_routers(hashes[:cloud_subnets]) if hashes.key?(:cloud_subnets)
+
     ems.save!
     hashes[:id] = ems.id
 
@@ -77,8 +80,8 @@ module EmsRefresh::SaveInventoryInfra
     locs, names = hashes.partition { |h| h[:location] }
     locs.collect!  { |h| h[:location] }
     names.collect! { |h| h[:name] }
-    locs  = Storage.where("location IN (?)", locs) unless locs.empty?
-    names = Storage.where("location IS NULL AND name IN (?)", names) unless names.empty?
+    locs  = Storage.where(:location => locs) unless locs.empty?
+    names = Storage.where(:location => nil, :name => names) unless names.empty?
 
     hashes.each do |h|
       found = if h[:location]
@@ -104,7 +107,7 @@ module EmsRefresh::SaveInventoryInfra
     log_header = "EMS: [#{ems.name}], id: [#{ems.id}]"
 
     disconnects = if (target == ems)
-                    target.hosts(true).to_a.dup
+                    target.hosts.reload.to_a
                   elsif target.kind_of?(Host)
                     [target.clone]
                   else
@@ -125,24 +128,7 @@ module EmsRefresh::SaveInventoryInfra
       begin
         raise MiqException::MiqIncompleteData if h[:invalid]
 
-        # Find this host record
-        found = nil
-        if h[:ems_ref]
-          _log.debug "#{log_header} Host database lookup - ems_ref: [#{h[:ems_ref]}] ems_id: [#{ems.id}]"
-          found = Host.find_by_ems_ref_and_ems_id(h[:ems_ref], ems.id)
-        end
-
-        if found.nil?
-          if h[:hostname].nil? && h[:ipaddress].nil?
-            _log.debug "#{log_header} Host database lookup - name [#{h[:name]}]"
-            found = ems.hosts.detect { |e| e.name.downcase == h[:name].downcase }
-          elsif ["localhost", "localhost.localdomain", "127.0.0.1"].include_none?(h[:hostname], h[:ipaddress])
-            # host = Host.find_by_hostname(hostname) has a risk of creating duplicate hosts
-            # allow a deleted EMS to be re-added an pick up old orphaned hosts
-            _log.debug "#{log_header} Host database lookup - hostname: [#{h[:hostname]}] IP: [#{h[:ipaddress]}] ems_ref: [#{h[:ems_ref]}]"
-            found = Host.lookUpHost(h[:hostname], h[:ipaddress], :ems_ref => h[:ems_ref])
-          end
-        end
+        found = find_host(h, ems.id)
 
         if found.nil?
           _log.info("#{log_header} Creating Host [#{h[:name]}] hostname: [#{h[:hostname]}] IP: [#{h[:ipaddress]}] ems_ref: [#{h[:ems_ref]}]")
@@ -175,7 +161,7 @@ module EmsRefresh::SaveInventoryInfra
           found.save!
         rescue ActiveRecord::RecordInvalid
           raise if found.errors[:name].blank?
-          old_name = Host.where("name LIKE ?", "#{found.name.sub(/ - \d+$/, "")}%").order("name DESC").first.name
+          old_name = Host.where("name LIKE ?", "#{found.name.sub(/ - \d+$/, "")}%").order("LENGTH(name) DESC").order("name DESC").first.name
           found.name = old_name =~ / - \d+$/ ? old_name.succ : "#{old_name} - 2"
           retry
         end
@@ -220,14 +206,14 @@ module EmsRefresh::SaveInventoryInfra
   def save_folders_inventory(ems, hashes, target = nil)
     target = ems if target.nil?
 
-    ems.ems_folders(true)
+    ems.ems_folders.reset
     deletes = if (target == ems)
-                ems.ems_folders.dup
+                :use_association
               else
                 []
               end
 
-    save_inventory_multi(:ems_folders, ems, hashes, deletes, [:uid_ems], nil, :ems_children)
+    save_inventory_multi(ems.ems_folders, hashes, deletes, [:uid_ems], nil, :ems_children)
     store_ids_for_new_records(ems.ems_folders, hashes, :uid_ems)
   end
   alias_method :save_ems_folders_inventory, :save_folders_inventory
@@ -235,14 +221,14 @@ module EmsRefresh::SaveInventoryInfra
   def save_clusters_inventory(ems, hashes, target = nil)
     target = ems if target.nil?
 
-    ems.ems_clusters(true)
+    ems.ems_clusters.reset
     deletes = if (target == ems)
-                ems.ems_clusters.dup
+                :use_association
               else
                 []
               end
 
-    save_inventory_multi(:ems_clusters, ems, hashes, deletes, [:uid_ems], nil, :ems_children)
+    save_inventory_multi(ems.ems_clusters, hashes, deletes, [:uid_ems], nil, :ems_children)
     store_ids_for_new_records(ems.ems_clusters, hashes, :uid_ems)
   end
   alias_method :save_ems_clusters_inventory, :save_clusters_inventory
@@ -250,37 +236,33 @@ module EmsRefresh::SaveInventoryInfra
   def save_resource_pools_inventory(ems, hashes, target = nil)
     target = ems if target.nil?
 
-    ems.resource_pools(true)
+    ems.resource_pools.reset
     deletes = if (target == ems)
-                ems.resource_pools.dup
+                :use_association
               elsif target.kind_of?(Host)
-                target.all_resource_pools_with_default.dup
+                target.all_resource_pools_with_default
               else
                 []
               end
 
-    save_inventory_multi(:resource_pools, ems, hashes, deletes, [:uid_ems], nil, :ems_children)
+    save_inventory_multi(ems.resource_pools, hashes, deletes, [:uid_ems], nil, :ems_children)
     store_ids_for_new_records(ems.resource_pools, hashes, :uid_ems)
   end
 
   def save_customization_specs_inventory(ems, hashes, _target = nil)
-    deletes = ems.customization_specs(true).dup
-    save_inventory_multi(:customization_specs, ems, hashes, deletes, [:name])
+    save_inventory_multi(ems.customization_specs, hashes, :use_association, [:name])
   end
 
   def save_miq_scsi_targets_inventory(guest_device, hashes)
-    deletes = guest_device.miq_scsi_targets(true).dup
-    save_inventory_multi(:miq_scsi_targets, guest_device, hashes, deletes, [:uid_ems], :miq_scsi_luns)
+    save_inventory_multi(guest_device.miq_scsi_targets, hashes, :use_association, [:uid_ems], :miq_scsi_luns)
   end
 
   def save_miq_scsi_luns_inventory(miq_scsi_target, hashes)
-    deletes = miq_scsi_target.miq_scsi_luns(true).dup
-    save_inventory_multi(:miq_scsi_luns, miq_scsi_target, hashes, deletes, [:uid_ems])
+    save_inventory_multi(miq_scsi_target.miq_scsi_luns, hashes, :use_association, [:uid_ems])
   end
 
   def save_switches_inventory(host, hashes)
-    deletes = host.switches(true).dup
-    save_inventory_multi(:switches, host, hashes, deletes, [:uid_ems], :lans)
+    save_inventory_multi(host.switches, hashes, :use_association, [:uid_ems], :lans)
 
     host.save!
 
@@ -298,12 +280,49 @@ module EmsRefresh::SaveInventoryInfra
   end
 
   def save_lans_inventory(switch, hashes)
-    deletes = switch.lans(true).dup
-    save_inventory_multi(:lans, switch, hashes, deletes, [:uid_ems])
+    save_inventory_multi(switch.lans, hashes, :use_association, [:uid_ems])
   end
 
   def save_storage_files_inventory(storage, hashes)
-    deletes = storage.storage_files(true).dup
-    save_inventory_multi(:storage_files, storage, hashes, deletes, [:name])
+    save_inventory_multi(storage.storage_files, hashes, :use_association, [:name])
+  end
+
+  def find_host(h, ems_id)
+    found = nil
+    if h[:ems_ref]
+      _log.debug "EMS ID: #{ems_id} Host database lookup - ems_ref: [#{h[:ems_ref]}] ems_id: [#{ems_id}]"
+      found = Host.find_by(:ems_ref => h[:ems_ref], :ems_id => ems_id)
+    end
+
+    if found.nil?
+      if h[:hostname].nil? && h[:ipaddress].nil?
+        _log.debug "EMS ID: #{ems_id} Host database lookup - name [#{h[:name]}]"
+        found = Host.where(:ems_id => ems_id).detect { |e| e.name.downcase == h[:name].downcase }
+      elsif ["localhost", "localhost.localdomain", "127.0.0.1"].include_none?(h[:hostname], h[:ipaddress])
+        # host = Host.find_by_hostname(hostname) has a risk of creating duplicate hosts
+        # allow a deleted EMS to be re-added an pick up old orphaned hosts
+        _log.debug "EMS ID: #{ems_id} Host database lookup - hostname: [#{h[:hostname]}] IP: [#{h[:ipaddress]}] ems_ref: [#{h[:ems_ref]}]"
+        found = look_up_host(h[:hostname], h[:ipaddress], :ems_ref => h[:ems_ref])
+      end
+    end
+
+    found
+  end
+
+  def look_up_host(hostname, ipaddr, opts = {})
+    h   = Host.where("lower(hostname) = ?", hostname.downcase).find_by(:ipaddress => ipaddr) if hostname && ipaddr
+    h ||= Host.find_by("lower(hostname) = ?", hostname.downcase)                             if hostname
+    h ||= Host.find_by(:ipaddress => ipaddr)                                                 if ipaddr
+    h ||= Host.find_by("lower(hostname) LIKE ?", "#{hostname.downcase}.%")                   if hostname
+
+    # If we're given an ems_ref or ems_id then ensure that the host
+    # we looked-up does not have a different ems_ref and is not
+    # owned by another provider, this would cause us to overwrite
+    # a different host record
+    if (opts[:ems_ref] && h.ems_ref != opts[:ems_ref]) || (opts[:ems_id] && h.ems_id != opts[:ems_id])
+      h = nil
+    end unless h.nil?
+
+    h
   end
 end

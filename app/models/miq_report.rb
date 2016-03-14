@@ -1,4 +1,4 @@
-class MiqReport < ActiveRecord::Base
+class MiqReport < ApplicationRecord
   include ActiveRecord::AttributeAccessorThatYamls
 
   include_concern 'Formatting'
@@ -10,8 +10,6 @@ class MiqReport < ActiveRecord::Base
   include_concern 'Schedule'
   include_concern 'Search'
   include YAMLImportExportMixin
-
-  default_scope { where conditions_for_my_region_default_scope }
 
   serialize :cols
   serialize :conditions
@@ -40,6 +38,7 @@ class MiqReport < ActiveRecord::Base
   belongs_to                :time_profile
   belongs_to                :miq_group
   belongs_to                :user
+  has_many                  :miq_widgets, :as => :resource
 
   attr_accessor_that_yamls :table, :sub_table, :filter_summary, :extras, :ids, :scoped_association, :html_title, :file_name,
                            :extras, :record_id, :tl_times, :user_categories, :trend_data, :performance, :include_for_find,

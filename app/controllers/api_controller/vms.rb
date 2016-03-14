@@ -150,6 +150,55 @@ class ApiController
       end
     end
 
+    def reset_resource_vms(type, id = nil, _data = nil)
+      raise BadRequestError, "Must specify an id for resetting a #{type} resource" unless id
+
+      api_action(type, id) do |klass|
+        vm = resource_search(id, type, klass)
+        api_log_info("Resetting #{vm_ident(vm)}")
+
+        result = validate_vm_for_action(vm, "reset")
+        result = reset_vm(vm) if result[:success]
+        result
+      end
+    end
+
+    def reboot_guest_resource_vms(type, id = nil, _data = nil)
+      raise BadRequestError, "Must specify an id for rebooting a #{type} resource" unless id
+
+      api_action(type, id) do |klass|
+        vm = resource_search(id, type, klass)
+        api_log_info("Rebooting #{vm_ident(vm)}")
+
+        result = validate_vm_for_action(vm, "reboot_guest")
+        result = reboot_guest_vm(vm) if result[:success]
+        result
+      end
+    end
+
+    def shutdown_guest_resource_vms(type, id = nil, _data = nil)
+      raise BadRequestError, "Must specify an id for shutting down a #{type} resource" unless id
+
+      api_action(type, id) do |klass|
+        vm = resource_search(id, type, klass)
+        api_log_info("Shutting down #{vm_ident(vm)}")
+
+        result = validate_vm_for_action(vm, "shutdown_guest")
+        result = shutdown_guest_vm(vm) if result[:success]
+        result
+      end
+    end
+
+    def refresh_resource_vms(type, id = nil, _data = nil)
+      raise BadRequestError, "Must specify an id for refreshing a #{type} resource" unless id
+
+      api_action(type, id) do |klass|
+        vm = resource_search(id, type, klass)
+        api_log_info("Refreshing #{vm_ident(vm)}")
+        refresh_vm(vm)
+      end
+    end
+
     private
 
     def vm_ident(vm)
@@ -267,6 +316,38 @@ class ApiController
       desc << " on #{data['date']}" if Hash(data)['date'].present?
       retire_resource(:vms, id, data)
       action_result(true, desc)
+    rescue => err
+      action_result(false, err.to_s)
+    end
+
+    def reset_vm(vm)
+      desc = "#{vm_ident(vm)} resetting"
+      task_id = queue_object_action(vm, desc, :method_name => "reset", :role => "ems_operations")
+      action_result(true, desc, :task_id => task_id)
+    rescue => err
+      action_result(false, err.to_s)
+    end
+
+    def refresh_vm(vm)
+      desc = "#{vm_ident(vm)} refreshing"
+      task_id = queue_object_action(vm, desc, :method_name => "refresh_ems", :role => "ems_operations")
+      action_result(true, desc, :task_id => task_id)
+    rescue => err
+      action_result(false, err.to_s)
+    end
+
+    def shutdown_guest_vm(vm)
+      desc = "#{vm_ident(vm)} shutting down"
+      task_id = queue_object_action(vm, desc, :method_name => "shutdown_guest", :role => "ems_operations")
+      action_result(true, desc, :task_id => task_id)
+    rescue => err
+      action_result(false, err.to_s)
+    end
+
+    def reboot_guest_vm(vm)
+      desc = "#{vm_ident(vm)} rebooting"
+      task_id = queue_object_action(vm, desc, :method_name => "reboot_guest", :role => "ems_operations")
+      action_result(true, desc, :task_id => task_id)
     rescue => err
       action_result(false, err.to_s)
     end

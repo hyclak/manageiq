@@ -1,14 +1,4 @@
-require "spec_helper"
-
 RSpec.describe "chargebacks API" do
-  include Rack::Test::Methods
-
-  def app
-    Vmdb::Application
-  end
-
-  before { init_api_spec_env }
-
   it "can fetch the list of all chargeback rates" do
     chargeback_rate = FactoryGirl.create(:chargeback_rate)
 
@@ -18,7 +8,7 @@ RSpec.describe "chargebacks API" do
     expect_result_resources_to_include_hrefs(
       "resources", [chargebacks_url(chargeback_rate.id)]
     )
-    expect_result_to_match_hash(@result, "count" => 1)
+    expect_result_to_match_hash(response_hash, "count" => 1)
     expect_request_success
   end
 
@@ -29,7 +19,7 @@ RSpec.describe "chargebacks API" do
     run_get chargebacks_url(chargeback_rate.id)
 
     expect_result_to_match_hash(
-      @result,
+      response_hash,
       "description" => chargeback_rate.description,
       "guid"        => chargeback_rate.guid,
       "id"          => chargeback_rate.id,
@@ -63,7 +53,7 @@ RSpec.describe "chargebacks API" do
     run_get "#{chargebacks_url(chargeback_rate.id)}/rates/#{chargeback_rate_detail.to_param}"
 
     expect_result_to_match_hash(
-      @result,
+      response_hash,
       "chargeback_rate_id" => chargeback_rate.id,
       "href"               => "#{chargebacks_url(chargeback_rate.id)}/rates/#{chargeback_rate_detail.to_param}",
       "id"                 => chargeback_rate_detail.id,
@@ -76,11 +66,27 @@ RSpec.describe "chargebacks API" do
     it "can create a new chargeback rate detail" do
       api_basic_authorize action_identifier(:rates, :create, :collection_actions)
 
-      expect { run_post rates_url, :rate => "0", :enabled => true }.to change(ChargebackRateDetail, :count).by(1)
-      actual = @result["results"].first
-      expect(actual["rate"]).to eq("0")
-      expect(actual["enabled"]).to be true
+      expect do
+        run_post rates_url,
+                 :rate    => "0",
+                 :group   => "fixed",
+                 :source  => "used",
+                 :enabled => true
+      end.to change(ChargebackRateDetail, :count).by(1)
+      expect_result_to_match_hash(response_hash["results"].first, "rate" => "0", "enabled" => true)
       expect_request_success
+    end
+
+    it "returns bad request for incomplete chargeback rate detail" do
+      api_basic_authorize action_identifier(:rates, :create, :collection_actions)
+
+      expect do
+        run_post rates_url,
+                 :rate    => "0",
+                 :enabled => true
+      end.not_to change(ChargebackRateDetail, :count)
+      expect_bad_request(/group can't be blank/i)
+      expect_bad_request(/source can't be blank/i)
     end
 
     it "can edit a chargeback rate detail through POST" do
@@ -89,7 +95,7 @@ RSpec.describe "chargebacks API" do
       api_basic_authorize action_identifier(:rates, :edit)
       run_post rates_url(chargeback_rate_detail.id), gen_request(:edit, :rate => "0.02")
 
-      expect(@result["rate"]).to eq("0.02")
+      expect(response_hash["rate"]).to eq("0.02")
       expect_request_success
       expect(chargeback_rate_detail.reload.rate).to eq("0.02")
     end
@@ -100,7 +106,7 @@ RSpec.describe "chargebacks API" do
       api_basic_authorize action_identifier(:rates, :edit)
       run_patch rates_url(chargeback_rate_detail.id), [{:action => "edit", :path => "rate", :value => "0.02"}]
 
-      expect(@result["rate"]).to eq("0.02")
+      expect(response_hash["rate"]).to eq("0.02")
       expect_request_success
       expect(chargeback_rate_detail.reload.rate).to eq("0.02")
     end

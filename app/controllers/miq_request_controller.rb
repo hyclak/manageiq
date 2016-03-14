@@ -42,7 +42,9 @@ class MiqRequestController < ApplicationController
     elsif params[:pressed].ends_with?("_edit")
       if @refresh_partial == "show_list"
         render :update do |page|
-          page.redirect_to :action => @refresh_partial, :flash_msg => "Default Requests can not be edited", :flash_error => true
+          page.redirect_to :action      => @refresh_partial,
+                           :flash_msg   => _("Default Requests can not be edited"),
+                           :flash_error => true
         end
       else
         render :update do |page|
@@ -108,7 +110,7 @@ class MiqRequestController < ApplicationController
   # Show the main Requests list view
   def show_list
     @breadcrumbs = []
-    bc_name = "Requests"
+    bc_name = _("Requests")
     @request_tab = params[:typ] if params[:typ]                       # set this to be used to identify which Requests subtab was clicked
     @layout = layout_from_tab_name(@request_tab)
 
@@ -172,7 +174,8 @@ class MiqRequestController < ApplicationController
       @no_checkboxes = true
       @showlinks = true
       @view, @pages = get_view(MiqProvision, :conditions => ["miq_request_id=?", @miq_request.id])  # Get all requests
-      drop_breadcrumb(:name => "Provisioned VMs [#{@miq_request.description}]", :url => "/miq_request/show/#{@miq_request.id}?display=#{@display}")
+      drop_breadcrumb(:name => _("Provisioned VMs [%{description}]") % {:description => @miq_request.description},
+                      :url  => "/miq_request/show/#{@miq_request.id}?display=#{@display}")
     end
     if params[:ppsetting] || params[:searchtag] || params[:entry] || params[:sort_choice]
       replace_gtl_main_div
@@ -184,7 +187,11 @@ class MiqRequestController < ApplicationController
   def stamp
     assert_privileges("miq_request_approval")
     if params[:button] == "cancel"
-      add_flash(_("Request %s was cancelled by the user") % (session[:edit] && session[:edit][:stamp_typ]) == "a" ? "approval" : "denial")
+      if (session[:edit] && session[:edit][:stamp_typ]) == "a"
+        add_flash(_("Request approval was cancelled by the user"))
+      else
+        add_flash(_("Request denial was cancelled by the user"))
+      end
       session[:flash_msgs] = @flash_array.dup
       @edit = nil
       render :update do |page|
@@ -199,7 +206,7 @@ class MiqRequestController < ApplicationController
         stamp_request.deny(current_user, @edit[:reason])
       end
       #     AuditEvent.success(build_saved_audit(request, @edit))
-      add_flash(_("Request \"%{name}\" was %{task}") % {:name => stamp_request.description, :task => (session[:edit] && session[:edit][:stamp_typ]) == "a" ? "approved" : "denied"})
+      add_flash(_("Request \"%{name}\" was %{task}") % {:name => stamp_request.description, :task => (session[:edit] && session[:edit][:stamp_typ]) == "approve" ? "approved" : "denied"})
       session[:flash_msgs] = @flash_array.dup                     # Put msg in session for next transaction to display
       @edit = nil
       render :update do |page|
@@ -214,7 +221,12 @@ class MiqRequestController < ApplicationController
       # set approve/deny based upon params[:typ] value
       @edit[:stamp_typ] = params[:typ] == 'a' ? 'approve' : 'deny'
       show
-      drop_breadcrumb(:name => "Request #{@edit[:stamp_typ] == "approve" ? "Approval" : "Denial"}", :url => "/miq_request/stamp")
+      if @edit[:stamp_typ] == "approve"
+        drop_breadcrumb(:name => _("Request Approval"), :url => "/miq_request/stamp")
+      else
+        drop_breadcrumb(:name => _("Request Denial"), :url => "/miq_request/stamp")
+
+      end
       render :action => "show"
     end
   end
@@ -252,9 +264,9 @@ class MiqRequestController < ApplicationController
     prov_set_form_vars(req)       # Set vars from existing request
     # forcing submit button to stay on for copy request, setting a key in current hash so new and current are different,
     # couldn't set this in new hash becasue that's being set by model
-    @edit[:current][:description] = "Copy of #{org_req.description}"
+    @edit[:current][:description] = _("Copy of %{description}") % {:description => org_req.description}
     session[:changed] = true                                # Turn on the submit button
-    drop_breadcrumb(:name => "Copy of #{org_req.request_type_display} Request")
+    drop_breadcrumb(:name => _("Copy of %{typ} Request") % {:typ => org_req.request_type_display})
     @in_a_form = true
     render :action => "prov_edit"
   end
@@ -323,7 +335,7 @@ class MiqRequestController < ApplicationController
       method = WORKFLOW_METHOD_WHITELIST[params[:field]]
       @edit[:wf].send(method, @edit[:new]) unless method.nil?
     rescue StandardError => bang
-      add_flash(_("Error retrieving LDAP info: ") << bang.message, :error)
+      add_flash(_("Error retrieving LDAP info: %{error_message}") % {:error_message => bang.message}, :error)
       render :update do |page|                    # Use JS to update the display
         page.replace("flash_msg_div", :partial => "layouts/flash_msg")
       end
@@ -353,7 +365,7 @@ class MiqRequestController < ApplicationController
     end
 
     applied_states_blank = @sb[:def_prov_options][resource_type][:applied_states].blank?
-    add_flash(_("At least one %s must be selected") % "status", :warning) if applied_states_blank
+    add_flash(_("At least one status must be selected"), :warning) if applied_states_blank
 
     render :update do |page| # Do nothing to the page
       unless applied_states_blank
@@ -397,14 +409,18 @@ class MiqRequestController < ApplicationController
                                                  :js_options => js_options})
       page << "miqGridOnCheck();"           # Reset the center buttons
 
-      page.replace("pc_div_1", :partial => '/layouts/pagingcontrols', :locals => {:pages => @pages, :action_url => "show_list", :db => @view.db, :headers => @view.headers})
+      page.replace_html("paging_div", :partial => 'layouts/pagingcontrols',
+                                      :locals  => {:pages      => @pages,
+                                                   :action_url => "show_list",
+                                                   :db         => @view.db,
+                                                   :headers    => @view.headers})
       page << "miqSparkle(false);"
     end
   end
 
   def post_install_callback
     MiqRequestTask.post_install_callback(params["task_id"]) if params["task_id"]
-    render :nothing => true
+    head :ok
   end
 
   private ############################
@@ -485,7 +501,11 @@ class MiqRequestController < ApplicationController
       :type       => request_types_for_model.keys,
       :created_on => (30.days.ago.utc)..(Time.now.utc)
     ).each_with_object({}) do |r, h|
-      h[r.requester_id] = (r.requester.nil? ? "#{r.requester_name} (no longer exists)" : r.requester_name)
+      h[r.requester_id] =  if r.requester.nil?
+                             (_("%{name} (no longer exists)") % {:name => r.requester_name})
+                           else
+                             r.requester_name
+                           end
     end
 
     unless is_approver
@@ -518,19 +538,21 @@ class MiqRequestController < ApplicationController
     if @lastaction == "show_list" # showing a list
       miq_requests = find_checked_items
       if miq_requests.empty?
-        add_flash(_("No %{model} were selected for %{task}") % {:model => ui_lookup(:tables => "miq_request"), :task => "deletion"}, :error)
+        add_flash(_("No %{model} were selected for deletion") % {:model => ui_lookup(:tables => "miq_request")}, :error)
       end
       process_requests(miq_requests, "destroy") unless miq_requests.empty?
-      add_flash(_("The selected %s were deleted") % ui_lookup(:tables => "miq_request")) unless flash_errors?
+      add_flash(_("The selected %{tables} were deleted") %
+        {:tables => ui_lookup(:tables => "miq_request")}) unless flash_errors?
     else # showing 1 request, delete it
       if params[:id].nil? || MiqRequest.find_by_id(params[:id]).nil?
-        add_flash(_("%s no longer exists") % ui_lookup(:table => "miq_request"), :error)
+        add_flash(_("%{table} no longer exists") % {:table => ui_lookup(:table => "miq_request")}, :error)
       else
         miq_requests.push(params[:id])
       end
       @single_delete = true
       process_requests(miq_requests, "destroy") unless miq_requests.empty?
-      add_flash(_("The selected %s was deleted") % ui_lookup(:table => "miq_request")) unless flash_errors?
+      add_flash(_("The selected %{table} was deleted") %
+        {:table => ui_lookup(:table => "miq_request")}) unless flash_errors?
     end
     show_list
     @refresh_partial = "layouts/gtl"
@@ -538,16 +560,24 @@ class MiqRequestController < ApplicationController
 
   # Common Request button handler routines
   def process_requests(miq_requests, task)
-    MiqRequest.find_all_by_id(miq_requests).each do |miq_request|
+    MiqRequest.where(:id => miq_requests).each do |miq_request|
       id = miq_request.id
       request_name = miq_request.description
       if task == "destroy"
-        audit = {:event => "MiqRequest_record_delete", :message => "[#{request_name}] Record deleted", :target_id => id, :target_class => "MiqRequest", :userid => session[:userid]}
+        audit = {:event        => "MiqRequest_record_delete",
+                 :message      => _("[%{name}] Record deleted") % {:name => request_name},
+                 :target_id    => id,
+                 :target_class => "MiqRequest",
+                 :userid       => session[:userid]}
       end
       begin
         miq_request.public_send(task.to_sym) if miq_request.respond_to?(task)    # Run the task
       rescue StandardError => bang
-        add_flash(_("%{model} \"%{name}\": Error during '%{task}': ") % {:model => ui_lookup(:model => "MiqRequest"), :name => request_name, :task => task} << bang.message,
+        add_flash(_("%{model} \"%{name}\": Error during '%{task}': %{message}") %
+                      {:model   => ui_lookup(:model => "MiqRequest"),
+                       :name    => request_name,
+                       :task    => task,
+                       :message => bang.message},
                   :error)
       else
         if task == "destroy"
@@ -574,7 +604,7 @@ class MiqRequestController < ApplicationController
   end
 
   def get_session_data
-    @title        = "Requests"
+    @title        = _("Requests")
     @request_tab  = session[:request_tab] if session[:request_tab]
     @layout       = layout_from_tab_name(@request_tab)
     @lastaction   = session[:request_lastaction]

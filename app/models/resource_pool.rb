@@ -1,4 +1,4 @@
-class ResourcePool < ActiveRecord::Base
+class ResourcePool < ApplicationRecord
   include ReportableMixin
   acts_as_miq_taggable
 
@@ -18,7 +18,6 @@ class ResourcePool < ActiveRecord::Base
 
   include MiqPolicyMixin
   include AsyncDeleteMixin
-  include WebServiceAttributeMixin
 
   virtual_column :v_parent_cluster,        :type => :string,  :uses => :all_relationships
   virtual_column :v_parent_host,           :type => :string,  :uses => :all_relationships
@@ -33,6 +32,14 @@ class ResourcePool < ActiveRecord::Base
   virtual_has_many :vms_and_templates, :uses => :all_relationships
   virtual_has_many :vms,               :uses => :all_relationships
   virtual_has_many :miq_templates,     :uses => :all_relationships
+
+  def tenant_identity
+    if ext_management_system
+      ext_management_system.tenant_identity
+    else
+      User.super_admin.tap { |u| u.current_group = Tenant.root_tenant.default_miq_group }
+    end
+  end
 
   def hidden?
     is_default?

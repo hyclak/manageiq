@@ -140,11 +140,11 @@ module ApplicationController::PolicySupport
         if @catinfo[cat]
           @catinfo[cat] = false
           page << javascript_show("cat_#{policy_escaped}_div")
-          page << "$('#cat_#{policy_escaped}_icon').prop('src', '/images/tree/compress.png');"
+          page << "$('#cat_#{policy_escaped}_icon').prop('src', #{ActionController::Base.helpers.image_path('tree/compress.png')});"
         else
           @catinfo[cat] = true # Set squashed = true
           page << javascript_hide("cat_#{policy_escaped}_div")
-          page << "$('#cat_#{policy_escaped}_icon').prop('src', '/images/tree/expand.png');"
+          page << "$('#cat_#{policy_escaped}_icon').prop('src', #{ActionController::Base.helpers.image_path('tree/expand.png')});"
         end
       end
     else
@@ -167,7 +167,8 @@ module ApplicationController::PolicySupport
       recs = [params[:id]]
     end
     if recs.length < 1
-      add_flash(_("One or more %{model} must be selected to %{task}") % {:model => Dictionary.gettext(db.to_s, :type => :model, :notfound => :titleize).pluralize, :task => "Policy assignment"}, :error)
+      add_flash(_("One or more %{model} must be selected to Policy assignment") % {
+        :model => Dictionary.gettext(db.to_s, :type => :model, :notfound => :titleize, :plural => true)}, :error)
       @refresh_div = "flash_msg_div"
       @refresh_partial = "layouts/flash_msg"
       return

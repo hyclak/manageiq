@@ -88,6 +88,10 @@ class EmsEvent < EventStream
     add(ems_id, ManageIQ::Providers::Azure::CloudManager::EventParser.event_to_hash(event, ems_id))
   end
 
+  def self.add_google(ems_id, event)
+    add(ems_id, ManageIQ::Providers::Google::CloudManager::EventParser.event_to_hash(event, ems_id))
+  end
+
   def self.add(ems_id, event_hash)
     event_type = event_hash[:event_type]
     raise MiqException::Error, "event_type must be set in event" if event_type.nil?
@@ -99,6 +103,7 @@ class EmsEvent < EventStream
     process_host_in_event!(event_hash, :prefix => "dest_")
     process_availability_zone_in_event!(event_hash)
     process_cluster_in_event!(event_hash)
+    process_container_entities_in_event!(event_hash)
 
     # Write the event
     new_event = create_event(event_hash)
@@ -118,7 +123,7 @@ class EmsEvent < EventStream
 
     if event[id_key].nil?
       ems_ref = event[ems_ref_key]
-      object  = klass.base_class.find_by_ems_ref_and_ems_id(ems_ref, event[:ems_id]) unless ems_ref.nil?
+      object  = klass.base_class.find_by(:ems_ref => ems_ref, :ems_id => event[:ems_id]) unless ems_ref.nil?
 
       unless object.nil?
         event[id_key]     = object.id
@@ -146,6 +151,13 @@ class EmsEvent < EventStream
 
   def self.process_host_in_event!(event, options = {})
     process_object_in_event!(Host, event, options)
+  end
+
+  def self.process_container_entities_in_event!(event, _options = {})
+    [ContainerNode, ContainerGroup, ContainerReplicator].each do |entity|
+      process_object_in_event!(entity, event, :ems_ref_key => :ems_ref)
+    end
+    event.except!(:ems_ref)
   end
 
   def self.process_availability_zone_in_event!(event, options = {})
@@ -207,6 +219,10 @@ class EmsEvent < EventStream
     target_type = "dest_vm_or_template" if target_type == "dest_vm"
 
     event.send(target_type)
+  end
+
+  def tenant_identity
+    (vm_or_template || ext_management_system).tenant_identity
   end
 
   private
@@ -344,23 +360,14 @@ class EmsEvent < EventStream
   end
 
   def self.purge(older_than, window = nil, limit = nil)
-    _log.info("Purging #{limit.nil? ? "all" : limit} events older than [#{older_than}]...")
+    _log.info("Purging #{limit || "all"} events older than [#{older_than}]...")
 
     window ||= purge_window_size
 
-    oldest = select(:timestamp).order(:timestamp).first
-    oldest = oldest.nil? ? older_than : oldest.timestamp
-
-    total = 0
-    until (ids = where(:timestamp => oldest..older_than).limit(window).ids).empty?
-      ids = ids[0, limit - total] if limit && total + ids.length > limit
-
-      _log.info("Purging #{ids.length} events.")
-      total += delete_all(:id => ids)
-
-      break if limit && total >= limit
+    total = where(arel_table[:timestamp].lteq(older_than)).delete_in_batches(window, limit) do |count, _total|
+      _log.info("Purging #{count} events.")
     end
 
-    _log.info("Purging #{limit.nil? ? "all" : limit} events older than [#{older_than}]...Complete - Deleted #{total} records")
+    _log.info("Purging #{limit || "all"} events older than [#{older_than}]...Complete - Deleted #{total} records")
   end
 end

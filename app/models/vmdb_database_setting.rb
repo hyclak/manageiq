@@ -1,10 +1,5 @@
-class VmdbDatabaseSetting < ActiveRecord::Base
-  class << self
-    attr_accessor :aar_columns
-  end
-  self.aar_columns = []
-
-  self.table_name = 'pg_settings'
+class VmdbDatabaseSetting < ApplicationRecord
+  self.table_name = 'pg_catalog.pg_settings'
   self.primary_key = nil
 
   def self.sortable?

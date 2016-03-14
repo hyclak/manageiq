@@ -1,4 +1,4 @@
-class MiqServer < ActiveRecord::Base
+class MiqServer < ApplicationRecord
   include_concern 'WorkerManagement'
   include_concern 'ServerMonitor'
   include_concern 'ServerSmartProxy'
@@ -18,10 +18,9 @@ class MiqServer < ActiveRecord::Base
   include ReportableMixin
   include RelationshipMixin
 
-  belongs_to              :vm
+  belongs_to              :vm, :inverse_of => :miq_server
   belongs_to              :zone
   has_many                :messages,  :as => :handler, :class_name => 'MiqQueue'
-  has_many                :miq_groups, :as => :resource
   has_many                :miq_events, :as => :target, :dependent => :destroy
 
   cattr_accessor          :my_guid_cache
@@ -187,6 +186,7 @@ class MiqServer < ActiveRecord::Base
     wait_for_started_workers
 
     update_attributes(:status => "started")
+    _log.info("Server starting complete")
   end
 
   def self.seed
@@ -261,7 +261,7 @@ class MiqServer < ActiveRecord::Base
 
     Vmdb::Appliance.log_config_on_startup
 
-    svr.ntp_reload(svr.server_ntp_settings) if MiqEnvironment::Command.is_appliance?
+    svr.ntp_reload(svr.server_ntp_settings)
     # Update the config settings in the db table for MiqServer
     svr.config_updated(OpenStruct.new(:name => cfg.get(:server, :name)))
 
@@ -459,18 +459,9 @@ class MiqServer < ActiveRecord::Base
     end
   end
 
-  def reset
-    # TODO: Need to handle calling this during startup because it results in starting generic workers from the main process
-    # MiqGenericWorker.update_config
-    # XXX
-
-    # When the vmdb is reset, need to check the ntp settings, and apply them
-    ntp_reload_queue
-  end
-
   # Restart the local server
   def restart
-    raise "Server reset is only supported on Linux" unless MiqEnvironment::Command.is_linux?
+    raise "Server restart is only supported on Linux" unless MiqEnvironment::Command.is_linux?
 
     _log.info("Server restart initiating...")
     update_attribute(:status, "restarting")
@@ -665,14 +656,11 @@ class MiqServer < ActiveRecord::Base
     "#{name} [#{id}]"
   end
 
-  def permitted_groups
-    groups = miq_groups.order(:sequence).to_a
-    groups = zone.miq_groups.order(:sequence).to_a if groups.empty?
-    groups = MiqGroup.where(:resource_id => nil, :resource_type => nil).order(:sequence).to_a if groups.empty?
-    groups
-  end
-
   def server_timezone
     get_config("vmdb").config.fetch_path(:server, :timezone) || "UTC"
+  end
+
+  def tenant_identity
+    User.super_admin
   end
 end # class MiqServer

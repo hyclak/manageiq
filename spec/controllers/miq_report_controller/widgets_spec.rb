@@ -1,5 +1,3 @@
-require "spec_helper"
-
 describe ReportController do
   before(:each) do
     EvmSpecHelper.create_guid_miq_server_zone
@@ -14,10 +12,10 @@ describe ReportController do
 
     before :each do
       @previous_count_of_widgets = MiqWidget.count
-      controller.stub(:load_edit => true)
-      controller.stub(:widget_graph_menus)
-      controller.stub(:replace_right_cell)
-      controller.stub(:render)
+      allow(controller).to receive_messages(:load_edit => true)
+      allow(controller).to receive(:widget_graph_menus)
+      allow(controller).to receive(:replace_right_cell)
+      allow(controller).to receive(:render)
       controller.instance_variable_set(:@sb, :wtype => 'c') # chart widget
     end
 

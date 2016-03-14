@@ -1,9 +1,4 @@
-class VmdbDatabaseConnection < ActiveRecord::Base
-  class << self
-    attr_accessor :aar_columns
-  end
-  self.aar_columns = []
-
+class VmdbDatabaseConnection < ApplicationRecord
   self.table_name = 'pg_stat_activity'
   self.primary_key = nil
 
@@ -35,6 +30,28 @@ class VmdbDatabaseConnection < ActiveRecord::Base
 
   def self.sortable?
     false
+  end
+
+  def self.log_statistics(output = $log)
+    require 'csv'
+
+    begin
+      stats = all.map(&:to_csv_hash)
+
+      keys = stats.first.keys
+
+      csv = CSV.generate do |rows|
+        rows << keys
+        stats.each do |s|
+          vals = s.values_at(*keys)
+          rows << vals
+        end
+      end
+
+      output.info("MIQ(#{name}.#{__method__}) <<-ACTIVITY_STATS_CSV\n#{csv}ACTIVITY_STATS_CSV")
+    rescue => err
+      output.warn("MIQ(#{name}.#{__method__}) Unable to log stats, '#{err.message}'")
+    end
   end
 
   def vmdb_database_id

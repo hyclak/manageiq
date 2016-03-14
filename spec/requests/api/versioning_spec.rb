@@ -1,19 +1,7 @@
 #
 # REST API Request Tests - /api versioning
 #
-require 'spec_helper'
-
 describe ApiController do
-  include Rack::Test::Methods
-
-  before(:each) do
-    init_api_spec_env
-  end
-
-  def app
-    Vmdb::Application
-  end
-
   context "Versioning Queries" do
     it "test versioning query" do
       api_basic_authorize
@@ -33,7 +21,7 @@ describe ApiController do
       expect_single_resource_query
       expect_result_to_have_keys(%w(versions))
 
-      versions = @result["versions"]
+      versions = response_hash["versions"]
 
       # Let's get the first version identifier
       expect(versions).to_not be_nil

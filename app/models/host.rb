@@ -12,7 +12,7 @@ require 'LinuxUtils'
 $LOAD_PATH << File.join(GEMS_PENDING_ROOT, "metadata/ScanProfile")
 require 'HostScanProfiles'
 
-class Host < ActiveRecord::Base
+class Host < ApplicationRecord
   include NewWithTypeStiMixin
 
   VENDOR_TYPES = {
@@ -38,26 +38,29 @@ class Host < ActiveRecord::Base
   validates_presence_of     :name
   validates_uniqueness_of   :name
   validates_inclusion_of    :user_assigned_os, :in => ["linux_generic", "windows_generic", nil]
-  validates_inclusion_of    :vmm_vendor, :in => VENDOR_TYPES.values
+  validates_inclusion_of    :vmm_vendor, :in => VENDOR_TYPES.keys
 
   belongs_to                :ext_management_system, :foreign_key => "ems_id"
   belongs_to                :ems_cluster
   has_one                   :operating_system, :dependent => :destroy
   has_one                   :hardware, :dependent => :destroy
   has_many                  :vms_and_templates, :dependent => :nullify
-  has_many                  :vms
-  has_many                  :miq_templates
-  has_and_belongs_to_many   :storages, :join_table => :host_storages
+  has_many                  :vms, :inverse_of => :host
+  has_many                  :miq_templates, :inverse_of => :host
+  has_many                  :host_storages
+  has_many                  :storages, :through => :host_storages
   has_many                  :switches, :dependent => :destroy
   has_many                  :patches, :dependent => :destroy
   has_many                  :system_services, :dependent => :destroy
-  has_many                  :host_services, :class_name => "SystemService", :foreign_key => "host_id"
+  has_many                  :host_services, :class_name => "SystemService", :foreign_key => "host_id", :inverse_of => :host
 
   has_many                  :metrics,        :as => :resource  # Destroy will be handled by purger
   has_many                  :metric_rollups, :as => :resource  # Destroy will be handled by purger
   has_many                  :vim_performance_states, :as => :resource  # Destroy will be handled by purger
 
-  has_many                  :ems_events, -> { where("host_id = ? OR dest_host_id = ?", id, id).order(:timestamp) }, :class_name => "EmsEvent"
+  has_many                  :ems_events,
+                            ->(host) { where("host_id = ? OR dest_host_id = ?", host.id, host.id).order(:timestamp) },
+                            :class_name => "EmsEvent"
   has_many                  :ems_events_src, :class_name => "EmsEvent"
   has_many                  :ems_events_dest, :class_name => "EmsEvent", :foreign_key => :dest_host_id
 
@@ -83,21 +86,15 @@ class Host < ActiveRecord::Base
 
   has_many                  :host_service_groups, :dependent => :destroy
 
-  serialize                 :settings
+  serialize :settings, Hash
 
   # TODO: Remove all callers of address
   alias_attribute :address, :hostname
   alias_attribute :state,   :power_state
   alias_attribute :to_s,    :name
 
-  def settings
-    super || self.settings = VMDB::Config.new("hostdefaults").get(:host)
-  end
-
   include SerializedEmsRefObjMixin
   include ProviderObjectMixin
-
-  include WebServiceAttributeMixin
   include EventMixin
 
   include CustomAttributeMixin
@@ -137,6 +134,7 @@ class Host < ActiveRecord::Base
   virtual_column :enabled_run_level_6_services, :type => :string_set,  :uses => :host_services
   virtual_column :last_scan_on,                 :type => :time,        :uses => :last_drift_state_timestamp
   virtual_column :v_annotation,                 :type => :string,      :uses => :hardware
+  virtual_column :vmm_vendor_display,           :type => :string
   virtual_column :ipmi_enabled,                 :type => :boolean
 
   virtual_has_many   :resource_pools,                               :uses => :all_relationships
@@ -172,6 +170,7 @@ class Host < ActiveRecord::Base
   include AsyncDeleteMixin
   include ComplianceMixin
   include VimConnectMixin
+  include AvailabilityMixin
 
   before_create :make_smart
   after_save    :process_events
@@ -188,35 +187,17 @@ class Host < ActiveRecord::Base
     hardware.try(:annotation)
   end
 
-  # host settings
-  def autoscan
-    settings[:autoscan]
-  end
-
-  def autoscan=(switch)
-    settings[:autoscan] = switch
-  end
-
-  def inherit_mgt_tags
-    settings[:inherit_mgt_tags]
-  end
-
-  def inherit_mgt_tags=(switch)
-    settings[:inherit_mgt_tags] = switch
-  end
-
-  def scan_frequency
-    settings[:scan_frequency]
-  end
-
-  def scan_frequency=(switch)
-    settings[:scan_frequency] = switch
-  end
-  # end host settings
-
   def my_zone
     ems = ext_management_system
     ems ? ems.my_zone : MiqServer.my_zone
+  end
+
+  def tenant_identity
+    if ext_management_system
+      ext_management_system.tenant_identity
+    else
+      User.super_admin.tap { |u| u.current_group = Tenant.root_tenant.default_miq_group }
+    end
   end
 
   def make_smart
@@ -242,30 +223,6 @@ class Host < ActiveRecord::Base
     end
   end
   private :raise_cluster_event
-
-  # is_available?
-  # Returns:  true or false
-  #
-  # The UI calls this method to determine if a feature is supported for this Host
-  # and determines if a button should be displayed.  This method should return true
-  # even if a function is not 'currently' available due to some condition that is not
-  # being met.
-  def is_available?(request_type)
-    send("validate_#{request_type}")[:available]
-  end
-
-  # is_available_now_error_message
-  # Returns an error message string if there is an error.
-  # Returns nil to indicate no errors.
-  # This method is used by the UI along with the is_available? methods.
-  def is_available_now_error_message(request_type)
-    send("validate_#{request_type}")[:message]
-  end
-
-  def raise_is_available_now_error_message(request_type)
-    msg = send("validate_#{request_type}")[:message]
-    raise MiqException::MiqVmError, msg unless msg.nil?
-  end
 
   def validate_reboot
     validate_esx_host_connected_to_vc_with_power_state('on')
@@ -343,6 +300,10 @@ class Host < ActiveRecord::Base
     return {:available => false, :message => "The Host is not connected to an active #{ui_lookup(:table => "ext_management_systems")}"} unless has_active_ems?
     return {:available => false, :message => "The Host is not VMware ESX"} unless is_vmware_esx?
     nil
+  end
+
+  def validate_unsupported(message_prefix)
+    {:available => false, :message => "#{message_prefix} is not available for #{self.class.model_suffix} Host."}
   end
 
   def has_active_ems?
@@ -639,7 +600,7 @@ class Host < ActiveRecord::Base
   end
 
   def is_vmware?
-    vmm_vendor.to_s.strip.downcase == 'vmware'
+    vmm_vendor == 'vmware'
   end
 
   def is_vmware_esx?
@@ -651,32 +612,8 @@ class Host < ActiveRecord::Base
     is_vmware? && product.starts_with?('esx') && product.ends_with?('i')
   end
 
-  def self.lookUpHost(hostname, ipaddr, opts = {})
-    h   = Host.where("lower(hostname) = ?", hostname.downcase).find_by(:ipaddress => ipaddr) if hostname && ipaddr
-    h ||= Host.find_by("lower(hostname) = ?", hostname.downcase)                             if hostname
-    h ||= Host.find_by(:ipaddress => ipaddr)                                                 if ipaddr
-    h ||= Host.find_by("lower(hostname) LIKE ?", "#{hostname.downcase}.%")                   if hostname
-
-    # If we're given an ems_ref or ems_id then ensure that the host
-    # we looked-up does not have a different ems_ref and is not
-    # owned by another provider, this would cause us to overwrite
-    # a different host record
-    if (opts[:ems_ref] && h.ems_ref != opts[:ems_ref]) || (opts[:ems_id] && h.ems_id != opts[:ems_id])
-      h = nil
-    end unless h.nil?
-
-    h
-  end
-
-  def vmm_vendor
-    VENDOR_TYPES[read_attribute(:vmm_vendor)]
-  end
-
-  def vmm_vendor=(v)
-    v = VENDOR_TYPES.key(v) if      VENDOR_TYPES.value?(v)
-    v = nil                 unless  VENDOR_TYPES.key?(v)
-
-    self[:vmm_vendor] = v
+  def vmm_vendor_display
+    VENDOR_TYPES[vmm_vendor]
   end
 
   #
@@ -798,14 +735,13 @@ class Host < ActiveRecord::Base
     return false
   end
 
-  def self.multi_host_update(host_ids, attr_hash = {}, creds = {})
+  def self.batch_update_authentication(host_ids, creds = {})
     errors = []
     return true if host_ids.blank?
     host_ids.each do |id|
       begin
         host = Host.find(id)
         host.update_authentication(creds)
-        host.update_attributes!(attr_hash)
       rescue ActiveRecord::RecordNotFound => err
         _log.warn("#{err.class.name}-#{err}")
         next
@@ -926,7 +862,7 @@ class Host < ActiveRecord::Base
     end
 
     make_smart # before_create callback
-    self.settings   = VMDB::Config.new("hostdefaults").get(:host)
+    self.settings   = nil
     self.name       = "IPMI <#{ipmi_address}>"
     self.vmm_vendor = 'unknown'
     save!
@@ -938,7 +874,7 @@ class Host < ActiveRecord::Base
   def detect_discovered_os(ost)
     # Determine os
     os_type = nil
-    if vmm_vendor == "vmware"
+    if is_vmware?
       os_name = "VMware ESX Server"
     elsif ost.os.include?(:linux)
       os_name = "linux"
@@ -989,8 +925,8 @@ class Host < ActiveRecord::Base
       self.ipaddress    = nil
       self.hostname     = nil
     else
-      self.vmm_vendor   = ost.hypervisor.join(", ")
-      self.type         = "Host"
+      self.vmm_vendor = ost.hypervisor.join(", ")
+      self.type       = "Host"
     end
 
     find_method
@@ -1138,7 +1074,7 @@ class Host < ActiveRecord::Base
   end
 
   def refresh_patches(ssu)
-    return unless vmm_buildnumber && vmm_buildnumber != Patch.highest_patch_level(self)
+    return unless vmm_buildnumber && vmm_buildnumber != patches.highest_patch_level
 
     patches = []
     begin
@@ -1171,7 +1107,7 @@ class Host < ActiveRecord::Base
   def refresh_services(ssu)
     xml = MiqXml.createDoc(:miq).root.add_element(:services)
 
-    services = ssu.shell_exec("systemctl -a --type service")
+    services = ssu.shell_exec("systemctl -a --type service --no-legend")
     if services
       # If there is a systemd use only that, chconfig is calling systemd on the background, but has misleading results
       services = MiqLinux::Utils.parse_systemctl_list(services)
@@ -1314,7 +1250,7 @@ class Host < ActiveRecord::Base
 
   def self.ready_for_provisioning?(ids)
     errors = ActiveModel::Errors.new(self)
-    hosts = find_all_by_id(ids)
+    hosts = where(:id => ids)
     missing = ids - hosts.collect(&:id)
     errors.add(:missing_ids, "Unable to find Hosts with the following ids #{missing.inspect}") unless missing.empty?
 
@@ -1332,7 +1268,7 @@ class Host < ActiveRecord::Base
   end
 
   def set_custom_field(attribute, value)
-    return unless vmm_vendor == "VMware"
+    return unless is_vmware?
     raise "Host has no EMS, unable to set custom attribute" unless ext_management_system
 
     ext_management_system.set_custom_field(self, :attribute => attribute, :value => value)
@@ -1340,7 +1276,7 @@ class Host < ActiveRecord::Base
 
   def quickStats
     return @qs if @qs
-    return {} unless vmm_vendor == "VMware"
+    return {} unless is_vmware?
 
     begin
       raise "Host has no EMS, unable to get host statistics" unless ext_management_system
@@ -1382,27 +1318,6 @@ class Host < ActiveRecord::Base
 
   def first_cat_entry(name)
     Classification.first_cat_entry(name, self)
-  end
-
-  def self.check_for_vms_to_scan
-    _log.debug "Checking for VMs that are scheduled to be scanned"
-
-    hosts = MiqServer.my_server.zone.hosts
-    MiqPreloader.preload(hosts, :vms)
-    hosts.each do |h|
-      next if h.scan_frequency.to_i == 0
-
-      h.vms.each do |vm|
-        if vm.last_scan_attempt_on.nil? || h.scan_frequency.to_i.seconds.ago.utc > vm.last_scan_attempt_on
-          begin
-            _log.info("Creating scan job on [(#{vm.class.name}) #{vm.name}]")
-            vm.scan
-          rescue => err
-            _log.log_backtrace(err)
-          end
-        end
-      end
-    end
   end
 
   # TODO: Rename this to scan_queue and rename scan_from_queue to scan to match
@@ -1681,7 +1596,7 @@ class Host < ActiveRecord::Base
   end
 
   def control_supported?
-    !(vmm_vendor == VENDOR_TYPES["vmware"] && vmm_product == "Workstation")
+    !(is_vmware? && vmm_product == "Workstation")
   end
 
   def event_where_clause(assoc = :ems_events)
@@ -1883,13 +1798,12 @@ class Host < ActiveRecord::Base
             else VmPerformance
             end
 
-    vm_perfs = klass.all(:conditions => [
+    vm_perfs = klass.where(
       "parent_host_id = ? AND capture_interval_name = ? AND timestamp >= ? AND timestamp <= ?",
       id,
       capture_interval.to_s,
       time_range[0],
-      time_range[1]
-    ])
+      time_range[1])
 
     perf_hash = {}
     vm_perfs.each do |p|
@@ -1919,22 +1833,22 @@ class Host < ActiveRecord::Base
     !plist.blank?
   end
 
-  def self.node_types
+  def self.node_types # TODO: This doesn't belong here
     return :non_openstack unless openstack_hosts_exists?
     non_openstack_hosts_exists? ? :mixed_hosts : :openstack
   end
 
-  def self.openstack_hosts_exists?
+  def self.openstack_hosts_exists? # TODO: This doesn't belong here
     ems = ManageIQ::Providers::Openstack::InfraManager.pluck(:id)
     ems.empty? ? false : Host.where(:ems_id => ems).exists?
   end
 
-  def self.non_openstack_hosts_exists?
+  def self.non_openstack_hosts_exists? # TODO: This doesn't belong here
     ems = ManageIQ::Providers::Openstack::InfraManager.pluck(:id)
     Host.where.not(:ems_id => ems).exists?
   end
 
-  def openstack_host?
+  def openstack_host? # TODO: This doesn't belong here
     ext_management_system.class == ManageIQ::Providers::Openstack::InfraManager
   end
 

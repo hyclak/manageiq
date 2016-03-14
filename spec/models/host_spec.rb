@@ -1,5 +1,3 @@
-require "spec_helper"
-
 describe Host do
   it "groups and users joins" do
     user1  = FactoryGirl.create(:account_user)
@@ -35,15 +33,15 @@ describe Host do
     host = FactoryGirl.create(:host_vmware)
     host.save_drift_state
 
-    host.drift_states.size.should == 1
-    DriftState.count.should == 1
+    expect(host.drift_states.size).to eq(1)
+    expect(DriftState.count).to eq(1)
 
-    host.drift_states.first.data.should == {
-      :class              => "ManageIQ::Providers::Vmware::InfraManager::Host",
-      :id                 => host.id,
-      :name               => host.name,
-      :vmm_vendor         => "VMware",
-      :v_total_vms        => 0,
+    expect(host.drift_states.first.data).to eq({
+      :class                         => "ManageIQ::Providers::Vmware::InfraManager::Host",
+      :id                            => host.id,
+      :name                          => host.name,
+      :vmm_vendor_display            => "VMware",
+      :v_total_vms                   => 0,
 
       :advanced_settings             => [],
       :filesystems                   => [],
@@ -57,27 +55,26 @@ describe Host do
       :tags                          => [],
       :users                         => [],
       :vms                           => [],
-    }
+    })
   end
 
   it "emits cluster policy event when the cluster changes" do
     # New host added to a cluster
     cluster1 = FactoryGirl.create(:ems_cluster)
-    host = FactoryGirl.create(:host_vmware)
-    host.ems_cluster = cluster1
-    MiqEvent.should_receive(:raise_evm_event).with(host, "host_add_to_cluster", anything)
+    host = FactoryGirl.build(:host_vmware, :ems_cluster => cluster1)
+    expect(MiqEvent).to receive(:raise_evm_event).with(host, "host_add_to_cluster", anything)
     host.save
 
     # Existing host changes clusters
     cluster2 = FactoryGirl.create(:ems_cluster)
     host.ems_cluster = cluster2
-    MiqEvent.should_receive(:raise_evm_event).with(host, "host_remove_from_cluster", hash_including(:ems_cluster => cluster1))
-    MiqEvent.should_receive(:raise_evm_event).with(host, "host_add_to_cluster", hash_including(:ems_cluster => cluster2))
+    expect(MiqEvent).to receive(:raise_evm_event).with(host, "host_remove_from_cluster", hash_including(:ems_cluster => cluster1))
+    expect(MiqEvent).to receive(:raise_evm_event).with(host, "host_add_to_cluster", hash_including(:ems_cluster => cluster2))
     host.save
 
     # Existing host becomes cluster-less
     host.ems_cluster = nil
-    MiqEvent.should_receive(:raise_evm_event).with(host, "host_remove_from_cluster", hash_including(:ems_cluster => cluster2))
+    expect(MiqEvent).to receive(:raise_evm_event).with(host, "host_remove_from_cluster", hash_including(:ems_cluster => cluster2))
     host.save
   end
 
@@ -116,32 +113,6 @@ describe Host do
     end
   end
 
-  context ".check_for_vms_to_scan" do
-    before do
-      @zone1 = FactoryGirl.create(:small_environment)
-      @zone2 = FactoryGirl.create(:small_environment)
-
-      Host.any_instance.stub(:scan_frequency).and_return(30)
-    end
-
-    it "in zone1 will only scan Vms in zone1" do
-      should_only_scan_in_its_zone(@zone1)
-    end
-
-    it "in zone2 will only scan Vms in zone2" do
-      should_only_scan_in_its_zone(@zone2)
-    end
-
-    def should_only_scan_in_its_zone(zone)
-      vms = zone.vms_and_templates
-      MiqServer.stub(:my_server).and_return(zone.miq_servers.first)
-      Host.check_for_vms_to_scan
-      jobs = Job.where(:target_class => 'VmOrTemplate')
-      jobs.length.should == 2
-      jobs.collect(&:target_id).should match_array vms.collect(&:id)
-    end
-  end
-
   context "power operations" do
     let(:validation_response) { {:available => false, :message => "The Host is not VMware ESX"} }
 
@@ -153,16 +124,16 @@ describe Host do
 
     context "#start" do
       before do
-        described_class.any_instance.stub(:validate_start   => {})
-        described_class.any_instance.stub(:validate_ipmi    => {:available => true, :message => nil})
-        described_class.any_instance.stub(:run_ipmi_command => "off")
+        allow_any_instance_of(described_class).to receive_messages(:validate_start   => {})
+        allow_any_instance_of(described_class).to receive_messages(:validate_ipmi    => {:available => true, :message => nil})
+        allow_any_instance_of(described_class).to receive_messages(:run_ipmi_command => "off")
         FactoryGirl.create(:miq_event_definition, :name => :request_host_start)
         # admin user is needed to process Events
         FactoryGirl.create(:user_with_group, :userid => "admin", :name => "Administrator")
       end
 
       it "policy passes" do
-        described_class.any_instance.should_receive(:ipmi_power_on)
+        expect_any_instance_of(described_class).to receive(:ipmi_power_on)
 
         @host.start
         status, message, result = MiqQueue.first.deliver
@@ -170,10 +141,10 @@ describe Host do
       end
 
       it "policy prevented" do
-        described_class.any_instance.should_not_receive(:ipmi_power_on)
+        expect_any_instance_of(described_class).not_to receive(:ipmi_power_on)
 
         event = {:attributes => {"full_data" => {:policy => {:pprevented => true}}}}
-        MiqAeEngine::MiqAeWorkspaceRuntime.any_instance.stub(:get_obj_from_path).with("/").and_return(:event_stream => event)
+        allow_any_instance_of(MiqAeEngine::MiqAeWorkspaceRuntime).to receive(:get_obj_from_path).with("/").and_return(:event_stream => event)
         @host.start
         status, message, _result = MiqQueue.first.deliver
         MiqQueue.first.delivered(status, message, MiqAeEngine::MiqAeWorkspaceRuntime.new)
@@ -207,110 +178,15 @@ describe Host do
   end
 
   context "quick statistics retrieval" do
-    before(:each) do
-      @host = FactoryGirl.create(:host)
-    end
+    subject { FactoryGirl.build(:host) }
 
-    it "#current_memory_usage" do
-      mem_usage = @host.current_memory_usage
-      mem_usage.should be_an(Integer)
-
-      -> { @host.current_memory_usage }.should_not raise_error
-    end
-
-    it "#current_cpu_usage" do
-      cpu_usage = @host.current_cpu_usage
-      cpu_usage.should be_an(Integer)
-
-      -> { @host.current_cpu_usage }.should_not raise_error
-    end
+    it("#current_memory_usage") { expect(subject.current_memory_usage).to be_kind_of(Integer) }
+    it("#current_cpu_usage")    { expect(subject.current_cpu_usage).to    be_kind_of(Integer) }
   end
 
-  context "#vmm_vendor" do
-    it "with known host type" do
-      expect(FactoryGirl.create(:host_vmware_esx).vmm_vendor).to eq("VMware")
-    end
-
-    it "with nil vendor" do
-      expect(FactoryGirl.create(:host, :vmm_vendor => nil).vmm_vendor).to eq("Unknown")
-    end
-  end
-
-  context ".lookUpHost" do
-    let(:host_3_part_hostname)    { FactoryGirl.create(:host_vmware, :hostname => "test1.example.com",       :ipaddress => "192.168.1.1") }
-    let(:host_4_part_hostname)    { FactoryGirl.create(:host_vmware, :hostname => "test2.dummy.example.com", :ipaddress => "192.168.1.2") }
-    let(:host_duplicate_hostname) { FactoryGirl.create(:host_vmware, :hostname => "test2.example.com",       :ipaddress => "192.168.1.3", :ems_ref => "host-1", :ems_id => 1) }
-    let(:host_no_ems_id)          { FactoryGirl.create(:host_vmware, :hostname => "test2.example.com",       :ipaddress => "192.168.1.4", :ems_ref => "host-2") }
-    before do
-      host_3_part_hostname
-      host_4_part_hostname
-      host_duplicate_hostname
-      host_no_ems_id
-    end
-
-    it "with exact hostname and IP" do
-      expect(Host.lookUpHost(host_3_part_hostname.hostname, host_3_part_hostname.ipaddress)).to eq(host_3_part_hostname)
-      expect(Host.lookUpHost(host_4_part_hostname.hostname, host_4_part_hostname.ipaddress)).to eq(host_4_part_hostname)
-    end
-
-    it "with exact hostname and updated IP" do
-      expect(Host.lookUpHost(host_3_part_hostname.hostname, "192.168.1.254")).to eq(host_3_part_hostname)
-      expect(Host.lookUpHost(host_4_part_hostname.hostname, "192.168.1.254")).to eq(host_4_part_hostname)
-    end
-
-    it "with exact IP and updated hostname" do
-      expect(Host.lookUpHost("not_it.example.com", host_3_part_hostname.ipaddress)).to       eq(host_3_part_hostname)
-      expect(Host.lookUpHost("not_it.dummy.example.com", host_4_part_hostname.ipaddress)).to eq(host_4_part_hostname)
-    end
-
-    it "with exact IP only" do
-      expect(Host.lookUpHost(nil, host_3_part_hostname.ipaddress)).to eq(host_3_part_hostname)
-      expect(Host.lookUpHost(nil, host_4_part_hostname.ipaddress)).to eq(host_4_part_hostname)
-    end
-
-    it "with exact hostname only" do
-      expect(Host.lookUpHost(host_3_part_hostname.hostname, nil)).to eq(host_3_part_hostname)
-      expect(Host.lookUpHost(host_4_part_hostname.hostname, nil)).to eq(host_4_part_hostname)
-    end
-
-    it "with bad fqdn hostname only" do
-      expect(Host.lookUpHost("test1.example.org", nil)).to           be_nil
-      expect(Host.lookUpHost("test2.something.example.com", nil)).to be_nil
-    end
-
-    it "with bad partial hostname only" do
-      expect(Host.lookUpHost("test", nil)).to            be_nil
-      expect(Host.lookUpHost("test2.something", nil)).to be_nil
-    end
-
-    it "with partial hostname only" do
-      expect(Host.lookUpHost("test1", nil)).to       eq(host_3_part_hostname)
-      expect(Host.lookUpHost("test2.dummy", nil)).to eq(host_4_part_hostname)
-    end
-
-    it "with duplicate hostname and ipaddress" do
-      expect(Host.lookUpHost(host_duplicate_hostname.hostname, host_duplicate_hostname.ipaddress)).to eq(host_duplicate_hostname)
-    end
-
-    it "with fqdn, ipaddress, and ems_ref finds right host" do
-      expect(Host.lookUpHost(host_duplicate_hostname.hostname, host_duplicate_hostname.ipaddress, :ems_ref => host_duplicate_hostname.ems_ref)).to eq(host_duplicate_hostname)
-    end
-
-    it "with fqdn, ipaddress, and ems_ref finds right host without an ems_id (reconnect orphaned host)" do
-      expect(Host.lookUpHost(host_no_ems_id.hostname, host_no_ems_id.ipaddress, :ems_ref => host_no_ems_id.ems_ref)).to eq(host_no_ems_id)
-    end
-
-    it "with fqdn, ipaddress, and different ems_ref returns nil" do
-      expect(Host.lookUpHost(host_duplicate_hostname.hostname, host_duplicate_hostname.ipaddress, :ems_ref => "dummy_ref")).to be_nil
-    end
-
-    it "with ems_ref and ems_id" do
-      expect(Host.lookUpHost(host_duplicate_hostname.hostname, host_duplicate_hostname.ipaddress, :ems_ref => host_duplicate_hostname.ems_ref, :ems_id => 1)).to eq(host_duplicate_hostname)
-    end
-
-    it "with ems_ref and other ems_id" do
-      expect(Host.lookUpHost(host_duplicate_hostname.hostname, host_duplicate_hostname.ipaddress, :ems_ref => host_duplicate_hostname.ems_ref, :ems_id => 0)).to be_nil
-    end
+  context "#vmm_vendor_display" do
+    it("known vendor") { expect(FactoryGirl.build(:host_vmware_esx).vmm_vendor_display).to          eq("VMware") }
+    it("nil vendor")   { expect(FactoryGirl.build(:host, :vmm_vendor => nil).vmm_vendor_display).to eq("Unknown") }
   end
 
   it ".host_discovery_types" do
@@ -335,13 +211,13 @@ describe Host do
       it "save" do
         @host.update_authentication(@data, @options)
         @host.save
-        @host.authentications.count.should eq(1)
+        expect(@host.authentications.count).to eq(1)
       end
 
       it "validate" do
-        @host.stub(:connect_ssh)
+        allow(@host).to receive(:connect_ssh)
         assert_default_credentials_validated
-        @host.authentications.count.should eq(0)
+        expect(@host.authentications.count).to eq(0)
       end
     end
 
@@ -349,19 +225,19 @@ describe Host do
       it "save default, then save remote" do
         @host.update_authentication(@data, @options)
         @host.save
-        @host.authentications.count.should eq(1)
+        expect(@host.authentications.count).to eq(1)
 
         @data[:remote] = {:userid => "root", :password => @password}
         @host.update_authentication(@data, @options)
         @host.save
-        @host.authentications.count.should eq(2)
+        expect(@host.authentications.count).to eq(2)
       end
 
       it "save both together" do
         @data[:remote] = {:userid => "root", :password => @password}
         @host.update_authentication(@data, @options)
         @host.save
-        @host.authentications.count.should eq(2)
+        expect(@host.authentications.count).to eq(2)
       end
 
       it "validate remote with both credentials" do
@@ -375,7 +251,7 @@ describe Host do
       end
 
       it "validate default, then validate remote" do
-        @host.stub(:connect_ssh)
+        allow(@host).to receive(:connect_ssh)
         assert_default_credentials_validated
 
         @data[:remote] = {:userid => "root", :password => @password}
@@ -395,83 +271,82 @@ describe Host do
   end
 
   context "#get_ports" do
+    let(:os) { FactoryGirl.create(:operating_system) }
+    subject  { FactoryGirl.create(:host, :operating_system => os) }
+
     before do
-      @host = FactoryGirl.create(:host_vmware)
-      os = FactoryGirl.create(:operating_system, :name => 'XUNIL')
-      @host.operating_system = os
-      fr1 = FactoryGirl.create(:firewall_rule, :name => 'fr1', :host_protocol => 'udp',
-                               :direction => "in", :enabled => true, :port => 1001)
-      fr2 = FactoryGirl.create(:firewall_rule, :name => 'fr2', :host_protocol => 'udp',
-                               :direction => "out", :enabled => true, :port => 1002)
-      fr3 = FactoryGirl.create(:firewall_rule, :name => 'fr3', :host_protocol => 'tcp',
-                               :direction => "in", :enabled => true, :port => 1003)
-      [fr1, fr2, fr3].each do |fr|
-        fr.update_attributes(:resource_type => os.class.name, :resource_id => os.id)
-      end
+      FactoryGirl.create(:firewall_rule, :host_protocol => 'udp', :direction => "in", :enabled => true, :port => 1001, :resource => os)
+      FactoryGirl.create(:firewall_rule, :host_protocol => 'udp', :direction => "out", :enabled => true, :port => 1002, :resource => os)
+      FactoryGirl.create(:firewall_rule, :host_protocol => 'tcp', :direction => "in", :enabled => true, :port => 1003, :resource => os)
     end
 
-    it "#enabled_udp_outbound_ports" do
-      @host.enabled_udp_outbound_ports.should match_array([1002])
-    end
-
-    it "#enabled_inbound_ports" do
-      @host.enabled_inbound_ports.should match_array([1003, 1001])
-    end
+    it("#enabled_udp_outbound_ports") { expect(subject.enabled_udp_outbound_ports).to match_array([1002]) }
+    it("#enabled_inbound_ports")      { expect(subject.enabled_inbound_ports).to      match_array([1003, 1001]) }
   end
 
-  context "#node_types" do
-    before(:each) do
-      @ems1 = FactoryGirl.create(:ems_vmware)
-      @ems2 = FactoryGirl.create(:ems_openstack_infra)
-    end
-
+  context ".node_types" do
     it "returns :mixed_hosts when there are both openstack & non-openstack hosts in db" do
-      FactoryGirl.create(:host_vmware_esx, :ems_id => @ems1.id)
-      FactoryGirl.create(:host_redhat, :ems_id => @ems2.id)
+      FactoryGirl.create(:host_openstack_infra, :ext_management_system => FactoryGirl.create(:ems_openstack_infra))
+      FactoryGirl.create(:host_vmware_esx,      :ext_management_system => FactoryGirl.create(:ems_vmware))
 
-      result = Host.node_types
-      result.should eq(:mixed_hosts)
+      expect(Host.node_types).to eq(:mixed_hosts)
     end
 
     it "returns :openstack when there are only openstack hosts in db" do
-      FactoryGirl.create(:host_redhat, :ems_id => @ems2.id)
-      result = Host.node_types
-      result.should eq(:openstack)
+      FactoryGirl.create(:host_openstack_infra, :ext_management_system => FactoryGirl.create(:ems_openstack_infra))
+
+      expect(Host.node_types).to eq(:openstack)
     end
 
     it "returns :non_openstack when there are non-openstack hosts in db" do
-      FactoryGirl.create(:host_vmware_esx, :ems_id => @ems1.id)
-      result = Host.node_types
-      result.should eq(:non_openstack)
+      FactoryGirl.create(:host_vmware_esx, :ext_management_system => FactoryGirl.create(:ems_vmware))
+
+      expect(Host.node_types).to eq(:non_openstack)
     end
   end
 
   context "#openstack_host?" do
-    it "returns true for openstack host" do
-      ems = FactoryGirl.create(:ems_openstack_infra)
-      host = FactoryGirl.create(:host_redhat, :ems_id => ems.id)
+    it("false") { expect(FactoryGirl.build(:host).openstack_host?).to be false }
 
-      result = host.openstack_host?
-      result.should be_true
-    end
-
-    it "returns false for non-openstack host" do
-      ems = FactoryGirl.create(:ems_vmware)
-      host = FactoryGirl.create(:host_vmware_esx, :ems_id => ems.id)
-      result = host.openstack_host?
-      result.should be_false
+    it "true" do
+      expect(FactoryGirl.build(:host_openstack_infra, :ext_management_system => FactoryGirl.create(:ems_openstack_infra))).to be_openstack_host
     end
   end
 
   def assert_default_credentials_validated
-    @host.stub(:verify_credentials_with_ws)
+    allow(@host).to receive(:verify_credentials_with_ws)
     @host.update_authentication(@data, @options)
-    @host.verify_credentials(:default).should be_true
+    expect(@host.verify_credentials(:default)).to be_truthy
   end
 
   def assert_remote_credentials_validated
-    @host.stub(:connect_ssh)
+    allow(@host).to receive(:connect_ssh)
     @host.update_authentication(@data, @options)
-    @host.verify_credentials(:remote).should be_true
+    expect(@host.verify_credentials(:remote)).to be_truthy
+  end
+
+  context "#tenant_identity" do
+    let(:admin)    { FactoryGirl.create(:user_with_group, :userid => "admin") }
+    let(:tenant)   { FactoryGirl.create(:tenant) }
+    let(:ems)      { FactoryGirl.create(:ext_management_system, :tenant => tenant) }
+    before         { admin }
+
+    subject        { @host.tenant_identity }
+
+    it "has tenant from provider" do
+      @host = FactoryGirl.create(:host, :ext_management_system => ems)
+
+      expect(subject).to                eq(admin)
+      expect(subject.current_group).to  eq(ems.tenant.default_miq_group)
+      expect(subject.current_tenant).to eq(ems.tenant)
+    end
+
+    it "without a provider, has tenant from root tenant" do
+      @host = FactoryGirl.create(:host)
+
+      expect(subject).to                eq(admin)
+      expect(subject.current_group).to  eq(Tenant.root_tenant.default_miq_group)
+      expect(subject.current_tenant).to eq(Tenant.root_tenant)
+    end
   end
 end

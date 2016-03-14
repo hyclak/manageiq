@@ -15,6 +15,7 @@ class ApplicationHelper::ToolbarBuilder
   def initialize(view_context, view_binding, instance_data)
     @view_context = view_context
     @view_binding = view_binding
+    @instance_data = instance_data
 
     instance_data.each do |name, value|
       instance_variable_set(:"@#{name}", value)
@@ -30,103 +31,57 @@ class ApplicationHelper::ToolbarBuilder
   end
 
   ###
-  def load_yaml(tb_name)
-    @@toolbar_cache ||= {}
-    @@toolbar_cache[tb_name] ||= (
-      h = YAML.load(File.open("#{TOOLBARS_FOLDER}/#{tb_name}.yaml")).freeze
-      h.values.map(&:freeze)
-      h
-    )
+  def generic_toolbar(tb_name)
+    class_name = 'ApplicationHelper::Toolbar::' + ActiveSupport::Inflector.camelize(tb_name.sub(/_tb$/, ''))
+    Kernel.const_get(class_name)
   end
 
   def build_toolbar(tb_name)
-    definition = tb_name == "custom_buttons_tb" ? build_custom_buttons_toolbar(@record) : load_yaml(tb_name)
-    build(definition)
+    toolbar = tb_name == "custom_buttons_tb" ? build_custom_buttons_toolbar(@record) : generic_toolbar(tb_name)
+    build(toolbar)
   end
 
   def build_select_button(bgi, index)
     bs_children = false
-    props = {
+    props = ApplicationHelper::ToolbarButtons.button(
+      @view_context, @view_binding, @instance_data,
       "id"     => bgi[:buttonSelect],
       "type"   => "buttonSelect",
       "img"    => img = "#{bgi[:image] ? bgi[:image] : bgi[:buttonSelect]}.png",
       "imgdis" => img,
       :icon    => bgi[:icon]
-    }
-    props["title"] = bgi[:title] unless bgi[:title].blank?
-    props["text"]  = bgi[:text]  unless bgi[:text].blank?
-    if bgi[:buttonSelect] == "history_choice" && x_tree_history.length < 2
-      props["enabled"] = false  # Show disabled history button if no history
-    else
-      props["enabled"] = "#{bgi[:enabled]}" unless bgi[:enabled].blank?
-    end
+    )
+    apply_common_props(props, bgi)
     props["openAll"] = true # Open/close the button select on click
-
-    if bgi[:buttonSelect] == "chargeback_download_choice" && x_active_tree == :cb_reports_tree &&
-       @report && !@report.contains_records?
-      props["enabled"] = "false"
-      props["title"] = _("No records found for this report")
-    end
-    if bgi[:buttonSelect] == "host_vmdb_choice" && x_active_tree == :old_dialogs_tree && @record && @record[:default]
-      bgi[:items].each do |bgsi|
-        if bgsi[:button] == "old_dialogs_edit"
-          bgsi[:enabled] = 'false'
-          bgsi[:title] = _('Default dialogs cannot be edited')
-        elsif bgsi[:button] == "old_dialogs_delete"
-          bgsi[:enabled] = 'false'
-          bgsi[:title] = _('Default dialogs cannot be removed from the VMDB')
-        end
-      end
-    end
-    if bgi[:buttonSelect] == "orchestration_template_vmdb_choice" && x_active_tree == :ot_tree && @record
-      bgi[:items].each do |bgsi|
-        if bgsi[:button] == "orchestration_template_edit"
-          bgsi[:enabled] = @record.in_use? ? 'false' : 'true'
-          bgsi[:title] = _('Orchestration Templates that are in use cannot be edited')
-        elsif bgsi[:button] == "orchestration_template_remove"
-          bgsi[:enabled] = @record.in_use? ? 'false' : 'true'
-          bgsi[:title] = _('Orchestration Templates that are in use cannot be removed')
-        end
-      end
-    end
 
     current_item = props
     current_item[:items] ||= []
     any_visible = false
     bgi[:items].each_with_index do |bsi, bsi_idx|
       if bsi.key?(:separator)
-        props = {"id" => "sep_#{index}_#{bsi_idx}", "type" => "separator", :hidden => !any_visible}
+        props = ApplicationHelper::Button::Separator.new("id" => "sep_#{index}_#{bsi_idx}", :hidden => !any_visible)
       else
-        next if download_pdf_buttons.include?(bsi[:button]) && !PdfGenerator.available?
-        next if build_toolbar_hide_button(bsi[:pressed] || bsi[:button])  # Use pressed, else button name
+        next if build_toolbar_hide_button(bsi[:pressed] || bsi[:button]) # Use pressed, else button name
         bs_children = true
-        props = {
-          "id"     => bgi[:buttonSelect] + "__" + bsi[:button],
-          "type"   => "button",
-          "img"    => img = "#{bsi[:image] ? bsi[:image] : bsi[:button]}.png",
-          "imgdis" => img,
-          :icon    => bsi[:icon]
-        }
-        if bsi[:button].starts_with?("history_")
-          if x_tree_history.length > 1
-            props["text"] = x_tree_history[bsi[:button].split("_").last.to_i][:text]
-          end
-        else
-          props["text"] = safer_eval(bsi[:text]) unless bsi[:text].blank?
-        end
-        props["enabled"] = "#{bsi[:enabled]}" unless bsi[:enabled].blank?
-        dis_title = build_toolbar_disable_button(bsi[:button])
-        props["enabled"] = "false" if dis_title
-        title = safer_eval(bsi[:title]) unless bsi[:title].blank?
-        props["title"] = dis_title.kind_of?(String) ? dis_title : title
+        props = ApplicationHelper::ToolbarButtons.button(
+          @view_context, @view_binding, @instance_data,
+          "child_id" => bsi[:button],
+          "id"       => bgi[:buttonSelect] + "__" + bsi[:button],
+          "type"     => "button",
+          "img"      => img = "#{bsi[:image] || bsi[:button]}.png",
+          "imgdis"   => img,
+          :icon      => bsi[:icon]
+        )
+        apply_common_props(props, bsi)
+        props.calculate_properties
       end
-      current_item[:items] << props
-      build_toolbar_save_button(bsi, props, bgi[:buttonSelect]) if bsi[:button] # Save if a button (not sep)
+      build_toolbar_save_button(bsi, props) unless bsi.key?(:separator)
+      current_item[:items] << props unless props.skip?
 
       any_visible ||= !props[:hidden] && props["type"] != "separator"
     end
     current_item[:items].reverse_each do |item|
-      break if ! item[:hidden] && item["type"] != 'separator'
+      break if !item[:hidden] && item["type"] != 'separator'
       item[:hidden] = true if item["type"] == 'separator'
     end
     current_item[:hidden] = !any_visible
@@ -138,37 +93,56 @@ class ApplicationHelper::ToolbarBuilder
     current_item
   end
 
+  def apply_common_props(button, input)
+    button.update(
+      :name    => button['id'],
+      :hidden  => button[:hidden] || !!input[:hidden],
+      :pressed => input[:pressed],
+      :onwhen  => input[:onwhen]
+    )
+
+    button["title"]    = safer_eval(input[:title])   unless input[:title].blank?
+    button["enabled"]  = input[:enabled].to_s        unless input[:enabled].blank?
+    button["text"]     = safer_eval(input[:text])    unless input[:text].blank?
+    button[:confirm]   = safer_eval(input[:confirm]) unless input[:confirm].blank?
+    button[:url_parms] = update_url_parms(safer_eval(input[:url_parms])) unless input[:url_parms].blank?
+
+    if input[:popup] # special behavior: button opens window_url in a new window
+      button[:popup] = true
+      button[:window_url] = "/#{request.parameters["controller"]}#{input[:url]}"
+    end
+
+    dis_title = build_toolbar_disable_button(button['child_id'] || button['id'])
+    if dis_title
+      button["enabled"] = "false"
+      button["title"]   = dis_title if dis_title.kind_of? String
+    end
+    button
+  end
+
   def build_normal_button(bgi, index)
-    return nil if download_pdf_buttons.include?(bgi[:button]) && !PdfGenerator.available?
     button_hide = build_toolbar_hide_button(bgi[:button])
     if button_hide
       # These buttons need to be present even if hidden as we show/hide them dynamically
       return nil unless %w(perf_refresh perf_reload vm_perf_refresh vm_perf_reload
-                     timeline_txt timeline_csv timeline_pdf).include?(bgi[:button])
+                           timeline_txt timeline_csv timeline_pdf).include?(bgi[:button])
     end
+
     @sep_needed = true unless button_hide
-    props = {
+    props = ApplicationHelper::ToolbarButtons.button(
+      @view_context, @view_binding, @instance_data,
       "id"     => bgi[:button],
       "type"   => "button",
       "img"    => "#{get_image(bgi[:image], bgi[:button]) ? get_image(bgi[:image], bgi[:button]) : bgi[:button]}.png",
-      "imgdis" => "#{bgi[:image] ? bgi[:image] : bgi[:button]}.png",
+      "imgdis" => "#{bgi[:image] || bgi[:button]}.png",
       :icon    => bgi[:icon]
-    }
-    props["enabled"] = "#{bgi[:enabled]}" unless bgi[:enabled].blank?
-    props["enabled"] = "false" if dis_title = build_toolbar_disable_button(bgi[:button]) || button_hide
-    props["text"]    = bgi[:text] unless bgi[:text].blank?
+    )
+    apply_common_props(props, bgi)
+
     # set pdf button to be hidden if graphical summary screen is set by default
-    bgi[:hidden] = %w(download_view vm_download_pdf).include?(bgi[:button]) && button_hide
-    title = safer_eval(bgi[:title]) unless bgi[:title].blank?
-    props["title"] = dis_title.kind_of?(String) ? dis_title : title
+    props[:hidden] = %w(download_view vm_download_pdf).include?(bgi[:button]) && button_hide
 
-    if bgi[:button] == "chargeback_report_only" && x_active_tree == :cb_reports_tree &&
-       @report && !@report.contains_records?
-      props["enabled"] = "false"
-      props["title"] = _("No records found for this report")
-    end
     _add_separator(index)
-
     props
   end
 
@@ -180,25 +154,25 @@ class ApplicationHelper::ToolbarBuilder
         @sep_added = true
       end
     end
-    @sep_needed = true                                         # Button was added, need separators from now on
+    @sep_needed = true # Button was added, need separators from now on
   end
 
   def build_twostate_button(bgi, index)
     return nil if build_toolbar_hide_button(bgi[:buttonTwoState])
 
-    props = {
+    props = ApplicationHelper::ToolbarButtons.button(
+      @view_context, @view_binding, @instance_data,
       "id"     => bgi[:buttonTwoState],
       "type"   => "buttonTwoState",
       "img"    => img = "#{bgi[:image] ? bgi[:image] : bgi[:buttonTwoState]}.png",
       "imgdis" => img,
       :icon    => bgi[:icon]
-    }
-    props["title"]    = safer_eval(bgi[:title]) unless bgi[:title].blank?
-    props["enabled"]  = bgi[:enabled].to_s unless bgi[:enabled].blank?
-    props["enabled"]  = "false" if build_toolbar_disable_button(bgi[:buttonTwoState])
-    props["selected"] = "true"  if build_toolbar_select_button(bgi[:buttonTwoState])
-    _add_separator(index)
+    )
+    apply_common_props(props, bgi)
 
+    props["selected"] = "true"  if build_toolbar_select_button(bgi[:buttonTwoState])
+
+    _add_separator(index)
     props
   end
 
@@ -211,30 +185,36 @@ class ApplicationHelper::ToolbarBuilder
               build_twostate_button(bgi, index)
             end
 
-    @toolbar << build_toolbar_save_button(bgi, props) unless props.nil?
+    unless props.nil?
+      props.calculate_properties
+      @toolbar << build_toolbar_save_button(bgi, props) unless props.skip?
+    end
   end
 
-  def build(definition)
+  def build(toolbar)
     @toolbar = []
     @groups_added = []
     @sep_needed = false
     @sep_added = nil
 
-    definition[:button_groups].each_with_index do |bg, bg_idx|
+    bg_idx = -1
+    toolbar.definition.each_pair do |name, items|
+      bg_idx += 1
+
       @sep_added = false
-      if @button_group && (!bg[:name].starts_with?(@button_group + "_") &&
-        !bg[:name].starts_with?("custom") && !bg[:name].starts_with?("dialog") &&
-        !bg[:name].starts_with?("miq_dialog") && !bg[:name].starts_with?("custom_button") &&
-        !bg[:name].starts_with?("instance_") && !bg[:name].starts_with?("image_")) &&
+      if @button_group && (!name.starts_with?(@button_group + "_") &&
+        !name.starts_with?("custom") && !name.starts_with?("dialog") &&
+        !name.starts_with?("miq_dialog") && !name.starts_with?("custom_button") &&
+        !name.starts_with?("instance_") && !name.starts_with?("image_")) &&
          !["record_summary", "summary_main", "summary_download", "tree_main",
-           "x_edit_view_tb", "history_main"].include?(bg[:name])
+           "x_edit_view_tb", "history_main", "ems_container_dashboard"].include?(name)
         next      # Skip if button_group doesn't match
       else
         # keeping track of groups that were not skipped to add separator, else it adds a separator before a button even tho no other groups were shown, i.e. vm sub screens, drift_history
         @groups_added.push(bg_idx)
       end
 
-      bg[:items].each do |bgi|
+      items.each do |bgi|
         build_button(bgi, bg_idx)
       end
     end
@@ -243,25 +223,13 @@ class ApplicationHelper::ToolbarBuilder
     @toolbar
   end
 
-  def download_pdf_buttons
-    %w(chargeback_download_pdf
-       download_pdf
-       download_view
-       drift_pdf
-       miq_capacity_download_pdf
-       render_report_pdf
-       timeline_pdf
-       vm_download_pdf
-      )
-  end
-
   def create_custom_button_hash(input, record, options = {})
     options[:enabled]  = "true" unless options.key?(:enabled)
     button             = {}
     button_id          = input[:id]
     button_name        = input[:name].to_s
     button[:button]    = "custom__custom_#{button_id}"
-    button[:image]     = "custom-#{input[:image]}"
+    button[:icon]      = "product product-custom-#{input[:image]} fa-lg"
     button[:text]      = button_name if input[:text_display]
     button[:title]     = input[:description].to_s
     button[:enabled]   = options[:enabled]
@@ -286,7 +254,7 @@ class ApplicationHelper::ToolbarBuilder
     get_custom_buttons(record).collect do |group|
       props = {}
       props[:buttonSelect] = "custom_#{group[:id]}"
-      props[:image]        = "custom-#{group[:image]}"
+      props[:icon]         = "product product-custom-#{group[:image]} fa-lg"
       props[:title]        = group[:description]
       props[:text]         = group[:text] if group[:text_display]
       props[:enabled]      = "true"
@@ -297,18 +265,19 @@ class ApplicationHelper::ToolbarBuilder
   end
 
   def build_custom_buttons_toolbar(record)
-    toolbar_hash = {:button_groups => custom_buttons_hash(record)}
+    # each custom toolbar is an anonymous subclass of this class
+    toolbar = Class.new(ApplicationHelper::Toolbar::Basic)
+    custom_buttons_hash(record).each do |button_group|
+      toolbar.button_group(button_group[:name], button_group[:items])
+    end
 
     service_buttons = record_to_service_buttons(record)
     unless service_buttons.empty?
-      h =  {
-        :name  => "custom_buttons_",
-        :items => service_buttons.collect { |b| create_custom_button_hash(b, record, :enabled => nil) }
-      }
-      toolbar_hash[:button_groups].push(h)
+      buttons = service_buttons.collect { |b| create_custom_button_hash(b, record, :enabled => nil) }
+      toolbar.button_group("custom_buttons_", buttons)
     end
 
-    toolbar_hash
+    toolbar
   end
 
   def button_class_name(record)
@@ -504,8 +473,7 @@ class ApplicationHelper::ToolbarBuilder
   def build_toolbar_hide_button_service(id)
     case id
     when "service_reconfigure"
-      ra = @record.service_template.resource_actions.find_by_action('Reconfigure') if @record.service_template
-      return true if ra.nil? || ra.dialog_id.nil? || ra.fqname.blank?
+      return true unless @record.validate_reconfigure
     end
     false
   end
@@ -534,6 +502,12 @@ class ApplicationHelper::ToolbarBuilder
                       container_image_registry_new).include?(id) &&
                    (@record.kind_of?(ContainerImageRegistry) || @record.nil?)
 
+    return true if %w(persistent_volume_edit persistent_volume_delete persistent_volume_new).include?(id) &&
+                   (@record.kind_of?(PersistentVolume) || @record.nil?)
+
+    return true if %w(container_build_edit container_build_delete container_build_new).include?(id) &&
+                   (@record.kind_of?(ContainerBuild) || @record.nil?)
+
     # hide timelines button for Amazon provider and instances
     # TODO: extend .is_available? support via refactoring task to cover this scenario
     return true if ['ems_cloud_timeline', 'instance_timeline'].include?(id) && (@record.kind_of?(ManageIQ::Providers::Amazon::CloudManager) || @record.kind_of?(ManageIQ::Providers::Amazon::CloudManager::Vm))
@@ -547,16 +521,12 @@ class ApplicationHelper::ToolbarBuilder
     return true if %w(host_standby host_shutdown host_reboot host_start host_stop host_reset).include?(id) &&
                    @record.kind_of?(ManageIQ::Providers::Openstack::InfraManager)
 
-    # only hide gtl button if they are not in @gtl_buttons
-    return @gtl_buttons.include?(id) ? false : true if @gtl_buttons &&
-                                                       ["view_grid", "view_tile", "view_list"].include?(id)
-
     # hide compliance check and comparison buttons rendered for orchestration stack instances
     return true if @record.kind_of?(OrchestrationStack) && @display == "instances" &&
                    %w(instance_check_compliance instance_compare).include?(id)
 
     # don't hide view buttons in toolbar
-    return false if %( view_grid view_tile view_list refresh_log fetch_log common_drift
+    return false if %( view_grid view_tile view_list view_dashboard view_summary refresh_log fetch_log common_drift
       download_text download_csv download_pdf download_view vm_download_pdf
       tree_large tree_small).include?(id) && !%w(miq_policy_rsop ops).include?(@layout)
 
@@ -574,14 +544,6 @@ class ApplicationHelper::ToolbarBuilder
          !["details", "item"].include?(@showtype)) || #       not showing list or single sub screen item i.e VM/Users
          @lastaction == "show_list") ? # or 2) selected node shows a list of records
         false : true
-    end
-
-    if id.starts_with?("history_")
-      if x_tree_history[id.split("_").last.to_i] || id.ends_with?("_1")
-        return false
-      else
-        return true
-      end
     end
 
     # user can see the buttons if they can get to Policy RSOP/Automate Simulate screen
@@ -643,8 +605,10 @@ class ApplicationHelper::ToolbarBuilder
     # don't check for feature RBAC if id is miq_request_approve/deny
     unless %w(miq_policy catalogs).include?(@layout)
       return true if !role_allows(:feature => id) && !["miq_request_approve", "miq_request_deny"].include?(id) &&
+                     id !~ /^history_\d*/ &&
                      !id.starts_with?("dialog_") && !id.starts_with?("miq_task_")
     end
+
     # Check buttons with other restriction logic
     case id
     when "dialog_add_box", "dialog_add_element", "dialog_add_tab", "dialog_res_discard", "dialog_resource_remove"
@@ -725,7 +689,7 @@ class ApplicationHelper::ToolbarBuilder
         return true unless role_allows(:feature => "action_delete")
       end
     when "MiqAeClass", "MiqAeDomain", "MiqAeField", "MiqAeInstance", "MiqAeMethod", "MiqAeNamespace"
-      return false if MIQ_AE_COPY_ACTIONS.include?(id) && MiqAeDomain.any_unlocked?
+      return false if MIQ_AE_COPY_ACTIONS.include?(id) && User.current_tenant.any_editable_domains? && MiqAeDomain.any_unlocked?
       case id
       when "miq_ae_domain_lock"
         return true unless editable_domain?(@record)
@@ -821,9 +785,7 @@ class ApplicationHelper::ToolbarBuilder
     when "Vm"
       case id
       when "vm_clone"
-        return true unless @record.cloneable?
-      when "vm_publish"
-        return true if %w(ManageIQ::Providers::Microsoft::InfraManager::Vm ManageIQ::Providers::Redhat::InfraManager::Vm).include?(@record.type)
+        return true unless @record.is_available?(:clone)
       when "vm_collect_running_processes"
         return true if (@record.retired || @record.current_state == "never") && !@record.is_available?(:collect_running_processes)
       when "vm_guest_startup", "vm_start", "instance_start", "instance_resume"
@@ -836,8 +798,14 @@ class ApplicationHelper::ToolbarBuilder
         return true unless @record.is_available?(:reboot_guest)
       when "vm_migrate"
         return true unless @record.is_available?(:migrate)
+      when "vm_publish"
+        return true unless @record.is_available?(:publish)
       when "vm_reconfigure"
         return true unless @record.reconfigurable?
+      when "vm_retire"
+        return true unless @record.is_available?(:retire)
+      when "vm_retire_now"
+        return true unless @record.is_available?(:retire_now)
       when "vm_stop", "instance_stop"
         return true unless @record.is_available?(:stop)
       when "vm_reset", "instance_reset"
@@ -850,6 +818,8 @@ class ApplicationHelper::ToolbarBuilder
         return true unless @record.is_available?(:shelve_offload)
       when "instance_pause"
         return true unless @record.is_available?(:pause)
+      when "instance_terminate"
+        return true unless @record.is_available?(:terminate)
       when "vm_policy_sim", "vm_protect"
         return true if @record.host && @record.host.vmm_product.to_s.downcase == "workstation"
       when "vm_refresh"
@@ -863,12 +833,13 @@ class ApplicationHelper::ToolbarBuilder
     when "MiqTemplate"
       case id
       when "miq_template_clone"
-        return true unless @record.cloneable?
+        return true unless @record.is_available?(:clone)
       when "miq_template_policy_sim", "miq_template_protect"
         return true if @record.host && @record.host.vmm_product.downcase == "workstation"
       when "miq_template_refresh"
         return true if @record && !@record.ext_management_system && !(@record.host && @record.host.vmm_product.downcase == "workstation")
-      when "miq_template_scan"
+      when "miq_template_scan", "image_scan"
+        return true unless @record.is_available?(:smartstate_analysis) || @record.is_available_now_error_message(:smartstate_analysis)
         return true unless @record.has_proxy?
       when "miq_template_refresh", "miq_template_reload"
         return true unless @perf_options[:typ] == "realtime"
@@ -909,6 +880,12 @@ class ApplicationHelper::ToolbarBuilder
         return true unless @report
       when "timeline_txt"
         return true unless @report
+      when "vm_clone", "vm_publish", "vm_migrate", "vm_retire", "vm_retire_now"
+        if @sb[:trees][:vandt_tree].present? &&
+           (@sb[:trees][:vandt_tree][:active_node] == "xx-arch" ||
+            @sb[:trees][:vandt_tree][:active_node] == "xx-orph")
+          return true
+        end
       else
         return !role_allows(:feature => id)
       end
@@ -921,13 +898,15 @@ class ApplicationHelper::ToolbarBuilder
     return true if id.starts_with?("view_") && id.ends_with?("textual")  # Summary view buttons
     return true if @gtl_type && id.starts_with?("view_") && id.ends_with?(@gtl_type)  # GTL view buttons
     return true if id == "history_1" && x_tree_history.length < 2 # Need 1 child button to show parent
+    return true if id == "view_dashboard" && (@showtype == "dashboard")
+    return true if id == "view_summary" && (@showtype != "dashboard")
 
     # Form buttons check if anything on form has changed
     return true if ["button_add", "button_save", "button_reset"].include?(id) && !@changed
 
     # need to add this here, since this button is on list view screen
-    if @layout == "pxe" && id == "iso_datastore_new"
-      return "No #{ui_lookup(:tables => "ext_management_system")} are available to create an ISO Datastore on" if ManageIQ::Providers::Redhat::InfraManager.find(:all).delete_if { |e| !e.iso_datastore.nil? }.count <= 0
+    if @layout == "pxe" && id == "iso_datastore_new" && ManageIQ::Providers::Redhat::InfraManager.datastore?
+      return "No #{ui_lookup(:tables => "ext_management_system")} are available to create an ISO Datastore on"
     end
 
     case get_record_cls(@record)
@@ -1104,7 +1083,10 @@ class ApplicationHelper::ToolbarBuilder
         requester = current_user
         return false if requester.admin_user?
         return _("Users are only allowed to delete their own requests") if requester.name != @record.requester_name
-        return _("%s requests cannot be deleted" % @record.approval_state.titleize) if %w(approved denied).include?(@record.approval_state)
+        if %w(approved denied).include?(@record.approval_state)
+          return _("%{approval_states} requests cannot be deleted") %
+            {:approval_states => @record.approval_state.titleize}
+        end
       end
     when "MiqGroup"
       case id
@@ -1116,9 +1098,9 @@ class ApplicationHelper::ToolbarBuilder
     when "MiqServer"
       case id
       when "collect_logs", "collect_current_logs"
-        return "Cannot collect current logs unless the #{ui_lookup(:table => "miq_servers")} is started" if @record.status != "started"
-        return "Log collection is already in progress for this #{ui_lookup(:table => "miq_servers")}" if @record.log_collection_active_recently?
-        return "Log collection requires the Log Depot settings to be configured" unless @record.log_depot
+        return "Cannot collect current logs unless the #{ui_lookup(:table => "miq_server")} is started" unless @record.started?
+        return "Log collection is already in progress for this #{ui_lookup(:table => "miq_server")}" if @record.log_collection_active_recently?
+        return "Log collection requires the Log Depot settings to be configured" unless @record.log_file_depot
       when "delete_server"
         return "Server #{@record.name} [#{@record.id}] can only be deleted if it is stopped or has not responded for a while" unless @record.is_deleteable?
       when "restart_workers"
@@ -1169,9 +1151,9 @@ class ApplicationHelper::ToolbarBuilder
     when "Storage"
       case id
       when "storage_perf"
-        return "No Capacity & Utilization data has been collected for this #{ui_lookup(:table => "storages")}" unless @record.has_perf_data?
+        return "No Capacity & Utilization data has been collected for this #{ui_lookup(:table => "storage")}" unless @record.has_perf_data?
       when "storage_delete"
-        return "Only #{ui_lookup(:table => "storages")} without VMs and Hosts can be removed" if @record.vms_and_templates.length > 0 || @record.hosts.length > 0
+        return "Only #{ui_lookup(:table => "storage")} without VMs and Hosts can be removed" if @record.vms_and_templates.length > 0 || @record.hosts.length > 0
       when "storage_scan"
         return @record.is_available_now_error_message(:smartstate_analysis) unless @record.is_available?(:smartstate_analysis)
       end
@@ -1263,16 +1245,17 @@ class ApplicationHelper::ToolbarBuilder
         return "No Compliance Policies assigned to this #{ui_lookup(:model => model_for_vm(@record).to_s)}" unless @record.has_compliance_policies?
       when "miq_template_perf"
         return "No Capacity & Utilization data has been collected for this Template" unless @record.has_perf_data?
-      when "miq_template_scan"
+      when "miq_template_scan", "image_scan"
+        return @record.is_available_now_error_message(:smartstate_analysis) unless @record.is_available?(:smartstate_analysis)
         return @record.active_proxy_error_message unless @record.has_active_proxy?
       when "miq_template_timeline"
         return "No Timeline data has been collected for this Template" unless @record.has_events? || @record.has_events?(:policy_events)
       end
     when "Zone"
       case id
-      when "collect_logs", "collect_current_logs"
-        return "Cannot collect current logs unless there are started #{ui_lookup(:tables => "miq_servers")} in the Zone" if @record.miq_servers.collect { |s| s.status == "started" ? true : nil }.compact.length == 0
-        return "This Zone and one or more active #{ui_lookup(:tables => "miq_servers")} in this Zone do not have Log Depot settings configured, collection not allowed" if @record.miq_servers.select(&:log_depot).blank?
+      when "zone_collect_logs", "zone_collect_current_logs"
+        return "Cannot collect current logs unless there are started #{ui_lookup(:tables => "miq_servers")} in the Zone" unless @record.any_started_miq_servers?
+        return "This Zone do not have Log Depot settings configured, collection not allowed" unless @record.log_file_depot
         return "Log collection is already in progress for one or more #{ui_lookup(:tables => "miq_servers")} in this Zone" if @record.log_collection_active_recently?
       when "zone_delete"
         if @selected_zone.name.downcase == "default"
@@ -1344,9 +1327,10 @@ class ApplicationHelper::ToolbarBuilder
       record.class.base_class.name
     else
       klass = case record
-              when Host, ExtManagementSystem then record.class.base_class
-              when VmOrTemplate then              record.class.base_model
-              else                            record.class
+              when ContainerNode, ContainerGroup, Container then record.class.base_class
+              when Host, ExtManagementSystem                then record.class.base_class
+              when VmOrTemplate                             then record.class.base_model
+              else                                               record.class
               end
       klass.name
     end
@@ -1398,46 +1382,9 @@ class ApplicationHelper::ToolbarBuilder
     url
   end
 
-  def build_toolbar_save_button(item, props, parent = nil)
-    button = item.key?(:buttonTwoState) ? item[:buttonTwoState] : (item.key?(:buttonSelect) ? item[:buttonSelect] : item[:button])
-    button = parent + "__" + button if parent # Prefix with "parent__" if parent is passed in
-
-    props.update(
-      :name    => button,
-      :hidden  => !!item[:hidden],
-      :pressed => item[:pressed],
-      :onwhen  => item[:onwhen]
-    )
-
-    props[:url] = url_for_save_button(button, item[:url], controller_restful?) if item[:url]
-
+  def build_toolbar_save_button(item, props)
+    props[:url] = url_for_save_button(props['id'], item[:url], controller_restful?) if item[:url]
     props[:explorer] = true if @explorer && !item[:url] # Add explorer = true if ajax button
-    if item[:popup]
-      props[:popup] = item[:popup]
-      if item[:url_parms] == "popup_only" # For readonly reports, they don't have confirm message
-        props[:console_url] = "/#{request.parameters["controller"]}#{item[:url]}"
-      else # Assuming at this point this is a console button
-        props[:console_url] =
-          if item[:url] == "vnc_console" # This is a VNC console button
-            "http://#{@record.ipaddresses[0]}:#{get_vmdb_config[:server][:vnc_port]}"
-          else # This is an MKS or VMRC VMware console button
-            "/#{request.parameters["controller"]}#{item[:url]}/#{@record.id}"
-          end
-      end
-    end
-
-    collect_log_buttons = %w(support_vmdb_choice__collect_logs
-                             support_vmdb_choice__collect_current_logs
-                             support_vmdb_choice__zone_collect_logs
-                             support_vmdb_choice__zone_collect_current_logs
-                          )
-
-    if props[:name].in?(collect_log_buttons) && @record.try(:log_depot).try(:requires_support_case?)
-      props[:prompt] = true
-    end
-
-    props[:url_parms] = update_url_parms(safer_eval(item[:url_parms])) unless item[:url_parms].blank?
-    props[:confirm] = safer_eval(item[:confirm]) unless item[:confirm].blank?
     props
   end
 

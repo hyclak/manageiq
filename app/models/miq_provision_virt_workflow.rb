@@ -517,10 +517,9 @@ class MiqProvisionVirtWorkflow < MiqProvisionWorkflow
     end
 
     rails_logger('allowed_templates', 0)
-    vms = []
+    vms = VmOrTemplate.all
     condition = allowed_template_condition
 
-    run_search = true
     unless options[:tag_filters].blank?
       tag_filters = options[:tag_filters].collect(&:to_s)
       selected_tags = (@values[:vm_tags].to_miq_a + @values[:pre_dialog_vm_tags].to_miq_a).uniq
@@ -540,16 +539,10 @@ class MiqProvisionVirtWorkflow < MiqProvisionWorkflow
       unless tag_conditions.blank?
         _log.info "Filtering VM templates with the following tag_filters: <#{tag_conditions.inspect}>"
         vms = MiqTemplate.find_tags_by_grouping(tag_conditions, :ns => "/managed", :conditions => condition)
-        if vms.blank?
-          _log.warn "tag_filters returned an empty VM template list.  Tag Filters used: <#{tag_conditions.inspect}>"
-          run_search = false
-        else
-          vms.each { |vm| _log.info "tag_filter template returned: <#{vm.id}:#{vm.name}>  GUID: <#{vm.guid}>  UID_EMS: <#{vm.uid_ems}>" }
-        end
       end
     end
 
-    allowed_templates_list = run_search ? source_vm_rbac_filter(vms, condition) : []
+    allowed_templates_list = source_vm_rbac_filter(vms, condition).to_a
     @allowed_templates_filter = filter_id
     @allowed_templates_tag_filters = @values[:vm_tags]
     rails_logger('allowed_templates', 1)
@@ -577,27 +570,8 @@ class MiqProvisionVirtWorkflow < MiqProvisionWorkflow
   end
 
   def source_vm_rbac_filter(vms, condition = nil)
-    filter_id = get_value(@values[:vm_filter]).to_i
-    search_options = {:user => @requester}
-    search_options[:conditions] = condition unless condition.blank?
-    template_msg =  "User: <#{@requester.userid}>"
-    template_msg += " Role: <#{@requester.current_group.nil? ? "none" : @requester.current_group.miq_user_role.name}>  Group: <#{@requester.current_group.nil? ? "none" : @requester.current_group.description}>"
-    template_msg += "  VM Filter: <#{@values[:vm_filter].inspect}>"
-    template_msg += "  Passing inital template IDs: <#{vms.collect(&:id).inspect}>" unless vms.blank?
-    _log.info "Checking for allowed templates for #{template_msg}"
-    if filter_id.zero?
-      if vms.empty?
-        Rbac.search(search_options.merge(:class => VmOrTemplate, :results_format => :objects)).first
-      else
-        Rbac.filtered(vms, search_options.merge(:class => VmOrTemplate))
-      end
-    else
-      if vms.empty?
-        MiqSearch.find(filter_id).search([], search_options.merge(:results_format => :objects)).first
-      else
-        MiqSearch.find(filter_id).filtered(vms, search_options)
-      end
-    end
+    MiqSearch.filtered(get_value(@values[:vm_filter]).to_i, VmOrTemplate, vms,
+                       :user => @requester, :conditions => condition)
   end
 
   def allowed_provision_types(_options = {})
@@ -712,43 +686,7 @@ class MiqProvisionVirtWorkflow < MiqProvisionWorkflow
   end
 
   def allowed_organizational_units(options = {})
-    ou_domain = get_value(@values[:sysprep_domain_name])
-    _log.info("sysprep_domain_name=<#{ou_domain}>")
-    return {} if ou_domain.nil?
-
-    if ou_domain != @last_ou_domain
-      _log.info("sysprep_domain_name=<#{ou_domain}> does not match previous=<#{@last_ou_domain}> - recomputing")
-      @last_ou_domain = ou_domain
-      @ldap_ous = {}
-      details   = MiqProvision.get_domain_details(ou_domain, true, @requester)
-      return @ldap_ous if details.nil?
-
-      options[:host]      = details[:ldap_host]  if details.key?(:ldap_host)
-      options[:port]      = details[:ldap_port]  if details.key?(:ldap_port)
-      options[:basedn]    = details[:base_dn]    if details.key?(:base_dn)
-      options[:user_type] = details[:user_type]  if details.key?(:user_type)
-      l = MiqLdap.new(options)
-      userid   = details[:bind_dn]
-      password = details[:bind_password]
-      if userid.nil? || password.nil?
-        _log.info("LDAP Bind with Defaults")
-        ldap_bind = l.bind_with_default
-      else
-        _log.info("LDAP Bind with userid=<#{userid}>")
-        ldap_bind = l.bind(userid, password)
-      end
-
-      if ldap_bind == true
-        ous = l.get_organizationalunits
-        _log.info("LDAP OUs returned: #{ous.inspect}")
-        ous.each { |ou| @ldap_ous[ou[0].dup] = ou[1].dup } if ous.kind_of?(Array)
-      else
-        _log.warn("LDAP Bind failed")
-      end
-    end
-
-    _log.info("returning #{@ldap_ous.inspect}")
-    @ldap_ous
+    {}
   end
 
   def allowed_ous_tree(_options = {})
@@ -1074,28 +1012,11 @@ class MiqProvisionVirtWorkflow < MiqProvisionWorkflow
   end
 
   def ws_find_template_or_vm(_values, src_name, src_guid, ems_guid)
-    conditions = []
-    args       = []
-
-    unless src_guid.blank?
-      conditions << 'guid = ?'
-      args << src_guid
-    end
-
-    unless ems_guid.blank?
-      conditions << 'uid_ems = ?'
-      args << ems_guid
-    end
-
-    unless src_name.blank?
-      conditions << 'lower(name) = ?'
-      args << src_name
-    end
-
-    conditions = [conditions.join(" AND "), *args]
-    vms = VmOrTemplate.where(conditions)
-    vms = source_vm_rbac_filter(vms) unless vms.blank?
-    vms.first
+    conditions = {}
+    conditions[:guid] = src_guid unless src_guid.blank?
+    conditions[:uid_ems] = ems_guid unless ems_guid.blank?
+    conditions['lower(name)'] = src_name unless src_name.blank?
+    source_vm_rbac_filter(VmOrTemplate.where(conditions)).first
   end
 
   def ws_vm_fields(values, fields)

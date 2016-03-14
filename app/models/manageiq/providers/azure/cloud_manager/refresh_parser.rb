@@ -10,21 +10,28 @@ module ManageIQ::Providers
         new(ems, options).ems_inv_to_hashes
       end
 
+      def self.security_group_type
+        ManageIQ::Providers::Azure::CloudManager::SecurityGroup.name
+      end
+
       def initialize(ems, options = nil)
-        @ems               = ems
-        @config            = ems.connect
-        @subscription_id   = @config.subscription_id
-        @vmm               = ::Azure::Armrest::VirtualMachineService.new(@config)
-        @asm               = ::Azure::Armrest::AvailabilitySetService.new(@config)
-        @tds               = ::Azure::Armrest::TemplateDeploymentService.new(@config)
-        @vns               = ::Azure::Armrest::Network::VirtualNetworkService.new(@config)
-        @ips               = ::Azure::Armrest::Network::IpAddressService.new(@config)
-        @rgs               = ::Azure::Armrest::ResourceGroupService.new(@config)
-        @sas               = ::Azure::Armrest::StorageAccountService.new(@config)
-        @options           = options || {}
-        @data              = {}
-        @data_index        = {}
-        @resource_to_stack = {}
+        @ems                = ems
+        @config             = ems.connect
+        @subscription_id    = @config.subscription_id
+        @vmm                = ::Azure::Armrest::VirtualMachineService.new(@config)
+        @asm                = ::Azure::Armrest::AvailabilitySetService.new(@config)
+        @tds                = ::Azure::Armrest::TemplateDeploymentService.new(@config)
+        @vns                = ::Azure::Armrest::Network::VirtualNetworkService.new(@config)
+        @ips                = ::Azure::Armrest::Network::IpAddressService.new(@config)
+        @nis                = ::Azure::Armrest::Network::NetworkInterfaceService.new(@config)
+        @nsg                = ::Azure::Armrest::Network::NetworkSecurityGroupService.new(@config)
+        @rgs                = ::Azure::Armrest::ResourceGroupService.new(@config)
+        @sas                = ::Azure::Armrest::StorageAccountService.new(@config)
+        @options            = options || {}
+        @data               = {}
+        @data_index         = {}
+        @resource_to_stack  = {}
+        @network_interfaces = []
       end
 
       def ems_inv_to_hashes
@@ -32,6 +39,8 @@ module ManageIQ::Providers
 
         _log.info("#{log_header}...")
         get_resource_groups
+        get_network_interfaces
+        get_security_groups
         get_series
         get_availability_zones
         get_stacks
@@ -44,6 +53,10 @@ module ManageIQ::Providers
       end
 
       private
+
+      def get_network_interfaces
+        @network_interfaces = gather_data_for_this_region(@nis)
+      end
 
       def get_resource_groups
         resource_groups = @rgs.list.select do |resource_group|
@@ -93,7 +106,11 @@ module ManageIQ::Providers
 
       def get_stack_resources(name, group)
         resources = @tds.list_deployment_operations(name, group)
-        resources.reject! { |r| r.try(:properties).try(:target_resource).try(:id).nil? }
+        # exclude empty resources and resources with an action
+        resources.reject! do |r|
+          r.try(:properties).try(:target_resource).try(:id).nil? ||
+            r.properties.target_resource.try(:action_name)
+        end
 
         process_collection(resources, :orchestration_stack_resources) do |resource|
           parse_stack_resource(resource, group)
@@ -124,6 +141,23 @@ module ManageIQ::Providers
         process_collection(images, :vms) { |image| parse_image(image) }
       end
 
+      def get_security_groups
+        security_groups = gather_data_for_this_region(@nsg)
+        process_collection(security_groups, :security_groups) { |sg| parse_security_group(sg) }
+      end
+
+      def get_vm_security_groups(instance)
+        get_vm_nics(instance).collect do |nic|
+          sec_id = nic.properties.try(:network_security_group).try(:id)
+          @data_index.fetch_path(:security_groups, sec_id) if sec_id
+        end.compact
+      end
+
+      def get_vm_nics(instance)
+        nic_ids = instance.properties.network_profile.network_interfaces.collect(&:id)
+        @network_interfaces.find_all { |nic| nic_ids.include?(nic.id) }
+      end
+
       def process_collection(collection, key)
         @data[key] ||= []
 
@@ -137,11 +171,9 @@ module ManageIQ::Providers
       end
 
       def gather_data_for_this_region(arm_service, method = "list")
-        results = []
-        @data[:resource_groups].each do |resource_group|
-          results << arm_service.send(method, resource_group[:name])
-        end
-        results.flatten
+        @data[:resource_groups].collect do |resource_group|
+          arm_service.send(method, resource_group[:name])
+        end.flatten
       end
 
       def parse_resource_group(resource_group)
@@ -220,28 +252,65 @@ module ManageIQ::Providers
         series_name = instance.properties.hardware_profile.vm_size
         series      = @data_index.fetch_path(:flavors, series_name)
 
+        hardware_network_info = get_hardware_network_info(instance)
+        security_groups = get_vm_security_groups(instance)
+
         new_result = {
           :type                => 'ManageIQ::Providers::Azure::CloudManager::Vm',
           :uid_ems             => uid,
           :ems_ref             => uid,
           :name                => instance.name,
-          :vendor              => "Microsoft",
+          :vendor              => "azure",
           :raw_power_state     => power_status(instance),
           :operating_system    => process_os(instance),
           :flavor              => series,
           :location            => uid,
+          :security_groups     => security_groups,
           :orchestration_stack => @data_index.fetch_path(:orchestration_stacks, @resource_to_stack[uid]),
           :availability_zone   => @data_index.fetch_path(:availability_zones, 'default'),
           :hardware            => {
             :disks    => [], # Filled in later conditionally on flavor
-            :networks => [], # Filled in later conditionally on what's available
+            :networks => hardware_network_info
           },
         }
+
         populate_hardware_hash_with_disks(new_result[:hardware][:disks], instance)
         populate_hardware_hash_with_series_attributes(new_result[:hardware], instance, series)
-        populate_hardware_hash_with_networks(new_result[:hardware][:networks], instance)
 
         return uid, new_result
+      end
+
+      def parse_security_group(security_group)
+        uid = security_group.id
+
+        description = [
+          security_group.resource_group,
+          security_group.location
+        ].join('-')
+
+        new_result = {
+          :type           => self.class.security_group_type,
+          :ems_ref        => uid,
+          :name           => security_group.name,
+          :description    => description,
+          :firewall_rules => parse_firewall_rules(security_group)
+        }
+
+        return uid, new_result
+      end
+
+      def parse_firewall_rules(security_group)
+        security_group.properties.security_rules.map do |rule|
+          {
+            :name                  => rule.name,
+            :host_protocol         => rule.properties.protocol.upcase,
+            :port                  => rule.properties.destination_port_range.split('-').first,
+            :end_port              => rule.properties.destination_port_range.split('-').last,
+            :direction             => rule.properties.direction,
+            :source_ip_range       => rule.properties.source_address_prefix,
+            :source_security_group => @data_index.fetch_path(:security_groups, security_group.id)
+          }
+        end
       end
 
       def power_status(instance)
@@ -275,17 +344,13 @@ module ManageIQ::Providers
       end
 
       def add_instance_disk(disks, size, name, location)
-        super(disks, size, name, location, "azure")
+        super(disks, size, location, name, "azure")
       end
 
-      def populate_hardware_hash_with_networks(networks_array, instance)
-        instance.properties.network_profile.network_interfaces.each do |nic|
-          pattern = %r{/subscriptions/(.+)/resourceGroups/([\w-]+)/.+/networkInterfaces/(.+)}i
-          _m, sub, group, nic_name = nic.id.match(pattern).to_a
+      def get_hardware_network_info(instance)
+        networks_array = []
 
-          cfg = @config.clone.tap { |c| c.subscription_id = sub }
-          nic_profile = ::Azure::Armrest::Network::NetworkInterfaceService.new(cfg).get(nic_name, group)
-
+        get_vm_nics(instance).each do |nic_profile|
           nic_profile.properties.ip_configurations.each do |ipconfig|
             hostname = ipconfig.name
             private_ip_addr = ipconfig.properties.try(:private_ip_address)
@@ -297,11 +362,13 @@ module ManageIQ::Providers
             next unless public_ip_obj
 
             name = File.basename(public_ip_obj.id)
-            ip_profile = ::Azure::Armrest::Network::IpAddressService.new(cfg).get(name, group)
+            ip_profile = @ips.get(name, nic_profile.resource_group)
             public_ip_addr = ip_profile.properties.try(:ip_address)
             networks_array << {:description => "public", :ipaddress => public_ip_addr, :hostname => hostname}
           end
         end
+
+        networks_array
       end
 
       def populate_hardware_hash_with_series_attributes(hardware_hash, instance, series)
@@ -313,7 +380,7 @@ module ManageIQ::Providers
         os_disk = instance.properties.storage_profile.os_disk
         sz      = series[:root_disk_size]
 
-        add_instance_disk(hardware_hash[:disks], sz, os_disk.name, os_disk.vhd) unless sz.zero?
+        add_instance_disk(hardware_hash[:disks], sz, os_disk.name, os_disk.vhd.uri) unless sz.zero?
 
         # No data availbale on swap disk? Called temp or resource disk.
       end
@@ -417,7 +484,8 @@ module ManageIQ::Providers
           :type        => "OrchestrationTemplateAzure",
           :name        => deployment.name,
           :description => "contentVersion: #{ver}",
-          :content     => content
+          :content     => content,
+          :orderable   => false
         }
         return uid, new_result
       end
@@ -465,9 +533,10 @@ module ManageIQ::Providers
           :type               => ManageIQ::Providers::Azure::CloudManager::Template.name,
           :uid_ems            => uid,
           :ems_ref            => uid,
-          :name               => uid.split(%r{Microsoft.Compute\/}i)[1].split('.').first,
+          :name               => build_image_name(image),
+          :description        => build_image_description(image),
           :location           => @ems.provider_region,
-          :vendor             => "microsoft",
+          :vendor             => "azure",
           :raw_power_state    => "never",
           :template           => true,
           :publicly_available => false,
@@ -482,6 +551,15 @@ module ManageIQ::Providers
       # Compose an id string combining some existing keys
       def resource_uid(*keys)
         keys.join('\\')
+      end
+
+      def build_image_name(image)
+        "#{image.uri.split(%r{Microsoft.Compute\/}i)[1].split('.').first}"
+      end
+
+      def build_image_description(image)
+        # Description is a concatenation of resource group and storage account
+        "#{image.storage_account.resource_group}\\#{image.storage_account.name}"
       end
 
       # Remap from children to parent

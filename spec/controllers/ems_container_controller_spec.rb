@@ -1,8 +1,5 @@
-require "spec_helper"
-
 describe EmsContainerController do
   before(:each) do
-    session[:settings] = {:views => {}}
     set_user_privileges
   end
 
@@ -11,12 +8,12 @@ describe EmsContainerController do
     get :new
 
     expect(response.status).to eq(200)
-    expect(controller.stub(:edit)).to_not be_nil
+    expect(allow(controller).to receive(:edit)).to_not be_nil
   end
 
   it "#show" do
     ems = FactoryGirl.create(:ems_kubernetes)
-    get :show, :id => ems.id
+    get :show, :params => { :id => ems.id }
 
     expect(response.status).to eq(200)
     expect(response).to render_template('ems_container/show')

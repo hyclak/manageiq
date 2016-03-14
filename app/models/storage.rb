@@ -1,9 +1,10 @@
-class Storage < ActiveRecord::Base
+class Storage < ApplicationRecord
   has_many :repositories
   has_many :vms_and_templates, :foreign_key => :storage_id, :dependent => :nullify, :class_name => "VmOrTemplate"
   has_many :miq_templates,     :foreign_key => :storage_id
   has_many :vms,               :foreign_key => :storage_id
-  has_and_belongs_to_many :hosts, :join_table => :host_storages
+  has_many :host_storages
+  has_many :hosts,             :through => :host_storages
   has_and_belongs_to_many :all_vms_and_templates, :class_name => "VmOrTemplate", :join_table => :storages_vms_and_templates, :association_foreign_key => :vm_or_template_id
   has_and_belongs_to_many :all_miq_templates,     :class_name => "MiqTemplate",  :join_table => :storages_vms_and_templates, :association_foreign_key => :vm_or_template_id
   has_and_belongs_to_many :all_vms,               :class_name => "Vm",           :join_table => :storages_vms_and_templates, :association_foreign_key => :vm_or_template_id
@@ -16,7 +17,7 @@ class Storage < ActiveRecord::Base
   has_many :storage_files,       :dependent => :destroy
   has_many :storage_files_files, -> { where "rsc_type = 'file'" }, :class_name => "StorageFile", :foreign_key => "storage_id"
   has_many :files,               -> { where "rsc_type = 'file'" }, :class_name => "StorageFile", :foreign_key => "storage_id"
-  has_many :hosts_storages
+  has_many :host_storages
 
   has_many :miq_events, :as => :target, :dependent => :destroy
 
@@ -42,7 +43,7 @@ class Storage < ActiveRecord::Base
   include Metric::CiMixin
   include StorageMixin
   include AsyncDeleteMixin
-  include WebServiceAttributeMixin
+  include AvailabilityMixin
 
   virtual_column :v_used_space,                   :type => :integer
   virtual_column :v_used_space_percent_of_total,  :type => :integer
@@ -73,7 +74,7 @@ class Storage < ActiveRecord::Base
 
   def ext_management_systems
     @ext_management_systems ||= ExtManagementSystem.joins(:hosts => :storages).where(
-      :host_storages => {:storage_id => id}).uniq.to_a
+      :host_storages => {:storage_id => id}).distinct.to_a
   end
 
   def ext_management_systems_in_zone(zone_name)
@@ -360,7 +361,7 @@ class Storage < ActiveRecord::Base
   end
 
   def unmanaged_vm_config_files
-    files = if association_cache.include?(:storage_files)
+    files = if @association_cache.include?(:storage_files)
               storage_files.select { |f| f.ext_name == "vmx" && f.vm_or_template_id.nil? }
             else
               storage_files.where(:ext_name => "vmx", :vm_or_template_id => nil)
@@ -381,11 +382,8 @@ class Storage < ActiveRecord::Base
   end
 
   cache_with_timeout(:count_of_vmdk_disk_files, 15.seconds) do
-    flat_clause  = "base_name NOT LIKE '%-flat.vmdk'"
-    delta_clause = "base_name NOT LIKE '%-delta.vmdk'"
-    snap_clause  = "AND #{ActiveRecordQueryParts.not_regexp("base_name", "%\-[0-9][0-9][0-9][0-9][0-9][0-9]\.vmdk")}"
-
-    StorageFile.where("ext_name = 'vmdk' AND #{flat_clause} AND #{delta_clause} #{snap_clause}")
+    # doesnt match *-111111.vmdk, *-flat.vmdk, or *-delta.vmdk
+    StorageFile.where(:ext_name => 'vmdk').where("base_name !~ '-([0-9]{6}|flat|delta)\\.vmdk$'")
       .group("storage_id").pluck("storage_id, COUNT(*) AS vm_count")
       .each_with_object(Hash.new(0)) { |(storage_id, count), h| h[storage_id] = count.to_i }
   end
@@ -409,7 +407,7 @@ class Storage < ActiveRecord::Base
   end
 
   def total_managed_registered_vms
-    if association_cache.include?(:vms)
+    if @association_cache.include?(:vms)
       registered_vms.length
     else
       self.class.unmanaged_vm_counts_by_storage_id[id]
@@ -423,7 +421,7 @@ class Storage < ActiveRecord::Base
   end
 
   def total_unregistered_vms
-    if association_cache.include?(:vms)
+    if @association_cache.include?(:vms)
       unregistered_vms.length
     else
       self.class.unregistered_vm_counts_by_storage_id[id]
@@ -437,7 +435,7 @@ class Storage < ActiveRecord::Base
   end
 
   def total_managed_unregistered_vms
-    if association_cache.include?(:vms)
+    if @association_cache.include?(:vms)
       unregistered_vms.length
     else
       self.class.managed_unregistered_vm_counts_by_storage_id[id]
@@ -493,9 +491,13 @@ class Storage < ActiveRecord::Base
   end
 
   def smartstate_analysis_count_for_host_id(host_id)
-    MiqQueue.count(
-      :conditions => ["class_name = ? AND instance_id = ? AND method_name = ? AND target_id = ? AND state = ?", self.class.name, id, "smartstate_analysis", host_id, 'dequeue']
-    )
+    MiqQueue.where(
+      :class_name  => self.class.name,
+      :instance_id => id,
+      :method_name => "smartstate_analysis",
+      :target_id   => host_id,
+      :state       => "dequeue"
+    ).count
   end
 
   def smartstate_analysis(miq_task_id = nil)
@@ -550,13 +552,13 @@ class Storage < ActiveRecord::Base
   end
 
   def set_unassigned_storage_files_to_vms
-    StorageFile.link_storage_files_to_vms(storage_files.find_all_by_vm_or_template_id(nil), vm_ids_by_path)
+    StorageFile.link_storage_files_to_vms(storage_files.where(:vm_or_template_id => nil), vm_ids_by_path)
   end
 
   def vm_ids_by_path
     host_ids = hosts.collect(&:id)
     return nil if host_ids.empty?
-    Vm.where("host_id IN (?)", host_ids).includes(:storage).inject({}) { |h, v| h[File.dirname(v.path)] = v.id; h }
+    Vm.where(:host_id => host_ids).includes(:storage).inject({}) { |h, v| h[File.dirname(v.path)] = v.id; h }
   end
 
   # TODO: Is this still needed?
@@ -590,10 +592,10 @@ class Storage < ActiveRecord::Base
   alias_method :v_free_space_percent_of_total, :free_space_percent_of_total
 
   def v_total_hosts
-    if association_cache.include?(:hosts)
+    if @association_cache.include?(:hosts)
       hosts.size
     else
-      hosts_storages.length
+      host_storages.length
     end
   end
 
@@ -603,7 +605,7 @@ class Storage < ActiveRecord::Base
   end
 
   def v_total_vms
-    if association_cache.include?(:vms)
+    if @association_cache.include?(:vms)
       vms.size
     else
       self.class.vm_counts_by_storage_id[id]
@@ -684,6 +686,18 @@ class Storage < ActiveRecord::Base
 
   def perf_rollup_parents(interval_name = nil)
     [MiqRegion.my_region].compact unless interval_name == 'realtime'
+  end
+
+  def perf_capture_realtime(*args)
+    perf_capture('realtime', *args)
+  end
+
+  def perf_capture_hourly(*args)
+    perf_capture('hourly', *args)
+  end
+
+  def perf_capture_historical(*args)
+    perf_capture('historical', *args)
   end
 
   # TODO: See if we can reuse the main perf_capture method, and only overwrite the perf_collect_metrics method
@@ -826,25 +840,6 @@ class Storage < ActiveRecord::Base
     with_relationship_type("vm_scan_storage_affinity") { parents }
   end
 
-  # is_available?
-  # Returns:  true or false
-  #
-  # The UI calls this method to determine if a feature is supported for this Storage
-  # and determines if a button should be displayed.  This method should return true
-  # even if a function is not 'currently' available due to some condition that is not
-  # being met.
-  def is_available?(request_type)
-    send("validate_#{request_type}")[:available]
-  end
-
-  # is_available_now_error_message
-  # Returns an error message string if there is an error.
-  # Returns nil to indicate no errors.
-  # This method is used by the UI along with the is_available? methods.
-  def is_available_now_error_message(request_type)
-    send("validate_#{request_type}")[:message]
-  end
-
   def self.batch_operation_supported?(operation, ids)
     Storage.where(:id => ids).all? { |s| s.public_send("validate_#{operation}")[:available] }
   end
@@ -853,5 +848,9 @@ class Storage < ActiveRecord::Base
     return {:available => false, :message => "Smartstate Analysis cannot be performed on selected Datastore"} if ext_management_systems.blank? ||
                                                      !ext_management_systems.first.kind_of?(ManageIQ::Providers::Vmware::InfraManager)
     {:available => true,   :message => nil}
+  end
+
+  def tenant_identity
+    ext_management_systems.first.tenant_identity
   end
 end

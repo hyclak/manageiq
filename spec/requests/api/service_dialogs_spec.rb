@@ -1,11 +1,7 @@
 #
 # REST API Request Tests - Service Dialogs specs
 #
-require 'spec_helper'
-
 describe ApiController do
-  include Rack::Test::Methods
-
   let(:zone)       { FactoryGirl.create(:zone, :name => "api_zone") }
   let(:miq_server) { FactoryGirl.create(:miq_server, :guid => miq_server_guid, :zone => zone) }
   let(:ems)        { FactoryGirl.create(:ems_vmware, :zone => zone) }
@@ -19,14 +15,6 @@ describe ApiController do
 
   let(:template)   { FactoryGirl.create(:service_template, :name => "ServiceTemplate") }
   let(:service)    { FactoryGirl.create(:service, :name => "Service1") }
-
-  before(:each) do
-    init_api_spec_env
-  end
-
-  def app
-    Vmdb::Application
-  end
 
   context "Service Dialogs collection" do
     before do

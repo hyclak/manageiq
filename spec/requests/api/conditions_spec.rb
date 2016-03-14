@@ -7,19 +7,7 @@
 # Condition subcollection:
 #   /api/policies/:id/conditions
 #
-require 'spec_helper'
-
 describe ApiController do
-  include Rack::Test::Methods
-
-  before(:each) do
-    init_api_spec_env
-  end
-
-  def app
-    Vmdb::Application
-  end
-
   let(:condition_guid_list) { Condition.pluck(:guid) }
 
   def create_conditions(count)

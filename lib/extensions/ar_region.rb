@@ -1,3 +1,5 @@
+require_relative './ar_virtual'
+
 module ArRegion
   extend ActiveSupport::Concern
 
@@ -9,7 +11,7 @@ module ArRegion
 
   module ClassMethods
     def inherited(other)
-      if other.superclass == ActiveRecord::Base
+      if other == other.base_class
         other.class_eval do
           virtual_column :region_number,      :type => :integer
           virtual_column :region_description, :type => :string
@@ -20,7 +22,7 @@ module ArRegion
 
     def my_region_number(force_reload = false)
       clear_region_cache if force_reload
-      @@my_region_number ||= File.read(File.join(Rails.root, "REGION")).to_i rescue 0
+      @@my_region_number ||= discover_my_region_number
     end
 
     def rails_sequence_factor
@@ -33,6 +35,10 @@ module ArRegion
 
     def rails_sequence_end
       @@rails_sequence_end ||= rails_sequence_start + rails_sequence_factor - 1
+    end
+
+    def rails_sequence_range
+      rails_sequence_start..rails_sequence_end
     end
 
     def clear_region_cache
@@ -66,17 +72,6 @@ module ArRegion
 
     def with_region(region_number)
       where(:id => region_to_range(region_number)).scoping { yield }
-    end
-
-    def without_scope(&blk)
-      with_exclusive_scope(&blk)
-    end
-
-    def conditions_for_my_region_default_scope
-      # NOTE: These conditions MUST NOT be specified in Hash format because they are used for defining default_scope in models
-      #       and would be applied for the creation of objects in addition to finds. Since :id is used in the condition this
-      #       would result in all instances getting the the same id .
-      ["#{quoted_table_name}.id >= ? AND #{quoted_table_name}.id <= ?", rails_sequence_start, rails_sequence_end]
     end
 
     def id_in_current_region?(id)
@@ -128,6 +123,22 @@ module ArRegion
     def partition_ids_by_remote_region(ids)
       ids.partition { |id| self.id_in_current_region?(id) }
     end
+
+    def region_number_from_sequence
+      id_to_region(connection.select_value("SELECT last_value FROM miq_databases_id_seq"))
+    rescue ActiveRecord::StatementInvalid # sequence does not exist yet
+      nil
+    end
+
+    private
+
+    def discover_my_region_number
+      region_file = File.join(Rails.root, "REGION")
+      region_num = File.read(region_file) if File.exist?(region_file)
+      region_num ||= ENV.fetch("REGION", nil)
+      region_num ||= region_number_from_sequence
+      region_num.to_i
+    end
   end
 
   def my_region_number
@@ -160,5 +171,3 @@ module ArRegion
     self.class.split_id(id)
   end
 end
-
-ActiveRecord::Base.send(:include, ArRegion)

@@ -1,8 +1,8 @@
-require "spec_helper"
-
 describe DashboardController do
   before do
     Tenant.seed
+
+    ApplicationController.handle_exceptions = true
   end
 
   describe "#current_tenant" do

@@ -1,4 +1,4 @@
-class ServerRole < ActiveRecord::Base
+class ServerRole < ApplicationRecord
   has_many :assigned_server_roles
   has_many :miq_servers, :through => :assigned_server_roles
 
@@ -25,7 +25,7 @@ class ServerRole < ActiveRecord::Base
   end
 
   def self.fixture_path
-    Rails.root.join("db/fixtures/#{to_s.pluralize.underscore}.csv")
+    FIXTURE_DIR.join("#{to_s.pluralize.underscore}.csv")
   end
 
   def self.to_role(server_role)

@@ -3,9 +3,7 @@ class ManageIQ::Providers::Vmware::InfraManager::HostEsx < ManageIQ::Providers::
     false
   end
 
-  def use_vim_broker?
-    self.class.use_vim_broker?
-  end
+  delegate :use_vim_broker?, :to => :class
 
   def vim_shutdown(force = false)
     with_provider_object do |vim_host|
@@ -152,7 +150,7 @@ class ManageIQ::Providers::Vmware::InfraManager::HostEsx < ManageIQ::Providers::
     rescue MiqException::MiqVimBrokerUnavailable => err
       MiqVimBrokerWorker.broker_unavailable(err.class.name,  err.to_s)
       _log.warn("Reported the broker unavailable")
-    rescue TimeoutError
+    rescue Timeout::Error
       _log.warn "Timeout encountered during log collection for Host [#{name}]"
     ensure
       vim.disconnect rescue nil

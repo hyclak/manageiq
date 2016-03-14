@@ -66,7 +66,8 @@ class ApiController
             json.href normalize_href(reftype, resource["id"])
           end
         end
-        aspecs = get_aspecs(type, opts[:collection_actions], :collection, opts[:is_subcollection], reftype)
+        aspecs = get_aspecs(type, opts[:collection_actions], :collection,
+                            :is_subcollection => opts[:is_subcollection], :ref => reftype)
         add_actions(json, aspecs, reftype)
       end
     end
@@ -110,17 +111,19 @@ class ApiController
     # type is the collection type we need to get actions specifications for
     # typed_actions is the optional type specific method to return actions
     # item_type is :collection or :resource
-    # is_subcollection is true if accessing as subcollection or subresource
-    # ref is how to identify item, either the reftype of the collection or href of resource
     #
-    def get_aspecs(type, typed_actions, item_type, is_subcollection, ref)
+    # opts[:is_subcollection] is true if accessing as subcollection or subresource
+    # opts[:ref] is how to identify item, either the reftype of the collection or href of resource
+    # opts[:resource] is the object to get action specs for the specific resource
+    #
+    def get_aspecs(type, typed_actions, item_type, opts = {})
       aspecs = []
       if typed_actions
-        if respond_to?(typed_actions)
-          aspecs = send(typed_actions, is_subcollection, ref)
-        else
-          aspecs = gen_action_specs(type, item_type, is_subcollection, ref)
-        end
+        aspecs = if respond_to?(typed_actions)
+                   send(typed_actions, opts[:is_subcollection], opts[:ref])
+                 else
+                   gen_action_specs(type, item_type, opts[:is_subcollection], opts[:ref], opts[:resource])
+                 end
       end
       aspecs
     end
@@ -146,7 +149,7 @@ class ApiController
     # Render nothing for normal resource deletes.
     #
     def render_normal_destroy
-      render :nothing => true, :status => Rack::Utils.status_code(:no_content)
+      head :no_content
     end
 
     #
@@ -182,11 +185,12 @@ class ApiController
         else
           klass.all
         end
-      filter_options = filter_param(klass)
-      res = res.where(filter_options)             if filter_options.present? && res.respond_to?(:where)
+      sql_filter, ruby_filters = filter_param(klass)
+      res = res.where(sql_filter)                                     if sql_filter.present? && res.respond_to?(:where)
+      ruby_filters.each { |ruby_filter| res = ruby_filter.call(res) } if ruby_filters.present?
 
-      sort_options = sort_params(klass)           if res.respond_to?(:reorder)
-      res = res.reorder(sort_options)             if sort_options.present?
+      sort_options = sort_params(klass)                               if res.respond_to?(:reorder)
+      res = res.reorder(sort_options)                                 if sort_options.present?
 
       options = {
         :user => @auth_user_obj,
@@ -285,27 +289,24 @@ class ApiController
 
     def attr_accessible?(object, attr)
       return false unless object && object.respond_to?(attr)
-      is_reflection = object.class.reflection_with_virtual(attr.to_sym)
-      is_column     = object.class.columns_hash_with_virtual.key?(attr) unless is_reflection
-      is_reflection || is_column
+      object.class.has_attribute?(attr) ||
+        object.class.reflect_on_association(attr) ||
+        object.class.virtual_attribute?(attr) ||
+        object.class.virtual_reflection?(attr)
     end
 
     def attr_virtual?(object, attr)
       return false if ID_ATTRS.include?(attr)
       primary = attr_split(attr).first
-      return false unless object && object.respond_to?(:attributes) && object.respond_to?(primary)
-      is_reflection     = object.class.reflection_with_virtual(primary.to_sym)
-      is_virtual_column = object.class.virtual_columns_hash.key?(primary) unless is_reflection
-      is_reflection || is_virtual_column
+      (object.class.respond_to?(:reflect_on_association) && object.class.reflect_on_association(primary)) ||
+        (object.class.respond_to?(:virtual_attribute?) && object.class.virtual_attribute?(primary)) ||
+        (object.class.respond_to?(:virtual_reflection?) && object.class.virtual_reflection?(primary))
     end
 
     def attr_physical?(object, attr)
       return true if ID_ATTRS.include?(attr)
-      primary = attr_split(attr).first
-      object &&
-        object.respond_to?(:attributes) &&
-        object.respond_to?(primary) &&
-        object.class.columns_hash.key?(primary)
+      (object.class.respond_to?(:has_attribute?) && object.class.has_attribute?(attr)) &&
+        !(object.class.respond_to?(:virtual_attribute?) && object.class.virtual_attribute?(attr))
     end
 
     def attr_split(attr)
@@ -319,7 +320,8 @@ class ApiController
       return unless render_actions(resource)
 
       href   = json.attributes!["href"]
-      aspecs = get_aspecs(type, opts[:resource_actions], :resource, opts[:is_subcollection], href)
+      aspecs = get_aspecs(type, opts[:resource_actions], :resource,
+                          :is_subcollection => opts[:is_subcollection], :ref => href, :resource => resource)
       add_actions(json, aspecs, type)
     end
 
@@ -390,13 +392,13 @@ class ApiController
     # subcollection set to true, if accessing collection or resource as subcollection
     # href is the optional href for the action specs, required for resources
     #
-    def gen_action_specs(collection, type, is_subcollection, href = nil)
+    def gen_action_specs(collection, type, is_subcollection, href = nil, resource = nil)
       if collection_config.key?(collection)
         cspec = collection_config[collection]
         if type == :collection
           gen_action_spec_for_collections(collection, cspec, is_subcollection, href)
         else
-          gen_action_spec_for_resources(cspec, is_subcollection, href)
+          gen_action_spec_for_resources(cspec, is_subcollection, href, resource)
         end
       end
     end
@@ -415,14 +417,14 @@ class ApiController
       end.flatten.compact
     end
 
-    def gen_action_spec_for_resources(cspec, is_subcollection, href)
+    def gen_action_spec_for_resources(cspec, is_subcollection, href, resource)
       target = is_subcollection ? :subresource_actions : :resource_actions
       return [] unless cspec.key?(target)
       cspec[target].each.collect do |method, action_definitions|
         next unless render_actions_for_method(cspec[:methods], method)
         typed_action_definitions = fetch_typed_subcollection_actions(method, is_subcollection) || action_definitions
         typed_action_definitions.each.collect do |action|
-          if !action[:disabled] && api_user_role_allows?(action[:identifier])
+          if !action[:disabled] && api_user_role_allows?(action[:identifier]) && action_validated?(resource, action)
             {"name" => action[:name], "method" => method, "href" => href}
           end
         end
@@ -447,6 +449,14 @@ class ApiController
 
     def render_actions(resource)
       render_attr("actions") || physical_attribute_selection(resource).blank?
+    end
+
+    def action_validated?(resource, action_spec)
+      if action_spec[:options] && action_spec[:options].include?(:validate_action)
+        validate_method = "validate_#{action_spec[:name]}"
+        return resource.respond_to?(validate_method) && resource.send(validate_method)
+      end
+      true
     end
   end
 end

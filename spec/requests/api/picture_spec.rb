@@ -5,11 +5,7 @@
 # - Query picture and image_href of services           /api/services/:id?attributes=picture,picture.image_href
 # - Query picture and image_href of service_requests   /api/service_requests/:id?attributes=picture,picture.image_href
 #
-require 'spec_helper'
-
 describe ApiController do
-  include Rack::Test::Methods
-
   let(:dialog1)  { FactoryGirl.create(:dialog, :label => "ServiceDialog1") }
   let(:ra1)      { FactoryGirl.create(:resource_action, :action => "Provision", :dialog => dialog1) }
   let(:picture)  { FactoryGirl.create(:picture, :extension => "jpg") }
@@ -27,19 +23,12 @@ describe ApiController do
                        :source_id   => template.id)
   end
 
-  before(:each) do
-    init_api_spec_env
-    api_basic_authorize
-  end
-
-  def app
-    Vmdb::Application
-  end
+  before { api_basic_authorize }
 
   def expect_result_to_include_picture_href(source_id)
-    expect_result_to_match_hash(@result, "id" => source_id)
+    expect_result_to_match_hash(response_hash, "id" => source_id)
     expect_result_to_have_keys(%w(id href picture))
-    expect_result_to_match_hash(@result["picture"],
+    expect_result_to_match_hash(response_hash["picture"],
                                 "id"          => picture.id,
                                 "resource_id" => template.id,
                                 "image_href"  => /^http:.*#{picture.image_href}$/)

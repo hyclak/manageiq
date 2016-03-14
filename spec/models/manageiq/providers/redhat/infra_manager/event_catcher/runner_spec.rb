@@ -1,13 +1,11 @@
-require "spec_helper"
-
 describe ManageIQ::Providers::Redhat::InfraManager::EventCatcher::Runner do
   context "#event_monitor_options" do
     let(:ems)     { FactoryGirl.create(:ems_redhat, :hostname => "hostname") }
     let(:catcher) { described_class.new(:ems_id => ems.id) }
 
     before do
-      ManageIQ::Providers::Redhat::InfraManager.any_instance.stub(:authentication_check => [true, ""])
-      MiqWorker::Runner.any_instance.stub(:worker_initialization)
+      allow_any_instance_of(ManageIQ::Providers::Redhat::InfraManager).to receive_messages(:authentication_check => [true, ""])
+      allow_any_instance_of(MiqWorker::Runner).to receive(:worker_initialization)
     end
 
     it "numeric port" do

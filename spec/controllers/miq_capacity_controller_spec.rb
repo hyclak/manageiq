@@ -1,5 +1,3 @@
-require "spec_helper"
-
 describe MiqCapacityController do
   methods = ["util_get_node_info", "bottleneck_get_node_info"]
   methods.each do |method|
@@ -37,11 +35,49 @@ describe MiqCapacityController do
                                                                                                      :bottlenecks => {:options => {}},
                                                                                                      :util        => {:options => {}}
                                           )
-          controller.should_not_receive(:render)
+          expect(controller).not_to receive(:render)
           controller.send(method.to_sym, node[:active_node])
-          assigns(:right_cell_text).should == "#{node[:title_prefix]} \"#{node[:title]}\" #{title_suffix}"
+          expect(assigns(:right_cell_text)).to eq("#{node[:title_prefix]} \"#{node[:title]}\" #{title_suffix}")
         end
       end
+    end
+  end
+end
+
+describe MiqCapacityController do
+  context "#find_filtered" do
+    before do
+      EvmSpecHelper.create_guid_miq_server_zone
+      set_user_privileges
+
+      @host1 = FactoryGirl.create(:host, :name => 'Host1')
+      @host2 = FactoryGirl.create(:host, :name => 'Host2')
+
+      @vm1 = FactoryGirl.create(:vm_vmware, :name => 'Name1', :host => @host1)
+      @vm2 = FactoryGirl.create(:vm_vmware, :name => 'Name2', :host => @host2)
+      @vm3 = FactoryGirl.create(:vm_vmware, :name => 'Name3', :host => @host1)
+      @vm4 = FactoryGirl.create(:vm_vmware, :name => 'Name4', :host => @host1)
+    end
+
+    it 'displays all Vms' do
+      allow(controller).to receive(:render)
+      controller.instance_variable_set(:@sb, :planning => {:vms => {}, :options => {}})
+      controller.instance_variable_set(:@_params, :filter_typ => "all")
+      controller.send(:planning_option_changed)
+      sb = controller.instance_variable_get(:@sb)
+      expect(sb[:planning][:vms]).to eq(@vm1.id.to_s => @vm1.name,
+                                        @vm2.id.to_s => @vm2.name,
+                                        @vm3.id.to_s => @vm3.name,
+                                        @vm4.id.to_s => @vm4.name)
+    end
+
+    it 'displays Vms filtered by host' do
+      allow(controller).to receive(:render)
+      controller.instance_variable_set(:@sb, :planning => {:vms => {}, :options => {}})
+      controller.instance_variable_set(:@_params, :filter_typ => "host", :filter_value => @host1.id)
+      controller.send(:planning_option_changed)
+      sb = controller.instance_variable_get(:@sb)
+      expect(sb[:planning][:vms]).to eq(@vm1.id.to_s => @vm1.name, @vm3.id.to_s => @vm3.name, @vm4.id.to_s => @vm4.name)
     end
   end
 end

@@ -29,11 +29,11 @@
             %td.active{:colspan => "6"} &nbsp;
         %tr
           %td
-            = h(Dictionary.gettext(r[:group], :type => :rate_detail_group, :notfound => :titleize))
+            = h(rate_detail_group(r[:group]))
           %td
             = r[:description]
           %td{:align => "right"}
-            = r[:rate]
+            = "#{r[:rate]} #{r.detail_currency.symbol} [#{r.detail_currency.code}]"
           %td
             = r[:per_time]
           %td

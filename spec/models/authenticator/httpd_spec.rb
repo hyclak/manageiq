@@ -1,5 +1,3 @@
-require "spec_helper"
-
 describe Authenticator::Httpd do
   subject { Authenticator::Httpd.new(config) }
   let!(:alice) { FactoryGirl.create(:user, :userid => 'alice') }
@@ -19,15 +17,17 @@ describe Authenticator::Httpd do
   end
 
   before(:each) do
-    wibble = FactoryGirl.build_stubbed(:miq_group, :description => 'wibble')
-    wobble = FactoryGirl.build_stubbed(:miq_group, :description => 'wobble')
+    wibble = FactoryGirl.create(:miq_group, :description => 'wibble')
+    wobble = FactoryGirl.create(:miq_group, :description => 'wobble')
 
-    allow(MiqServer).to receive(:my_server).and_return(
-      double(:my_server, :permitted_groups => [wibble, wobble])
-    )
+    allow(MiqLdap).to receive(:using_ldap?) { false }
   end
 
-  its(:uses_stored_password?) { should be_false }
+  describe '#uses_stored_password?' do
+    it "is false" do
+      expect(subject.uses_stored_password?).to be_falsey
+    end
+  end
 
   describe '#lookup_by_identity' do
     it "finds existing users" do
@@ -286,7 +286,7 @@ describe Authenticator::Httpd do
             task_id = authenticate
             task = MiqTask.find(task_id)
             expect(task.status).to eq('Error')
-            expect(MiqTask.status_error?(task.status)).to be_true
+            expect(MiqTask.status_error?(task.status)).to be_truthy
           end
         end
       end

@@ -75,11 +75,12 @@ module PxeController::PxeCustomizationTemplates
     end
     @ct = @record = identify_record(params[:id], CustomizationTemplate) if params[:id]
     if params[:typ] && params[:typ] == "copy"
-      options = {}
-      options[:name] = "Copy of #{@record.name}"
-      options[:description] = @record.description
-      options[:script] = @record.script
-      options[:type] = @record.type
+      options = {
+        :name        => "Copy of #{@record.name}",
+        :description => @record.description,
+        :script      => @record.script,
+        :type        => @record.type
+      }
       options[:pxe_image_type_id] = @record.pxe_image_type_id.to_s if @record.pxe_image_type_id
       @ct = CustomizationTemplate.new(options)
     end
@@ -97,7 +98,8 @@ module PxeController::PxeCustomizationTemplates
     if params[:button] == "cancel"
       @edit = session[:edit] = nil # clean out the saved info
       @ct.id ? add_flash(_("Edit of %{model} \"%{name}\" was cancelled by the user") % {:model => ui_lookup(:model => "PxeCustomizationTemplate"), :name => @ct.name}) :
-              add_flash(_("Add of new %s was cancelled by the user") % ui_lookup(:model => "PxeCustomizationTemplate"))
+              add_flash(_("Add of new %{model} was cancelled by the user") %
+                         {:model => ui_lookup(:model => "PxeCustomizationTemplate")})
       get_node_info(x_node)
       replace_right_cell(x_node)
     elsif ["add", "save"].include?(params[:button])
@@ -108,10 +110,10 @@ module PxeController::PxeCustomizationTemplates
             CustomizationTemplateKickstart.new : CustomizationTemplateSysprep.new
       end
       if @edit[:new][:name].blank?
-        add_flash(_("%s is required") % "Name", :error)
+        add_flash(_("Name is required"), :error)
       end
       if @edit[:new][:typ].blank?
-        add_flash(_("%s is required") % "Type", :error)
+        add_flash(_("Type is required"), :error)
       end
       if @flash_array
         render :update do |page|
@@ -221,7 +223,7 @@ module PxeController::PxeCustomizationTemplates
       replace_right_cell(x_node, [:customization_templates])
     else # showing 1 vm
       if params[:id].nil? || CustomizationTemplate.find_by_id(params[:id]).nil?
-        add_flash(_("%s no longer exists") % ui_lookup(:model => "PxeCustomizationTemplate"),
+        add_flash(_("%{model} no longer exists") % {:model => ui_lookup(:model => "PxeCustomizationTemplate")},
                   :error)
         template_list
         @refresh_partial = "layouts/gtl"

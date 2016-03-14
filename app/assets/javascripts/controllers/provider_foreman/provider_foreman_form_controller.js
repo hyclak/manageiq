@@ -1,6 +1,7 @@
-ManageIQ.angularApplication.controller('providerForemanFormController', ['$http', '$scope', 'providerForemanFormId', 'miqService', function($http, $scope, providerForemanFormId, miqService) {
+ManageIQ.angular.app.controller('providerForemanFormController', ['$http', '$scope', 'providerForemanFormId', 'miqService', function($http, $scope, providerForemanFormId, miqService) {
     var init = function() {
       $scope.providerForemanModel = {
+        provtype: '',
         name: '',
         url: '',
         verify_ssl: '',
@@ -14,13 +15,14 @@ ManageIQ.angularApplication.controller('providerForemanFormController', ['$http'
       $scope.modelCopy = angular.copy( $scope.providerForemanModel );
       $scope.model = 'providerForemanModel';
 
-      ManageIQ.angularApplication.$scope = $scope;
+      ManageIQ.angular.scope = $scope;
 
       if (providerForemanFormId == 'new') {
-        $scope.newRecord                         = true;
-        $scope.providerForemanModel.name         = '';
-        $scope.providerForemanModel.url          = '';
-        $scope.providerForemanModel.verify_ssl   = false;
+        $scope.newRecord                            = true;
+        $scope.providerForemanModel.provtype        = '';
+        $scope.providerForemanModel.name            = '';
+        $scope.providerForemanModel.url             = '';
+        $scope.providerForemanModel.verify_ssl    = false;
 
         $scope.providerForemanModel.log_userid   = '';
         $scope.providerForemanModel.log_password = '';
@@ -33,9 +35,10 @@ ManageIQ.angularApplication.controller('providerForemanFormController', ['$http'
         miqService.sparkleOn();
 
         $http.get('/provider_foreman/provider_foreman_form_fields/' + providerForemanFormId).success(function(data) {
-          $scope.providerForemanModel.name        = data.name;
-          $scope.providerForemanModel.url         = data.url;
-          $scope.providerForemanModel.verify_ssl  = data.verify_ssl == "1";
+          $scope.providerForemanModel.provtype        = data.provtype;
+          $scope.providerForemanModel.name            = data.name;
+          $scope.providerForemanModel.url             = data.url;
+          $scope.providerForemanModel.verify_ssl      = data.verify_ssl == "1";
 
           $scope.providerForemanModel.log_userid   = data.log_userid;
 
@@ -91,7 +94,7 @@ ManageIQ.angularApplication.controller('providerForemanFormController', ['$http'
       $scope.$broadcast ('resetClicked');
       $scope.providerForemanModel = angular.copy( $scope.modelCopy );
       $scope.angularForm.$setPristine(true);
-      miqService.miqFlash("warn", "All changes have been reset");
+      miqService.miqFlash("warn", __("All changes have been reset"));
     };
 
     $scope.saveClicked = function() {

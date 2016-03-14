@@ -1,4 +1,3 @@
-require "spec_helper"
 require 'util/extensions/miq-range'
 
 describe Range do
@@ -34,7 +33,7 @@ describe Range do
       it "with #{msg}" do
         ary = []
         rng.step_value(value) { |x| ary << x }
-        ary.should == expected
+        expect(ary).to eq(expected)
       end
     end
   end
@@ -42,7 +41,7 @@ describe Range do
   context '#step_value without block' do
     STEP_VALUE_CASES.each_slice(4) do |msg, rng, value, expected|
       it "with #{msg}" do
-        rng.step_value(value).should == expected
+        expect(rng.step_value(value)).to eq(expected)
       end
     end
   end

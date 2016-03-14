@@ -1,5 +1,3 @@
-require "spec_helper"
-
 describe Tenant do
   include_examples ".seed called multiple times"
 
@@ -21,14 +19,14 @@ describe Tenant do
 
   describe "#default_tenant" do
     it "has a default tenant" do
-      expect(default_tenant).to be
+      expect(default_tenant).to be_truthy
     end
   end
 
   describe "#root_tenant" do
     it "has a root tenant" do
       Tenant.seed
-      expect(Tenant.root_tenant).to be
+      expect(Tenant.root_tenant).to be_truthy
     end
 
     it "can update the root_tenant" do
@@ -61,24 +59,24 @@ describe Tenant do
   describe "#tenant?" do
     it "detects tenant" do
       t = Tenant.new(:divisible => true)
-      expect(t.tenant?).to be_true
+      expect(t.tenant?).to be_truthy
     end
 
     it "detects non tenant" do
       t = Tenant.new(:divisible => false)
-      expect(t.tenant?).not_to be_true
+      expect(t.tenant?).not_to be_truthy
     end
   end
 
   describe "#project?" do
     it "detects project" do
       t = Tenant.new(:divisible => false)
-      expect(t.project?).to be_true
+      expect(t.project?).to be_truthy
     end
 
     it "detects non project" do
       t = Tenant.new(:divisible => true)
-      expect(t.project?).not_to be_true
+      expect(t.project?).not_to be_truthy
     end
   end
 
@@ -155,9 +153,8 @@ describe Tenant do
 
     it "is unique per parent tenant" do
       FactoryGirl.create(:tenant, :name => "common", :parent => root_tenant)
-      expect do
-        FactoryGirl.create(:tenant, :name => "common", :parent => root_tenant)
-      end.to raise_error
+      expect { FactoryGirl.create(:tenant, :name => "common", :parent => root_tenant) }
+        .to raise_error(ActiveRecord::RecordInvalid, /Name should be unique per parent/)
     end
 
     it "can be the same for different parents" do
@@ -308,11 +305,11 @@ describe Tenant do
 
     it "has a default login image" do
       tenant.save!
-      expect(tenant.login_logo.url).to match(/login-screen-logo.png/)
+      expect(tenant.login_logo.url).to match(/login-screen-logo.*\.png/)
     end
 
     it "has a default login image for root_tenant" do
-      expect(root_tenant.login_logo.url).to match(/login-screen-logo.png/)
+      expect(root_tenant.login_logo.url).to match(/login-screen-logo.*\.png/)
     end
 
     it "has custom login logo" do
@@ -358,9 +355,7 @@ describe Tenant do
       described_class.destroy_all
       root_tenant # create a root tenant
 
-      expect do
-        described_class.create!
-      end.to raise_error
+      expect { described_class.create! }.to raise_error(ActiveRecord::RecordInvalid, /Parent required/)
     end
   end
 
@@ -369,13 +364,23 @@ describe Tenant do
       tenant1 = FactoryGirl.create(:tenant)
       tenant2 = FactoryGirl.create(:tenant)
       g = FactoryGirl.create(:miq_group, :tenant => tenant1)
-      expect { tenant2.update_attributes!(:default_miq_group => g) }.to raise_error
+      expect { tenant2.update_attributes!(:default_miq_group => g) }
+        .to raise_error(ActiveRecord::RecordInvalid, /default group must be a default group for this tenant/)
     end
 
     # we may want to change this in the future
     it "prevents changing default_miq_group" do
       g = FactoryGirl.create(:miq_group, :tenant => tenant)
-      expect { tenant.update_attributes!(:default_miq_group => g) }.to raise_error
+      expect { tenant.update_attributes!(:default_miq_group => g) }
+        .to raise_error(ActiveRecord::RecordInvalid, /default group must be a default group for this tenant/)
+    end
+  end
+
+  context "#ensure_can_be_destroyed" do
+    it "wouldn't delete tenant with groups associated" do
+      tenant = FactoryGirl.create(:tenant)
+      FactoryGirl.create(:miq_group, :tenant => tenant)
+      expect { tenant.destroy! }.to raise_error(RuntimeError, /A tenant with groups.*cannot be deleted/)
     end
   end
 
@@ -487,6 +492,25 @@ describe Tenant do
     it "domain belongs to tenant" do
       dom1
       expect(dom1.tenant.name).to eq(t1.name)
+    end
+
+    it "no editable domains available for current tenant" do
+      t1_1
+      FactoryGirl.create(:miq_ae_domain,
+                         :name      => 'non_editable',
+                         :priority  => 3,
+                         :tenant_id => t1_1.id,
+                         :system    => true)
+      expect(t1_1.any_editable_domains?).to eq(false)
+    end
+
+    it "editable domains available for current_tenant" do
+      t1_1
+      FactoryGirl.create(:miq_ae_domain,
+                         :name      => 'editable',
+                         :priority  => 3,
+                         :tenant_id => t1_1.id)
+      expect(t1_1.any_editable_domains?).to eq(true)
     end
   end
 
@@ -722,7 +746,7 @@ describe Tenant do
         :templates_allocated => {:value => 4}
       )
 
-      TenantQuota.any_instance.stub(:used => 2)
+      allow_any_instance_of(TenantQuota).to receive_messages(:used => 2)
     end
 
     it "calculates quotas allocated to child tenants" do
@@ -780,6 +804,56 @@ describe Tenant do
       expect(combined[:cpu_allocated][:used]).to              eql 2
       expect(combined[:storage_allocated][:used]).to          eql 2
       expect(combined[:templates_allocated][:used]).to        eql 2
+    end
+  end
+
+  describe ".tenant_and_project_names" do
+    let(:config) { {:server => {:company => "root"}} }
+
+    # root
+    #   ten1
+    #     ten2
+    it "builds names with dots" do
+      ten1 = FactoryGirl.create(:tenant, :name => "ten1", :parent => root_tenant)
+      ten2 = FactoryGirl.create(:tenant, :name => "ten2", :parent => ten1)
+
+      tenants, projects = Tenant.tenant_and_project_names
+      expect(tenants).to eq([["root", root_tenant.id], ["root.ten1", ten1.id], ["root.ten1.ten2", ten2.id]])
+      expect(projects).to be_empty
+    end
+
+    # root
+    #   proj1
+    #   proj2
+    it "separates projects" do
+      proj2 = FactoryGirl.create(:tenant, :name => "proj2", :divisible => false, :parent => root_tenant)
+      proj1 = FactoryGirl.create(:tenant, :name => "proj1", :divisible => false, :parent => root_tenant)
+
+      tenants, projects = Tenant.tenant_and_project_names
+      expect(tenants).to eq([["root", root_tenant.id]])
+      expect(projects).to eq([["root.proj1", proj1.id], ["root.proj2", proj2.id]])
+    end
+
+    # root
+    #   proj3
+    #   ten1
+    #     proj1
+    #   ten2
+    #     proj2
+    #   ten3
+    it "separates tenants from projects" do
+      FactoryGirl.create(:tenant, :name => "ten3", :parent => root_tenant)
+      ten1 = FactoryGirl.create(:tenant, :name => "ten1", :parent => root_tenant)
+      ten2 = FactoryGirl.create(:tenant, :name => "ten2", :parent => root_tenant)
+      FactoryGirl.create(:tenant, :name => "proj2", :divisible => false, :parent => ten2)
+      FactoryGirl.create(:tenant, :name => "proj1", :divisible => false, :parent => ten1)
+      FactoryGirl.create(:tenant, :name => "proj3", :divisible => false, :parent => root_tenant)
+
+      tenants, projects = Tenant.tenant_and_project_names
+      expect(tenants.map(&:first)).to eq(%w(root root.ten1 root.ten2 root.ten3))
+      expect(tenants.first.last).to eq(root_tenant.id)
+
+      expect(projects.map(&:first)).to eq(%w(root.proj3 root.ten1.proj1 root.ten2.proj2))
     end
   end
 end

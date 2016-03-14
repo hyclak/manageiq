@@ -1,4 +1,4 @@
-ManageIQ.angularApplication.controller('tenantFormController', ['$http', '$scope', 'tenantFormId', 'tenantType', 'miqService', function($http, $scope, tenantFormId, tenantType, miqService) {
+ManageIQ.angular.app.controller('tenantFormController', ['$http', '$scope', 'tenantFormId', 'tenantType', 'miqService', function($http, $scope, tenantFormId, tenantType, miqService) {
     var init = function() {
 
       $scope.tenantModel = {
@@ -11,7 +11,7 @@ ManageIQ.angularApplication.controller('tenantFormController', ['$http', '$scope
       $scope.afterGet = false;
       $scope.modelCopy = angular.copy( $scope.tenantModel );
 
-      ManageIQ.angularApplication.$scope = $scope;
+      ManageIQ.angular.scope = $scope;
 
       if (tenantFormId == 'new') {
         $scope.newRecord                             = true;
@@ -66,7 +66,7 @@ ManageIQ.angularApplication.controller('tenantFormController', ['$http', '$scope
       $scope.tenantModel = angular.copy( $scope.modelCopy );
       $scope.angularForm.$setUntouched(true);
       $scope.angularForm.$setPristine(true);
-      miqService.miqFlash("warn", "All changes have been reset");
+      miqService.miqFlash("warn", __("All changes have been reset"));
     };
 
     $scope.saveClicked = function() {

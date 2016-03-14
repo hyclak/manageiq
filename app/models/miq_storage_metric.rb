@@ -1,6 +1,6 @@
 require 'net_app_manageability/types'
 
-class MiqStorageMetric < ActiveRecord::Base
+class MiqStorageMetric < ApplicationRecord
   has_one   :miq_cim_instance,
             :foreign_key => "metric_id"
 
@@ -84,24 +84,19 @@ class MiqStorageMetric < ActiveRecord::Base
   end
 
   def derived_metrics_in_range(start_time, end_time)
-    cond = ["statistic_time >= ? AND statistic_time < ?", start_time, end_time]
-    miq_derived_metrics.where(cond).to_a
+    miq_derived_metrics.where(:statistic_time => start_time...end_time).to_a
   end
 
-  def metrics_rollups_in_range(rollupType, start_time, end_time)
-    cond = ["rollup_type = ? AND statistic_time >= ? AND statistic_time < ?",
-            rollupType, start_time, end_time]
-    miq_metrics_rollups.where(cond).to_a
+  def metrics_rollups_in_range(rollup_type, start_time, end_time)
+    where(:rollup_type => rollup_type, :statistic_time => start_time...end_time).to_a
   end
 
-  def metrics_rollups_by_statistic_time(rollupType, statistic_time)
-    cond = ["rollup_type = ? AND statistic_time = ?", rollupType, statistic_time]
-    miq_metrics_rollups.where(cond).to_a
+  def metrics_rollups_by_statistic_time(rollup_type, statistic_time)
+    miq_metrics_rollups.where(:rollup_type => rollup_type, :statistic_time => statistic_time).to_a
   end
 
-  def metrics_rollups_by_rollup_type(rollupType)
-    cond = ["rollup_type = ?", rollupType]
-    miq_metrics_rollups.where(cond).to_a
+  def metrics_rollups_by_rollup_type(rollup_type)
+    miq_metrics_rollups.where(:rollup_type => rollup_type).to_a
   end
 
   def addDerivedMetric(derivedMetrics)
@@ -145,12 +140,9 @@ class MiqStorageMetric < ActiveRecord::Base
   end
 
   def self.metrics_count_by_date(older_than, metrics_classes)
-    count = 0
-    metrics_classes.each do |mc|
-      conditions = mc.arel_table[:statistic_time].lt(older_than)
-      count += mc.where(conditions).count
-    end
-    count
+    metrics_classes.collect do |mc|
+      mc.where(mc.arel_table[:statistic_time].lt(older_than)).count
+    end.sum
   end
   private_class_method :metrics_count_by_date
 
@@ -183,20 +175,13 @@ class MiqStorageMetric < ActiveRecord::Base
 
   def self.purge(older_than, rollup_type, window, metrics_classes)
     window ||= purge_window_size
-    gtotal = 0
-    metrics_classes.each do |mc|
-      conditions = mc.arel_table[:statistic_time].lt(older_than)
-      query = mc.select(:id).where(conditions)
+    metrics_classes.map do |mc|
+      query = mc.where(mc.arel_table[:statistic_time].lt(older_than))
       query = query.where(:rollup_type => rollup_type) unless rollup_type.nil?
-      total = 0
-      query.find_in_batches(:batch_size => window) do |ma|
-        ids = ma.collect(&:id)
-        total += mc.delete_all(:id => ids)
+      query.delete_in_batches(window).tap do |total|
+        _log.info "Purged #{total} records from #{mc.name} table."
       end
-      gtotal += total
-      _log.info "Purged #{total} records from #{mc.name} table."
-    end
-    gtotal
+    end.sum
   end
   private_class_method :purge
 
@@ -205,7 +190,7 @@ class MiqStorageMetric < ActiveRecord::Base
   # Called directly from MiqStorageMetric.
   #
   def self.sub_class_names
-    select('DISTINCT type').collect(&:type)
+    distinct.pluck(:type)
   end
 
   #
@@ -213,7 +198,7 @@ class MiqStorageMetric < ActiveRecord::Base
   # Called directly from MiqStorageMetric.
   #
   def self.sub_classes
-    select('DISTINCT type').collect { |c| c.type.constantize }
+    sub_class_names.map(&:constantize)
   end
 
   #
@@ -221,7 +206,7 @@ class MiqStorageMetric < ActiveRecord::Base
   # Called directly from MiqStorageMetric.
   #
   def self.derived_metrics_class_names
-    select('DISTINCT type').collect { |c| c.type.constantize.derived_metrics_class_name }
+    sub_classes.map(&:derived_metrics_class_name)
   end
 
   #
@@ -229,7 +214,7 @@ class MiqStorageMetric < ActiveRecord::Base
   # Called directly from MiqStorageMetric.
   #
   def self.derived_metrics_classes
-    select('DISTINCT type').collect { |c| c.type.constantize.derived_metrics_class_name.constantize }
+    derived_metrics_class_names.map(&:constantize)
   end
 
   #
@@ -237,7 +222,7 @@ class MiqStorageMetric < ActiveRecord::Base
   # Called directly from MiqStorageMetric.
   #
   def self.metrics_rollup_class_names
-    select('DISTINCT type').collect { |c| c.type.constantize.metrics_rollup_class_name }
+    sub_classes.map(&:metrics_rollup_class_name).compact
   end
 
   #
@@ -245,7 +230,7 @@ class MiqStorageMetric < ActiveRecord::Base
   # Called directly from MiqStorageMetric.
   #
   def self.metrics_rollup_classes
-    select('DISTINCT type').collect { |c| c.type.constantize.metrics_rollup_class_name.constantize }
+    metrics_rollup_class_names.map(&:constantize)
   end
 
   #
@@ -254,8 +239,7 @@ class MiqStorageMetric < ActiveRecord::Base
   # Constant defined in subclass.
   #
   def self.derived_metrics_class_name
-    return nil unless self.const_defined?(:DERIVED_METRICS_CLASS_NAME)
-    self::DERIVED_METRICS_CLASS_NAME
+    self::DERIVED_METRICS_CLASS_NAME if self.const_defined?(:DERIVED_METRICS_CLASS_NAME)
   end
 
   #
@@ -263,17 +247,14 @@ class MiqStorageMetric < ActiveRecord::Base
   # Called from subclass of MiqStorageMetric.
   #
   def self.derived_metrics_class
-    return nil if derived_metrics_class_name.nil?
-    derived_metrics_class_name.constantize
+    derived_metrics_class_name.try!(:constantize)
   end
 
   #
   # The derived metrics class for this subclass.
   # Called from an instance of subclass of MiqStorageMetric.
   #
-  def derived_metrics_class
-    self.class.derived_metrics_class
-  end
+  delegate :derived_metrics_class, :to => :class
 
   #
   # The name of the metrics rollup class for this subclass.
@@ -281,8 +262,7 @@ class MiqStorageMetric < ActiveRecord::Base
   # Constant defined in subclass.
   #
   def self.metrics_rollup_class_name
-    return nil unless self.const_defined?(:METRICS_ROLLUP_CLASS_NAME)
-    self::METRICS_ROLLUP_CLASS_NAME
+    self::METRICS_ROLLUP_CLASS_NAME if self.const_defined?(:METRICS_ROLLUP_CLASS_NAME)
   end
 
   #
@@ -290,15 +270,12 @@ class MiqStorageMetric < ActiveRecord::Base
   # Called from subclass of MiqStorageMetric.
   #
   def self.metrics_rollup_class
-    return nil if metrics_rollup_class_name.nil?
-    metrics_rollup_class_name.constantize
+    metrics_rollup_class_name.try!(:constantize)
   end
 
   #
   # The metrics rollup class for this subclass.
   # Called from an instance of subclass of MiqStorageMetric.
   #
-  def metrics_rollup_class
-    self.class.metrics_rollup_class
-  end
+  delegate :metrics_rollup_class, :to => :class
 end

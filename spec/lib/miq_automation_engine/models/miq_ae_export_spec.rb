@@ -1,4 +1,3 @@
-require "spec_helper"
 include AutomationSpecHelper
 
 describe MiqAeExport do
@@ -7,7 +6,7 @@ describe MiqAeExport do
     let(:tenant2) { FactoryGirl.create(:tenant) }
 
     before do
-      MiqAeExport.stub(:write_domain).and_return("")
+      allow(MiqAeExport).to receive(:write_domain).and_return("")
       create_ae_model(:name => "dom1", :tenant => tenant1)
       create_ae_model(:name => "dom2", :tenant => tenant2)
     end

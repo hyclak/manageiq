@@ -1,5 +1,3 @@
-require "spec_helper"
-
 describe PictureController do
   let(:picture_content) { "BINARY IMAGE CONTENT" }
   let(:picture) { FactoryGirl.create(:picture, :id => 10_000_000_000_005, :extension => "jpg") }
@@ -9,31 +7,31 @@ describe PictureController do
 
     EvmSpecHelper.create_guid_miq_server_zone
 
-    picture.content = picture_content
+    picture.content = picture_content.dup # dup because destructive operation
     picture.save
   end
 
   it 'can serve a picture directly from the database' do
-    visit "/pictures/#{picture.compressed_id}.#{picture.extension}"
-    expect(page.status_code).to eq(200)
+    get :show, :params => { :basename => "#{picture.compressed_id}.#{picture.extension}" }
+    expect(response.status).to eq(200)
     expect(response.body).to eq(picture_content)
   end
 
   it 'can serve a picture directly from the database using the uncompressed id' do
-    visit "/pictures/#{picture.id}.#{picture.extension}"
-    expect(page.status_code).to eq(200)
+    get :show, :params => { :basename => "#{picture.compressed_id}.#{picture.extension}" }
+    expect(response.status).to eq(200)
     expect(response.body).to eq(picture_content)
   end
 
   it "responds with a Not Found with pictures of incorrect extension" do
-    visit "/pictures/#{picture.compressed_id}.png"
-    expect(page.status_code).to eq(404)
+    get :show, :params => { :basename => "#{picture.compressed_id}.png" }
+    expect(response.status).to eq(404)
     expect(response.body).to be_blank
   end
 
   it "responds with a Not Found with unknown pictures" do
-    visit "/pictures/bogusimage.gif"
-    expect(page.status_code).to eq(404)
+    get :show, :params => { :basename => "bogusimage.gif" }
+    expect(response.status).to eq(404)
     expect(response.body).to be_blank
   end
 end

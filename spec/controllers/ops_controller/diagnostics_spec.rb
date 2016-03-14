@@ -1,10 +1,7 @@
-require "spec_helper"
-include UiConstants
-
 shared_examples "logs_collect" do |type|
   let(:klass) { type.classify.constantize }
-  let(:zone) { active_record_instance_double("Zone", :name => "foo") }
-  let(:server) { active_record_instance_double("MiqServer", :logon_status => :ready, :id => 1, :my_zone => zone) }
+  let(:zone) { double("Zone", :name => "foo") }
+  let(:server) { double("MiqServer", :logon_status => :ready, :id => 1, :my_zone => zone) }
   before do
     sb_hash = {
       :trees            => {:diagnostics_tree => {:active_node => active_node}},
@@ -13,13 +10,13 @@ shared_examples "logs_collect" do |type|
       :active_tab       => "diagnostics_roles_servers"
     }
     controller.instance_variable_set(:@sb, sb_hash)
-    MiqServer.stub(:my_server).with(true).and_return(server)
+    allow(MiqServer).to receive(:my_server).with(true).and_return(server)
   end
 
   it "not running" do
-    MiqServer.any_instance.stub(:status).and_return("stopped")
+    allow_any_instance_of(MiqServer).to receive(:status).and_return("stopped")
 
-    controller.should_receive(:replace_right_cell).with(active_node)
+    expect(controller).to receive(:replace_right_cell).with(active_node)
 
     controller.send(:logs_collect)
 
@@ -27,8 +24,8 @@ shared_examples "logs_collect" do |type|
   end
 
   it "collection already in progress" do
-    klass.any_instance.should_receive(:log_collection_active_recently?).and_return(true)
-    controller.should_receive(:replace_right_cell).with(active_node)
+    expect_any_instance_of(klass).to receive(:log_collection_active_recently?).and_return(true)
+    expect(controller).to receive(:replace_right_cell).with(active_node)
 
     controller.send(:logs_collect)
 
@@ -37,9 +34,9 @@ shared_examples "logs_collect" do |type|
 
   context "nothing preventing collection" do
     it "succeeds" do
-      klass.any_instance.should_receive(:log_collection_active_recently?).and_return(false)
-      klass.any_instance.should_receive(:synchronize_logs).with(user.userid, {})
-      controller.should_receive(:replace_right_cell).with(active_node)
+      expect_any_instance_of(klass).to receive(:log_collection_active_recently?).and_return(false)
+      expect_any_instance_of(klass).to receive(:synchronize_logs).with(user.userid, :context => klass.name)
+      expect(controller).to receive(:replace_right_cell).with(active_node)
 
       controller.send(:logs_collect)
 
@@ -47,9 +44,9 @@ shared_examples "logs_collect" do |type|
     end
 
     it "collection raises and error" do
-      klass.any_instance.should_receive(:log_collection_active_recently?).and_return(false)
-      klass.any_instance.should_receive(:synchronize_logs).and_raise(StandardError)
-      controller.should_receive(:replace_right_cell).with(active_node)
+      expect_any_instance_of(klass).to receive(:log_collection_active_recently?).and_return(false)
+      expect_any_instance_of(klass).to receive(:synchronize_logs).and_raise(StandardError)
+      expect(controller).to receive(:replace_right_cell).with(active_node)
 
       controller.send(:logs_collect)
 
@@ -67,9 +64,9 @@ describe OpsController do
       MiqRegion.seed
 
       session[:sandboxes] = {"ops" => {:active_tree => :diagnostics_tree}}
-      post :tree_select, :id => 'root', :format => :js
+      post :tree_select, :params => { :id => 'root', :format => :js }
 
-      response.should render_template('ops/_diagnostics_zones_tab')
+      expect(response).to render_template('ops/_diagnostics_zones_tab')
       expect(response.status).to eq(200)
     end
   end
@@ -87,8 +84,8 @@ describe OpsController do
       session[:sandboxes] = {"ops" => {:active_tree        => :diagnostics_tree,
                                        :selected_typ       => "miq_server",
                                        :selected_server_id => @miq_server.id}}
-      post :tree_select, :id => 'root', :format => :js
-      get :log_collection_form_fields, :id => @miq_server.id
+      post :tree_select, :params => { :id => 'root', :format => :js }
+      get :log_collection_form_fields, :params => { :id => @miq_server.id }
       expect(response.status).to eq(200)
     end
   end
@@ -115,8 +112,8 @@ describe OpsController do
 
       _guid, @miq_server, @zone = EvmSpecHelper.remote_guid_miq_server_zone
       file_depot = FileDepotSmb.create(:name => "abc", :uri => "smb://abc")
-      @miq_server.should_receive(:log_depot).and_return(file_depot)
-      file_depot.should_receive(:authentication_password).and_return('default_password')
+      expect(@miq_server).to receive(:log_file_depot).and_return(file_depot)
+      expect(file_depot).to receive(:authentication_password).and_return('default_password')
       controller.instance_variable_set(:@record, @miq_server)
       controller.instance_variable_set(:@_params,
                                        :log_userid => "default_userid")
@@ -129,19 +126,23 @@ describe OpsController do
     let(:user) { FactoryGirl.create(:user) }
     before do
       set_user_privileges user
+      EvmSpecHelper.local_miq_server
       MiqRegion.seed
       _guid, @miq_server, @zone = EvmSpecHelper.remote_guid_miq_server_zone
+      @miq_server_to_delete = FactoryGirl.create(:miq_server)
+      @miq_server_to_delete.last_heartbeat -= 20.minutes
+      @miq_server_to_delete.save
     end
 
     it "#restart_server returns successful message" do
-      @miq_server.should_receive(:restart_queue).and_return(true)
+      expect(@miq_server).to receive(:restart_queue).and_return(true)
 
-      MiqServer.should_receive(:find).and_return(@miq_server)
+      expect(MiqServer).to receive(:find).and_return(@miq_server)
 
       post :restart_server
 
-      response.body.should include("flash_msg_div")
-      response.body.should include("CFME Appliance restart initiated successfully")
+      expect(response.body).to include("flash_msg_div")
+      expect(response.body).to include("CFME Appliance restart initiated successfully")
     end
 
     it "#delete_server returns successful message" do
@@ -152,16 +153,89 @@ describe OpsController do
         :active_tab       => "diagnostics_roles_servers"
       }
       @miq_server.update_attributes(:status => "stopped")
-      controller.stub(:build_server_tree)
+      allow(controller).to receive(:build_server_tree)
       controller.instance_variable_set(:@sb, sb_hash)
 
-      controller.should_receive(:render)
+      expect(controller).to receive(:render)
 
       controller.send(:delete_server)
 
       flash_message = assigns(:flash_array).first
-      flash_message[:message].should include("Delete successful")
-      flash_message[:level].should be(:success)
+      expect(flash_message[:message]).to include("Delete successful")
+      expect(flash_message[:level]).to be(:success)
+    end
+
+    describe '#delete_server' do
+      context "server does exist" do
+        it 'deletes server and refreshes screen' do
+          sb_hash = {
+            :trees            => {:diagnostics_tree => {:active_node => "z-#{@zone.id}"}},
+            :active_tree      => :diagnostics_tree,
+            :diag_selected_id => @miq_server_to_delete.id,
+            :active_tab       => "diagnostics_roles_servers"
+          }
+          controller.instance_variable_set(:@sb, sb_hash)
+          controller.instance_variable_set(:@_params, :pressed => "zone_delete_server")
+          expect(controller).to receive :render
+
+          controller.send(:delete_server)
+
+          flash_array = assigns(:flash_array)
+
+          diag_selected_id = controller.instance_variable_get(:@sb)[:diag_selected_id]
+          expect(diag_selected_id).to eq(nil)
+          expect(flash_array.size).to eq 1
+          expect(flash_array.first[:message]).to match(/Server .*: Delete successful/)
+        end
+      end
+
+      context ':diag_selected_id is not set' do
+        it 'should set the flash saying that server no longer exists' do
+          controller.instance_variable_set(:@sb, {})
+          expect(controller).to receive :refresh_screen
+
+          controller.send(:delete_server)
+
+          expect(assigns(:flash_array)).to eq [
+            {
+              message: 'Evm Server no longer exists',
+              level: :error
+            }
+          ]
+        end
+      end
+
+      context "server doesn't exist" do
+        it 'should set the flash saying that server no longer exists' do
+          controller.instance_variable_set(:@sb, { diag_selected_id: -100500 })
+          expect(controller).to receive :refresh_screen
+
+          controller.send(:delete_server)
+
+          expect(assigns(:flash_array)).to eq [
+            {
+              message: 'The selected Evm Server was deleted',
+              level: :success
+            }
+          ]
+        end
+      end
+
+      context "server does exist, but something goes wrong during deletion" do
+        it 'should set the flash saying that server no longer exists' do
+          controller.instance_variable_set(:@sb, { diag_selected_id: @miq_server.id })
+          expect(controller).to receive :refresh_screen
+          expect_any_instance_of(MiqServer).to receive(:destroy).and_raise 'boom'
+
+          controller.send(:delete_server)
+
+          flash_array = assigns(:flash_array)
+          expect(flash_array.size).to eq 1
+
+          expect(flash_array.first[:level]).to eq :error
+          expect(flash_array.first[:message]).to match /Server .*: Error during 'destroy': boom/
+        end
+      end
     end
 
     context "#logs_collect" do
@@ -188,12 +262,13 @@ describe OpsController do
         }
         session[:edit] = edit
         controller.instance_variable_set(:@sb, sb_hash)
-        controller.stub(:set_credentials).and_return(:default => {:userid => "testuser", :password => 'password'})
+        allow(controller).to receive(:set_credentials)
+          .and_return(:default => {:userid => "testuser", :password => 'password'})
         controller.instance_variable_set(:@_params,
                                          :log_userid => "default_user",
                                          :button     => "validate",
                                          :id         => server_id)
-        controller.should_receive(:render)
+        expect(controller).to receive(:render)
         expect(response.status).to eq(200)
         controller.send(:log_depot_edit)
       end

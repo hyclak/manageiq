@@ -1,4 +1,4 @@
-ManageIQ.angularApplication.controller('tenantQuotaFormController',['$http', '$scope', 'tenantQuotaFormId', 'tenantType', 'miqService', function($http, $scope, tenantQuotaFormId, tenantType, miqService) {
+ManageIQ.angular.app.controller('tenantQuotaFormController',['$http', '$scope', 'tenantQuotaFormId', 'tenantType', 'miqService', function($http, $scope, tenantQuotaFormId, tenantType, miqService) {
   var init = function() {
     $scope.tenantQuotaModel = {
       name:'',
@@ -8,7 +8,7 @@ ManageIQ.angularApplication.controller('tenantQuotaFormController',['$http', '$s
     $scope.afterGet = false;
     $scope.modelCopy = angular.copy( $scope.tenantQuotaModel );
 
-    ManageIQ.angularApplication.$scope = $scope;
+    ManageIQ.angular.scope = $scope;
     $scope.newRecord = false;
     miqService.sparkleOn();
     $http.get('/ops/tenant_quotas_form_fields/' + tenantQuotaFormId).success(function(data) {
@@ -61,7 +61,7 @@ ManageIQ.angularApplication.controller('tenantQuotaFormController',['$http', '$s
     $scope.tenantQuotaModel = angular.copy( $scope.modelCopy );
     $scope.angularForm.$setUntouched(true);
     $scope.angularForm.$setPristine(true);
-    miqService.miqFlash("warn", "All changes have been reset");
+    miqService.miqFlash("warn", __("All changes have been reset"));
   };
 
   $scope.saveClicked = function() {

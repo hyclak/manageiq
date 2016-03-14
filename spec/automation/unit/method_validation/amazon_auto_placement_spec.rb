@@ -1,5 +1,3 @@
-require "spec_helper"
-
 describe "AMAZON best fit" do
 
   let(:user) { FactoryGirl.create(:user_with_group) }
@@ -82,8 +80,8 @@ describe "AMAZON best fit" do
     def check_attributes_not_set
       miq_provision.reload
       keys = miq_provision.options.keys
-      expect(keys.include?(:cloud_network)).to be_false
-      expect(keys.include?(:cloud_subnet)).to be_false
+      expect(keys.include?(:cloud_network)).to be_falsey
+      expect(keys.include?(:cloud_subnet)).to be_falsey
     end
   end
 end

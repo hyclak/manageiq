@@ -1,5 +1,3 @@
-require "spec_helper"
-
 describe Authenticator::Ldap do
   subject { Authenticator::Ldap.new(config) }
   let!(:alice) { FactoryGirl.create(:user, :userid => 'alice') }
@@ -57,10 +55,6 @@ describe Authenticator::Ldap do
   before(:each) do
     wibble = FactoryGirl.create(:miq_group, :description => 'wibble')
     wobble = FactoryGirl.build_stubbed(:miq_group, :description => 'wobble')
-
-    allow(MiqServer).to receive(:my_server).and_return(
-      double(:my_server, :permitted_groups => [wibble, wobble])
-    )
   end
 
   let(:user_data) do
@@ -94,10 +88,15 @@ describe Authenticator::Ldap do
   end
 
   before(:each) do
-    allow(MiqLdap).to receive(:new).and_return { FakeLdap.new(user_data) }
+    allow(MiqLdap).to receive(:new) { FakeLdap.new(user_data) }
+    allow(MiqLdap).to receive(:using_ldap?) { true }
   end
 
-  its(:uses_stored_password?) { should be_false }
+  describe '#uses_stored_password?' do
+    it "is false" do
+      expect(subject.uses_stored_password?).to be_falsey
+    end
+  end
 
   describe '#lookup_by_identity' do
     it "finds existing users" do
@@ -161,6 +160,20 @@ describe Authenticator::Ldap do
     let(:username) { 'alice' }
     let(:password) { 'secret' }
 
+    context "when using LDAP" do
+      let(:config) { super().merge(:ldap_role => true) }
+
+      before do
+        allow(MiqQueue).to receive(:put)
+        allow(MiqTask).to receive(:create).and_return(double(:id => :return_value))
+      end
+
+      it "encrypts password for queuing" do
+        expect(subject).to receive(:encrypt_ldap_password)
+        authenticate
+      end
+    end
+
     context "with correct password" do
       context "using local authorization" do
         it "succeeds" do
@@ -197,6 +210,15 @@ describe Authenticator::Ldap do
       context "using external authorization" do
         let(:config) { super().merge(:ldap_role => true) }
         before(:each) { allow(subject).to receive(:authorize_queue?).and_return(false) }
+
+        context "with an LDAP user" do
+          before { allow(subject).to receive(:run_task) }
+
+          it "decrypts password after dequeuing" do
+            expect(subject).to receive(:decrypt_ldap_password)
+            subject.authorize(22, 'alice', 1)
+          end
+        end
 
         it "enqueues an authorize task" do
           expect(subject).to receive(:authorize_queue).and_return(123)
@@ -420,7 +442,7 @@ describe Authenticator::Ldap do
             task_id = authenticate
             task = MiqTask.find(task_id)
             expect(task.status).to eq('Error')
-            expect(MiqTask.status_error?(task.status)).to be_true
+            expect(MiqTask.status_error?(task.status)).to be_truthy
           end
         end
       end

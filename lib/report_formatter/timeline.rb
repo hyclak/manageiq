@@ -49,7 +49,7 @@ module ReportFormatter
     # Methods to convert record id (id, fixnum, 12000000000056) to/from compressed id (cid, string, "12c56")
     #   for use in UI controls (i.e. tree node ids, pulldown list items, etc)
     def to_cid(id)
-      ActiveRecord::Base.compress_id(id)
+      ApplicationRecord.compress_id(id)
     end
 
     def tl_event(tl_xml, row, col)
@@ -87,48 +87,57 @@ module ReportFormatter
         when "BottleneckEvent"
           #         e_title = "#{ui_lookup(:model=>rec[:resource_type])}: #{rec[:resource_name]}"
           e_title = rec[:resource_name]
-          e_image = "/images/icons/new/#{bubble_icon(rec[:resource_type])}.png"
-          e_icon = "/images/icons/timeline/#{rec.event_type.downcase}_#{rec[:severity]}.png"
+          e_image = ActionController::Base.helpers.image_path("100/#{bubble_icon(rec)}.png")
+          e_icon = ActionController::Base.helpers.image_path("timeline/#{rec.event_type.downcase}_#{rec[:severity]}.png")
         #         e_text = e_title # Commented out since name is showing in the columns anyway
         when "Vm"
           e_title = rec[:name]
-          e_icon = "/images/icons/timeline/vendor-#{rec.vendor.downcase}.png"
-          e_image = "/images/icons/new/os-#{rec.os_image_name.downcase}.png"
+          e_icon = ActionController::Base.helpers.image_path("timeline/vendor-#{rec.vendor.downcase}.png")
+          e_image = ActionController::Base.helpers.image_path("100/os-#{rec.os_image_name.downcase}.png")
           e_text = "&lt;a href='/vm/show/#{rec.id}'&gt;#{e_title}&lt;/a&gt;"
         when "Host"
           e_title = rec[:name]
-          e_icon = "/images/icons/timeline/vendor-#{rec.vmm_vendor.downcase}.png"
-          e_image = "/images/icons/new/os-#{rec.os_image_name.downcase}.png"
+          e_icon = ActionController::Base.helpers.image_path("timeline/vendor-#{rec.vmm_vendor_display.downcase}.png")
+          e_image = ActionController::Base.helpers.image_path("100/os-#{rec.os_image_name.downcase}.png")
           e_text = "&lt;a href='/host/show/#{rec.id}'&gt;#{e_title}&lt;/a&gt;"
         when "EventStream"
           ems_cloud = false
           if rec[:ems_id] && ExtManagementSystem.exists?(rec[:ems_id])
             ems = ExtManagementSystem.find(rec[:ems_id])
             ems_cloud =  true if ems.kind_of?(EmsCloud)
+            ems_container = true if ems.kind_of?(::ManageIQ::Providers::ContainerManager)
           end
-          if rec[:vm_name] && !ems_cloud             # Create the title using VM name
-            e_title = rec[:vm_name]
-          elsif rec[:host_name] && !ems_cloud                 #   or Host Name
-            e_title = rec[:host_name]
-          elsif rec[:ems_cluster_name] && !ems_cloud          #   or Cluster Name
-            e_title = rec[:ems_cluster_name]
+          if !ems_cloud
+            e_title = if rec[:vm_name] # Create the title using VM name
+                        rec[:vm_name]
+                      elsif rec[:host_name] # or Host Name
+                        rec[:host_name]
+                      elsif rec[:ems_cluster_name] # or Cluster Name
+                        rec[:ems_cluster_name]
+                      elsif rec[:container_name]
+                        rec[:container_name]
+                      elsif rec[:container_group_name]
+                        rec[:container_group_name]
+                      elsif rec[:container_replicator_name]
+                        rec[:container_replicator_name]
+                      elsif rec[:container_node_name]
+                        rec[:container_node_name]
+                      end
           elsif ems                             #   or EMS name
             e_title = ems.name
           else
             e_title = "MS no longer exists"
           end
           e_title ||= "No VM, Host, or MS"
-          e_icon =  "/images/icons/timeline/" +
-                    timeline_icon("vm_event", rec.event_type.downcase) +
-                    ".png"
+          e_icon = ActionController::Base.helpers.image_path("timeline/#{timeline_icon("vm_event", rec.event_type.downcase)}.png")
           # See if this is EVM's special event
           if rec.event_type == "GeneralUserEvent"
             if rec.message.include?("EVM SmartState Analysis")
-              e_icon =  "/images/icons/timeline/evm_analysis.png"
+              e_icon =  ActionController::Base.helpers.image_path("timeline/evm_analysis.png")
             end
           end
           if rec[:vm_or_template_id] && Vm.exists?(rec[:vm_or_template_id])
-            e_image = "/images/icons/new/os-#{Vm.find(rec[:vm_or_template_id]).os_image_name.downcase}.png"
+            e_image = ActionController::Base.helpers.image_path("100/os-#{Vm.find(rec[:vm_or_template_id]).os_image_name.downcase}.png")
           end
           e_text = e_title
         when "PolicyEvent"
@@ -140,10 +149,8 @@ module ReportFormatter
             e_title = "Policy no longer exists"
           end
           e_title ||= "No Policy"
-          e_icon =  "/images/icons/new/event-" +
-                    rec.event_type.downcase +
-                    ".png"
-          # e_icon = "/images/icons/new/vendor-ec2.png"
+          e_icon = ActionController::Base.helpers.image_path("100/event-#{rec.event_type.downcase}.png")
+          # e_icon = "/images/100/vendor-ec2.png"
           e_text = e_title
           unless rec.target_id.nil?
             e_text += "<br/>&lt;a href='/#{Dictionary.gettext(rec.target_class, :type => :model, :notfound => :titleize).downcase}/show/#{to_cid(rec.target_id)}'&gt;<b> #{Dictionary.gettext(rec.target_class, :type => :model, :notfound => :titleize)}:</b> #{rec.target_name}&lt;/a&gt;"
@@ -226,6 +233,8 @@ module ReportFormatter
           if ems_cloud
             # restful route is used for cloud provider unlike infrastructure provider
             val = "&lt;a href='/ems_cloud/#{provider_id}'&gt;#{row[co]}&lt;/a&gt;"
+          elsif ems_container
+            val = "&lt;a href='/ems_container/show/#{to_cid(provider_id)}'&gt;#{row[co]}&lt;/a&gt;"
           else
             val = "&lt;a href='/ems_infra/show/#{to_cid(provider_id)}'&gt;#{row[co]}&lt;/a&gt;"
           end
@@ -290,16 +299,20 @@ module ReportFormatter
       end
     end
 
-    def bubble_icon(typ)
-      case typ.downcase
+    def bubble_icon(rec)
+      case rec.resource_type.downcase
       when "emscluster"
         return "cluster"
       when "miqenterprise"
         return "enterprise"
       when "extmanagementsystem"
-        return "ems"
+        if rec.resource.kind_of?(ExtManagementSystem) && rec.resource.emstype == "rhevm"
+          return "vendor-redhat"
+        else
+          return "ems"
+        end
       else
-        return typ.downcase
+        return rec.resource_type.downcase
       end
     end
 

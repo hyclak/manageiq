@@ -1,5 +1,4 @@
 class TreeNodeBuilder
-  include UiConstants
   include MiqAeClassHelper
 
   # method to build non-explorer tree nodes
@@ -8,8 +7,8 @@ class TreeNodeBuilder
     node = {
       :key   => key,
       :title => text,
-      :icon  => image,
     }
+    node[:icon]         = ActionController::Base.helpers.image_path("100/#{image}") if image
     node[:addClass]     = options[:style_class]      if options[:style_class]
     node[:cfmeNoClick]  = true                       if options[:cfme_no_click]
     node[:expand]       = options[:expand]           if options[:expand]
@@ -142,17 +141,21 @@ class TreeNodeBuilder
   def tooltip(tip)
     unless tip.blank?
       tip = tip.kind_of?(Proc) ? tip.call : _(tip)
-      tip = ERB::Util.html_escape(tip) unless tip.html_safe?
+      tip = ERB::Util.html_escape(URI.unescape(tip)) unless tip.html_safe?
       @node[:tooltip] = tip
     end
   end
 
+  def node_icon(icon)
+    ActionController::Base.helpers.image_path("100/#{icon}")
+  end
+
   def generic_node(text, image, tip = nil)
-    text = ERB::Util.html_escape(text) unless text.html_safe?
+    text = ERB::Util.html_escape(text ? URI.unescape(text) : text) unless text.html_safe?
     @node = {
       :key   => build_object_id,
       :title => text,
-      :icon  => image
+      :icon  => node_icon(image)
     }
     # Start with all nodes open unless expand is explicitly set to false
     @node[:expand] = true if options[:open_all] && options[:expand] != false
@@ -171,7 +174,7 @@ class TreeNodeBuilder
     # FIXME: expansion
     @node = {
       :key   => build_hash_id,
-      :icon  => "#{object[:image] || text}.png",
+      :icon  => node_icon("#{object[:image] || text}.png"),
       :title => ERB::Util.html_escape(text),
     }
     # Start with all nodes open unless expand is explicitly set to false
@@ -207,7 +210,7 @@ class TreeNodeBuilder
     @node = {
       :key   => build_object_id,
       :title => text,
-      :icon  => image
+      :icon  => node_icon(image)
     }
     @node[:addClass] = "product-strikethru-node" unless enabled
     @node[:expand] = true if options[:open_all]  # Start with all nodes open
@@ -220,7 +223,7 @@ class TreeNodeBuilder
     @node = {
       :key   => build_object_id,
       :title => title,
-      :icon  => title == _("Unassigned Profiles Group") ? "folder.png" : image
+      :icon  => node_icon(title == _("Unassigned Profiles Group") ? "folder.png" : image)
     }
     @node[:expand] = true if options[:open_all]  # Start with all nodes open
     tooltip(tip)
@@ -279,8 +282,8 @@ class TreeNodeBuilder
         policy_id = parent_id.split('_')[2].split('-').last
         event_id  = parent_id.split('_').last.split('-').last
       end
-      p  = MiqPolicy.find_by_id(ActiveRecord::Base.uncompress_id(policy_id))
-      ev = MiqEventDefinition.find_by_id(ActiveRecord::Base.uncompress_id(event_id))
+      p  = MiqPolicy.find_by_id(ApplicationRecord.uncompress_id(policy_id))
+      ev = MiqEventDefinition.find_by_id(ApplicationRecord.uncompress_id(event_id))
       image = p.action_result_for_event(object, ev) ? "check" : "x"
     else
       image = object.action_type == "default" ? "miq_action" : "miq_action_#{object.action_type}"
@@ -339,7 +342,7 @@ class TreeNodeBuilder
       base_class = object.class.base_model.name           # i.e. Vm or MiqTemplate
       base_class = "Datacenter" if base_class == "EmsFolder" && object.is_datacenter
       prefix = TreeBuilder.get_prefix_for_model(base_class)
-      cid = ActiveRecord::Base.compress_id(object.id)
+      cid = ApplicationRecord.compress_id(object.id)
       "#{format_parent_id}#{prefix}-#{cid}"
     end
   end

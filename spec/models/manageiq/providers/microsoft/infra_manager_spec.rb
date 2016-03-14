@@ -1,16 +1,14 @@
-require "spec_helper"
-
 describe ManageIQ::Providers::Microsoft::InfraManager do
   it ".ems_type" do
-    described_class.ems_type.should == 'scvmm'
+    expect(described_class.ems_type).to eq('scvmm')
   end
 
   it ".description" do
-    described_class.description.should == 'Microsoft System Center VMM'
+    expect(described_class.description).to eq('Microsoft System Center VMM')
   end
 
   it ".auth_url handles ipv6" do
-    described_class.auth_url("::1").should == "http://[::1]:5985/wsman"
+    expect(described_class.auth_url("::1")).to eq("http://[::1]:5985/wsman")
   end
 
   context "#connect with ssl" do
@@ -20,22 +18,22 @@ describe ManageIQ::Providers::Microsoft::InfraManager do
     end
 
     it "defaults" do
-      described_class.should_receive(:raw_connect).with do |url, protocol, creds|
-        url.should match(/host/)
-        protocol.should be == "ssl"
-        creds[:user].should be == "user"
-        creds[:pass].should be == "pass"
+      expect(described_class).to receive(:raw_connect) do |url, protocol, creds|
+        expect(url).to match(/host/)
+        expect(protocol).to eq("ssl")
+        expect(creds[:user]).to eq("user")
+        expect(creds[:pass]).to eq("pass")
       end
 
       @e.connect
     end
 
     it "accepts overrides" do
-      described_class.should_receive(:raw_connect).with do |url, protocol, creds|
-        url.should match(/host2/)
-        protocol.should be == "ssl"
-        creds[:user].should be == "user2"
-        creds[:pass].should be == "pass2"
+      expect(described_class).to receive(:raw_connect) do |url, protocol, creds|
+        expect(url).to match(/host2/)
+        expect(protocol).to eq("ssl")
+        expect(creds[:user]).to eq("user2")
+        expect(creds[:pass]).to eq("pass2")
       end
 
       @e.connect(:user => "user2", :pass => "pass2", :hostname => "host2")
@@ -49,24 +47,24 @@ describe ManageIQ::Providers::Microsoft::InfraManager do
     end
 
     it "defaults" do
-      described_class.should_receive(:raw_connect).with do |url, protocol, creds|
-        url.should match(/host/)
-        protocol.should be == "kerberos"
-        creds[:user].should be == "user"
-        creds[:pass].should be == "pass"
-        creds[:realm].should be == "pretendrealm"
+      expect(described_class).to receive(:raw_connect) do |url, protocol, creds|
+        expect(url).to match(/host/)
+        expect(protocol).to eq("kerberos")
+        expect(creds[:user]).to eq("user")
+        expect(creds[:pass]).to eq("pass")
+        expect(creds[:realm]).to eq("pretendrealm")
       end
 
       @e.connect
     end
 
     it "accepts overrides" do
-      described_class.should_receive(:raw_connect).with do |url, protocol, creds|
-        url.should match(/host2/)
-        protocol.should be == "kerberos"
-        creds[:user].should be == "user2"
-        creds[:pass].should be == "pass2"
-        creds[:realm].should be == "pretendrealm"
+      expect(described_class).to receive(:raw_connect) do |url, protocol, creds|
+        expect(url).to match(/host2/)
+        expect(protocol).to eq("kerberos")
+        expect(creds[:user]).to eq("user2")
+        expect(creds[:pass]).to eq("pass2")
+        expect(creds[:realm]).to eq("pretendrealm")
       end
 
       @e.connect(:user => "user2", :pass => "pass2", :hostname => "host2")

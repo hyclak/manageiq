@@ -1,4 +1,4 @@
-class ServiceTemplate < ActiveRecord::Base
+class ServiceTemplate < ApplicationRecord
   DEFAULT_PROCESS_DELAY_BETWEEN_GROUPS = 120
   include ServiceMixin
   include OwnershipMixin
@@ -21,7 +21,7 @@ class ServiceTemplate < ActiveRecord::Base
   has_many   :custom_button_sets, :as => :owner, :dependent => :destroy
   belongs_to :service_template_catalog
 
-  has_many   :dialogs, -> { uniq }, :through => :resource_actions
+  has_many   :dialogs, -> { distinct }, :through => :resource_actions
 
   virtual_has_many :custom_buttons
   virtual_column   :type_display,                 :type => :string

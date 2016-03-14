@@ -8,19 +8,7 @@
 #   - Expanding Results     - expand=resources,:subcollection
 #   - Resource actions
 #
-require 'spec_helper'
-
 describe ApiController do
-  include Rack::Test::Methods
-
-  before(:each) do
-    init_api_spec_env
-  end
-
-  def app
-    Vmdb::Application
-  end
-
   def create_vms_by_name(names)
     names.each.collect { |name| FactoryGirl.create(:vm_vmware, :name => name) }
   end
@@ -93,6 +81,25 @@ describe ApiController do
 
       expect_query_result(:vms, 3, 3)
       expect_result_resources_to_match_hash([{"name" => "cc"}, {"name" => "bb"}, {"name" => "aa"}])
+    end
+
+    it "supports case insensitive ordering" do
+      create_vms_by_name %w(B c a)
+
+      run_get vms_url, :sort_by => "name", :sort_order => "asc", :sort_options => "ignore_case", :expand => "resources"
+
+      expect_query_result(:vms, 3, 3)
+      expect_result_resources_to_match_hash([{"name" => "a"}, {"name" => "B"}, {"name" => "c"}])
+    end
+
+    it "supports sorting with physical attributes" do
+      FactoryGirl.create(:vm_vmware, :vendor => "vmware", :name => "vmware_vm")
+      FactoryGirl.create(:vm_redhat, :vendor => "redhat", :name => "redhat_vm")
+
+      run_get vms_url, :sort_by => "vendor", :sort_order => "asc", :expand => "resources"
+
+      expect_query_result(:vms, 2, 2)
+      expect_result_resources_to_match_hash([{"name" => "redhat_vm"}, {"name" => "vmware_vm"}])
     end
   end
 
@@ -273,6 +280,18 @@ describe ApiController do
   describe "Querying vms" do
     before { api_basic_authorize }
 
+    it "and sorted by name succeeeds with unreferenced class" do
+      run_get vms_url, :sort_by => "name", :expand => "resources"
+
+      expect_query_result(:vms, 0, 0)
+    end
+
+    it "by invalid attribute" do
+      run_get vms_url, :sort_by => "bad_attribute", :expand => "resources"
+
+      expect_bad_request("bad_attribute is not a valid attribute")
+    end
+
     it "is supported without expanding resources" do
       create_vms_by_name(%w(aa bb))
 
@@ -309,7 +328,7 @@ describe ApiController do
       run_get vms_url(vm1.id)
 
       expect_request_success
-      expect(@result).to_not have_key("actions")
+      expect(response_hash).to_not have_key("actions")
     end
 
     it "returns actions if authorized" do
@@ -328,7 +347,7 @@ describe ApiController do
 
       expect_request_success
       expect_result_to_have_keys(%w(id href name vendor actions))
-      actions = @result["actions"]
+      actions = response_hash["actions"]
       expect(actions.size).to eq(1)
       expect(actions.first["name"]).to eq("suspend")
     end
@@ -341,7 +360,7 @@ describe ApiController do
 
       expect_request_success
       expect_result_to_have_keys(%w(id href name vendor actions))
-      expect(@result["actions"].collect { |a| a["name"] }).to match_array(%w(start stop))
+      expect(response_hash["actions"].collect { |a| a["name"] }).to match_array(%w(start stop))
     end
 
     it "returns actions if asked for with physical attributes" do

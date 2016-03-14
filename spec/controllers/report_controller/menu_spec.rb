@@ -1,6 +1,3 @@
-require "spec_helper"
-include UiConstants
-
 describe ReportController do
   context "#edit_folder" do
     before(:each) do

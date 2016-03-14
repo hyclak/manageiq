@@ -1,10 +1,11 @@
-class MiqRequest < ActiveRecord::Base
+class MiqRequest < ApplicationRecord
   ACTIVE_STATES = %w(active queued)
 
   belongs_to :source,            :polymorphic => true
   belongs_to :destination,       :polymorphic => true
   belongs_to :requester,         :class_name  => "User"
   belongs_to :tenant
+  belongs_to :service_order
   has_many   :miq_approvals,     :dependent   => :destroy
   has_many   :miq_request_tasks, :dependent   => :destroy
 

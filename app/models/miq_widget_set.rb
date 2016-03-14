@@ -1,7 +1,5 @@
-class MiqWidgetSet < ActiveRecord::Base
+class MiqWidgetSet < ApplicationRecord
   acts_as_miq_set
-
-  default_scope { where conditions_for_my_region_default_scope }
 
   before_destroy :destroy_user_versions
 

@@ -8,6 +8,10 @@ Vmdb::Application.configure do
   config.cache_classes = true
   config.eager_load = false
 
+  # Print deprecation notices to the stderr
+  #ActiveSupport::Deprecation.behavior = :stderr
+  ActiveSupport::Deprecation.behavior = :silence
+
   # Configure static asset server for tests with Cache-Control for performance
   config.serve_static_files = true
   config.static_cache_control = "public, max-age=3600"
@@ -35,12 +39,10 @@ Vmdb::Application.configure do
   # http://jonathanleighton.com/articles/2011/mass-assignment-security-shouldnt-happen-in-the-model/
   # config.active_record.mass_assignment_sanitizer = :strict
 
-  # Print deprecation notices to the stderr
-  config.active_support.deprecation = lambda do |message, callstack|
-    unless message =~ /named_routes\.helpers/ && callstack.grep(/rspec-rails.*controller_example_group/).any?
-      ActiveSupport::Deprecation::DEFAULT_BEHAVIORS[:stderr].call(message, callstack)
-    end
-  end
+  # Any exception that gets past our ApplicationController's rescue_from
+  # should just be raised intact
+  config.middleware.delete ::ActionDispatch::ShowExceptions
+  config.middleware.delete ::ActionDispatch::DebugExceptions
 
   # Raise exceptions in transactional callbacks
   config.active_record.raise_in_transactional_callbacks = true
@@ -54,7 +56,6 @@ Vmdb::Application.configure do
 end
 
 require "minitest"
-require "shoulda-matchers"
 require "factory_girl"
 require "timecop"
 require "vcr"

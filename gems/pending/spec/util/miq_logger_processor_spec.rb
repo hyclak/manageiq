@@ -1,4 +1,3 @@
-require "spec_helper"
 require 'util/miq_logger_processor'
 
 describe MiqLoggerProcessor do
@@ -62,6 +61,40 @@ describe MiqLoggerProcessor do
   ]
 
   EXPECTED_RAW_LINES = EXPECTED_LINE_PARTS.collect(&:first)
+  EXPECTED_CSV_ARRAY = [
+    [
+      "time",
+      "capture_state",
+      "db_find_prev_perfs",
+      "db_find_storage_files",
+      "init_attrs",
+      "process_perfs",
+      "process_perfs_tag",
+      "unaccounted",
+      "total_time"
+    ],
+    [
+      "2016-02-02T03:41:04.538793",
+      "0.05266451835632324",
+      "32.21144223213196",
+      "0.49041008949279785",
+      "1.371647834777832",
+      "11.871733665466309",
+      "0.05523490905761719",
+      "4.358347177505493",
+      "50.41148042678833"],
+    [
+      "2016-02-02T03:41:12.710256",
+      "0.05573296546936035",
+      "32.547961473464966",
+      "0.6642637252807617",
+      "2.038071393966675",
+      "19.853408575057983",
+      "0.05427432060241699",
+      "4.256502151489258",
+      "59.47021460533142"
+    ]
+  ]
 
   before(:each) do
     @lp = MiqLoggerProcessor.new(File.join(MLP_DATA_DIR, 'miq_logger_processor.log'))
@@ -71,62 +104,62 @@ describe MiqLoggerProcessor do
     before(:each) { @lines = @lp.to_a }
 
     it "will read the correct number of lines" do
-      @lines.length.should == EXPECTED_RAW_LINES.length
+      expect(@lines.length).to eq(EXPECTED_RAW_LINES.length)
     end
 
     it "will read the correct number of lines when called twice" do
       @lines = @lp.to_a
-      @lines.length.should == EXPECTED_RAW_LINES.length
+      expect(@lines.length).to eq(EXPECTED_RAW_LINES.length)
     end
 
     it "will read regular lines correctly" do
-      @lines[0].should == EXPECTED_RAW_LINES[0]
+      expect(@lines[0]).to eq(EXPECTED_RAW_LINES[0])
     end
 
     it "will read lines with shortened pid/tid correctly" do
-      @lines[1].should == EXPECTED_RAW_LINES[1]
+      expect(@lines[1]).to eq(EXPECTED_RAW_LINES[1])
     end
 
     it "will read multi-line lines correctly" do
-      @lines[2].should == EXPECTED_RAW_LINES[2]
+      expect(@lines[2]).to eq(EXPECTED_RAW_LINES[2])
     end
 
     it "will read Q-task_id lines correctly" do
-      @lines[3].should == EXPECTED_RAW_LINES[3]
+      expect(@lines[3]).to eq(EXPECTED_RAW_LINES[3])
     end
 
     it "will read Q-task_id lines that do not have GUIDs correctly" do
-      @lines[4].should == EXPECTED_RAW_LINES[4]
+      expect(@lines[4]).to eq(EXPECTED_RAW_LINES[4])
     end
 
     it "will read lines with a numeric starting message correctly" do
-      @lines[5].should == EXPECTED_RAW_LINES[5]
+      expect(@lines[5]).to eq(EXPECTED_RAW_LINES[5])
     end
   end
 
   shared_examples_for "all line processors" do
     it "will read regular lines correctly" do
-      @lines[0].should == EXPECTED_LINE_PARTS[0]
+      expect(@lines[0]).to eq(EXPECTED_LINE_PARTS[0])
     end
 
     it "will read lines with shortened pid/tid correctly" do
-      @lines[1].should == EXPECTED_LINE_PARTS[1]
+      expect(@lines[1]).to eq(EXPECTED_LINE_PARTS[1])
     end
 
     it "will read multi-line lines correctly" do
-      @lines[2].should == EXPECTED_LINE_PARTS[2]
+      expect(@lines[2]).to eq(EXPECTED_LINE_PARTS[2])
     end
 
     it "will read Q-task_id lines correctly" do
-      @lines[3].should == EXPECTED_LINE_PARTS[3]
+      expect(@lines[3]).to eq(EXPECTED_LINE_PARTS[3])
     end
 
     it "will read Q-task_id lines that do not have GUIDs correctly" do
-      @lines[4].should == EXPECTED_LINE_PARTS[4]
+      expect(@lines[4]).to eq(EXPECTED_LINE_PARTS[4])
     end
 
     it "will read lines with a numeric starting message correctly" do
-      @lines[5].should == EXPECTED_LINE_PARTS[5]
+      expect(@lines[5]).to eq(EXPECTED_LINE_PARTS[5])
     end
   end
 
@@ -146,5 +179,10 @@ describe MiqLoggerProcessor do
     end
 
     it_should_behave_like "all line processors"
+  end
+
+  it "calling read_csv" do
+    filename = File.join(MLP_DATA_DIR, 'miq_logger_processor.csv')
+    expect(MiqLoggerProcessor.read_csv(filename)).to eql(EXPECTED_CSV_ARRAY)
   end
 end

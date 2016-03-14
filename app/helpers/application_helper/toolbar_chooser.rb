@@ -1,11 +1,58 @@
 class ApplicationHelper::ToolbarChooser
-  def call
-    center_toolbar_filename
+  # Return a blank tb if a placeholder is needed for AJAX explorer screens, return nil if no center toolbar to be shown
+  def center_toolbar_filename
+    if @explorer
+      center_toolbar_filename_explorer
+    else
+      center_toolbar_filename_classic
+    end
+  end
+
+  def history_toolbar_filename
+    if x_active_tree == :dialogs_tree || %w(chargeback miq_ae_tools miq_capacity_planning miq_capacity_utilization miq_policy_rsop ops).include?(@layout)
+      'blank_view_tb'
+    else
+      'x_history_tb'
+    end
+  end
+
+  def x_view_toolbar_filename
+    if x_gtl_view_tb_render?
+      'x_gtl_view_tb'
+    elsif %w(miq_capacity_planning miq_capacity_utilization).include?(@layout)
+      'miq_capacity_view_tb'
+    elsif @record && @explorer && (%w(services catalogs).include?(@layout) || %w(performance timeline).include?(@display))
+      'blank_view_tb'
+    elsif %w(report).include?(@layout)
+      @report ? "report_view_tb" : "blank_view_tb"
+    elsif %w(provider_foreman).include?(@layout)
+      @showtype == 'main' ? "x_summary_view_tb" : "x_gtl_view_tb"
+    else
+      'blank_view_tb'
+    end
+  end
+
+  def view_toolbar_filename
+    if render_gtl_view_tb?
+      'gtl_view_tb'
+    elsif @lastaction == "compare_miq" || @lastaction == "compare_compress"
+      'compare_view_tb'
+    elsif @lastaction == "drift"
+      'drift_view_tb'
+    elsif %w(ems_container).include?(@layout)
+      'dashboard_summary_toggle_view_tb'
+    elsif !%w(all_tasks all_ui_tasks timeline diagnostics my_tasks my_ui_tasks miq_server usage).include?(@layout) &&
+          (!@layout.starts_with?("miq_request")) && !@treesize_buttons &&
+          @display == "main" && @showtype == "main" && !@in_a_form
+      @view_context.send(:restful?) ? "summary_view_restful_tb" : "summary_view_tb"
+    else
+      'blank_view_tb'
+    end
   end
 
   private
 
-  delegate :session, :from_cid, :x_node, :x_active_tree, :super_admin_user?,
+  delegate :session, :from_cid, :x_node, :x_active_tree, :super_admin_user?, :render_gtl_view_tb?, :x_gtl_view_tb_render?,
            :to => :@view_context
 
   def initialize(view_context, instance_data)
@@ -17,15 +64,6 @@ class ApplicationHelper::ToolbarChooser
   end
 
   ###
-
-  # Return a blank tb if a placeholder is needed for AJAX explorer screens, return nil if no center toolbar to be shown
-  def center_toolbar_filename
-    if @explorer
-      return center_toolbar_filename_explorer
-    else
-      return center_toolbar_filename_classic
-    end
-  end
 
   # Return explorer based toolbar file name
   def center_toolbar_filename_explorer
@@ -57,8 +95,8 @@ class ApplicationHelper::ToolbarChooser
       elsif @layout == "miq_policy_rsop"
         return session[:rsop_tree] ? "miq_policy_rsop_center_tb" : "blank_view_tb"
       elsif @layout == "provider_foreman"
-        if x_active_tree == :foreman_providers_tree || :cs_filter_tree
-          return center_toolbar_filename_foreman_providers
+        if x_active_tree == :configuration_manager_providers_tree || :cs_filter_tree
+          return center_toolbar_filename_configuration_manager_providers
         end
       else
         if x_active_tree == :ae_tree
@@ -391,6 +429,8 @@ class ApplicationHelper::ToolbarChooser
         return "storages_center_tb"
       elsif (@layout == "vm" || @layout == "host") && @display == "performance"
         return "#{@explorer ? "x_" : ""}vm_performance_tb"
+      elsif @display == "dashboard"
+        return "#{@layout}_center_tb"
       end
     elsif @lastaction == "compare_miq" || @lastaction == "compare_compress"
       return "compare_center_tb"
@@ -401,10 +441,11 @@ class ApplicationHelper::ToolbarChooser
     else
       # show_list and show screens
       unless @in_a_form
-        if %w(availability_zone cloud_tenant container_group container_node container_service ems_cloud ems_cluster
-              ems_container container_project container_route container_replicator container_image
-              container_image_registry ems_infra flavor host
-              ontap_file_share ontap_logical_disk container_topology
+        if %w(auth_key_pair_cloud availability_zone cloud_tenant cloud_volume cloud_volume_snapshot container_group
+              container_node container_service ems_cloud ems_cluster
+              ems_container ems_middleware container_project container_route container_replicator container_image
+              container_image_registry ems_infra flavor host container_build
+              ontap_file_share ontap_logical_disk container_topology middleware_topology
               ontap_storage_system orchestration_stack repository resource_pool storage storage_manager
               timeline usage security_group).include?(@layout)
           if ["show_list"].include?(@lastaction)
@@ -432,18 +473,19 @@ class ApplicationHelper::ToolbarChooser
     "blank_view_tb"
   end
 
-  def center_toolbar_filename_foreman_providers
+  def center_toolbar_filename_configuration_manager_providers
     nodes = x_node.split('-')
-    if x_active_tree == :foreman_providers_tree
-      foreman_providers_tree_center_tb(nodes)
+    if x_active_tree == :configuration_manager_providers_tree
+      configuration_manager_providers_tree_center_tb(nodes)
     elsif x_active_tree == :cs_filter_tree
       cs_filter_tree_center_tb(nodes)
     end
   end
 
-  def foreman_providers_tree_center_tb(nodes)
+  def configuration_manager_providers_tree_center_tb(nodes)
     case nodes.first
-    when "root" then  "provider_foreman_center_tb"
+    when "root"   then  "provider_foreman_center_tb"
+    when "xx"     then  "provider_foreman_center_tb"
     when "e"    then  "configuration_profile_foreman_center_tb"
     when "cp"   then  configuration_profile_center_tb
     else unassigned_configuration_profile_node(nodes)
@@ -452,7 +494,7 @@ class ApplicationHelper::ToolbarChooser
 
   def cs_filter_tree_center_tb(nodes)
     case nodes.first
-    when "root", "ms" then  "configured_system_foreman_center_tb"
+    when "root", "ms", "xx", "csa", "csf" then "configured_system_foreman_center_tb"
     end
   end
 

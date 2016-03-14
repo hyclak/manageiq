@@ -1,4 +1,4 @@
-class MiqShortcut < ActiveRecord::Base
+class MiqShortcut < ApplicationRecord
   has_many :miq_widget_shortcuts, :dependent => :destroy
   has_many :miq_widgets, :through => :miq_widget_shortcuts
 
@@ -28,7 +28,7 @@ class MiqShortcut < ActiveRecord::Base
   end
 
   def self.fixture_file_name
-    @fixture_file_name ||= File.join(Rails.root, "db/fixtures", "miq_shortcuts.yml")
+    @fixture_file_name ||= FIXTURE_DIR.join("miq_shortcuts.yml")
   end
 
   def self.seed_data

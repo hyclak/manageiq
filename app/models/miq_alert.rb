@@ -1,6 +1,4 @@
-class MiqAlert < ActiveRecord::Base
-  default_scope { where conditions_for_my_region_default_scope }
-
+class MiqAlert < ApplicationRecord
   include UuidMixin
 
   serialize :expression
@@ -14,7 +12,7 @@ class MiqAlert < ActiveRecord::Base
 
   attr_accessor :reserved
 
-  @@base_tables = %w(
+  BASE_TABLES = %w(
     Vm
     Host
     Storage
@@ -22,13 +20,14 @@ class MiqAlert < ActiveRecord::Base
     ExtManagementSystem
     MiqServer
   )
-  cattr_accessor :base_tables
+
+  def self.base_tables
+    BASE_TABLES
+  end
 
   include ReportableMixin
 
   acts_as_miq_set_member
-
-  FIXTURE_DIR = File.join(Rails.root, "db/fixtures")
 
   ASSIGNMENT_PARENT_ASSOCIATIONS = [:host, :ems_cluster, :ext_management_system, :my_enterprise]
 
@@ -177,12 +176,14 @@ class MiqAlert < ActiveRecord::Base
   def postpone_evaluation?(target)
     # TODO: Are there some alerts that we always want to evaluate?
 
-    # If a miq alert status exists for our resource and alert, and it has not been delay_next_evaluation seconds since it was evaluated, return false so we can skip evaluation
+    # If a miq alert status exists for our resource and alert, and it has not been delay_next_evaluation seconds since
+    # it was evaluated, return true so we can skip evaluation
     delay_next_evaluation = (options || {}).fetch_path(:notifications, :delay_next_evaluation)
     start_skipping_at = Time.now.utc - (delay_next_evaluation || 10.minutes).to_i
+    statuses_not_expired = miq_alert_statuses.where(:resource => target, :result => true)
+                           .where(miq_alert_statuses.arel_table[:evaluated_on].gt(start_skipping_at))
 
-    statuses_not_expired = miq_alert_statuses.where("result = ? AND resource_type = ? AND resource_id = ? AND evaluated_on > ?", true, target.class.base_class.name, target.id, start_skipping_at).count
-    if statuses_not_expired > 0
+    if statuses_not_expired.count > 0
       _log.info("Skipping re-evaluation of Alert [#{description}] for target: [#{target.name}] with delay_next_evaluation [#{delay_next_evaluation}]")
       return true
     else
@@ -213,11 +214,9 @@ class MiqAlert < ActiveRecord::Base
   end
 
   def add_status_post_evaluate(target, result)
-    existing = miq_alert_statuses.find_by(:resource_type => target.class.base_class.name, :resource_id => target.id)
-    status = existing.nil? ? MiqAlertStatus.new : existing
+    status = miq_alert_statuses.find_or_initialize_by(:resource => target)
     status.result = result
     status.evaluated_on = Time.now.utc
-    status.resource = target
     status.save
     miq_alert_statuses << status
   end
@@ -249,12 +248,25 @@ class MiqAlert < ActiveRecord::Base
   end
 
   def invoke_automate(target, inputs)
-    inputs = {:miq_alert_description => description, :miq_alert_id => id, :alert_guid => guid}
     event  = options.fetch_path(:notifications, :automate, :event_name)
+    event_obj = CustomEvent.create(
+      :event_type => event,
+      :target     => target,
+      :source     => 'Alert'
+    )
+
+    inputs = {
+      :miq_alert_description      => description,
+      :miq_alert_id               => id,
+      :alert_guid                 => guid,
+      'EventStream::event_stream' => event_obj.id,
+      :event_stream_id            => event_obj.id
+    }
+
     MiqQueue.put(
-      :class_name  => "MiqEvent",
+      :class_name  => "MiqAeEvent",
       :method_name => "raise_evm_event",
-      :args        => [[target.class.name, target.id], event, inputs],
+      :args        => [event, [target.class.name, target.id], inputs],
       :role        => 'automate',
       :priority    => MiqQueue::HIGH_PRIORITY,
       :zone        => target.respond_to?(:my_zone) ? target.my_zone : MiqServer.my_zone
@@ -353,7 +365,7 @@ class MiqAlert < ActiveRecord::Base
 
   def self.automate_expressions
     @automate_expressions ||= [
-      {:name => "nothing", :description => " Nothing", :db => @@base_tables, :options => []},
+      {:name => "nothing", :description => " Nothing", :db => BASE_TABLES, :options => []},
       {:name => "ems_alarm", :description => "VMware Alarm", :db => ["Vm", "Host", "EmsCluster"], :responds_to_events => 'AlarmStatusChangedEvent_#{expression[:options][:ems_id]}_#{expression[:options][:ems_alarm_mor]}',
         :options => [
           {:name => :ems_id, :description => "Management System"},
@@ -441,7 +453,7 @@ class MiqAlert < ActiveRecord::Base
     alarms = []
     begin
       Timeout.timeout(to) { alarms = ems.get_alarms if ems.respond_to?(:get_alarms) }
-    rescue TimeoutError
+    rescue Timeout::Error
       msg = "Request to retrieve alarms timed out after #{to} seconds"
       $log.warn(msg)
       raise msg
@@ -653,7 +665,7 @@ class MiqAlert < ActiveRecord::Base
       return false
     end
 
-    status = miq_alert_statuses.find_by(:resource_type => target.class.base_class.name, :resource_id => target.id)
+    status = target.miq_alert_statuses.first
     if status
       since_last_eval = (Time.now.utc - status.evaluated_on)
       eval_options[:starting_on] = if (since_last_eval >= eval_options[:duration])

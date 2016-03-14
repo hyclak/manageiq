@@ -1,4 +1,4 @@
-class ContainerGroup < ActiveRecord::Base
+class ContainerGroup < ApplicationRecord
   include CustomAttributeMixin
   include ReportableMixin
   include NewWithTypeStiMixin
@@ -17,6 +17,7 @@ class ContainerGroup < ActiveRecord::Base
   has_and_belongs_to_many :container_services, :join_table => :container_groups_container_services
   belongs_to :container_replicator
   belongs_to :container_project
+  belongs_to :container_build_pod
   has_many :container_volumes, :foreign_key => :parent_id, :dependent => :destroy
 
   # Metrics destroy is handled by purger
@@ -25,6 +26,7 @@ class ContainerGroup < ActiveRecord::Base
   has_many :vim_performance_states, :as => :resource
 
   virtual_column :ready_condition_status, :type => :string, :uses => :container_conditions
+  virtual_column :running_containers_summary, :type => :string
 
   # Needed for metrics
   delegate :my_zone, :to => :ext_management_system
@@ -35,6 +37,15 @@ class ContainerGroup < ActiveRecord::Base
 
   def ready_condition_status
     ready_condition.try(:status) || 'None'
+  end
+
+  def container_states_summary
+    containers.group(:state).count.symbolize_keys
+  end
+
+  def running_containers_summary
+    summary = container_states_summary
+    "#{summary[:running] || 0}/#{summary.values.sum}"
   end
 
   # validates :restart_policy, :inclusion => { :in => %w(always onFailure never) }
@@ -59,7 +70,9 @@ class ContainerGroup < ActiveRecord::Base
 
   PERF_ROLLUP_CHILDREN = nil
 
-  def perf_rollup_parents(_interval_name = nil)
-    # No rollups: group performance are collected separately
+  def perf_rollup_parents(interval_name = nil)
+    unless interval_name == 'realtime'
+      ([container_project, container_replicator] + container_services).compact
+    end
   end
 end

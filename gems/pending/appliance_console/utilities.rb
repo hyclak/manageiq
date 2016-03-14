@@ -1,14 +1,14 @@
 # TODO: add appropriate requires instead of depending on appliance_console.rb.
 # TODO: Further refactor these unrelated methods.
-require "appliance_console/internal_database_configuration"
 require "util/postgres_admin"
 require "awesome_spawn"
+require "appliance_console/logging"
 
 module ApplianceConsole
   module Utilities
     def self.rake(task, params)
       result = AwesomeSpawn.run("rake #{task}", :chdir => RAILS_ROOT, :params => params)
-      File.open(LOGFILE, "a") { |f| f.puts result.error } if result.failure?
+      ApplianceConsole::Logging.logger.error(result.error) if result.failure?
       result.success?
     end
 
@@ -29,28 +29,27 @@ module ApplianceConsole
       end
     end
 
-    def self.db_host_type_database
-      result = AwesomeSpawn.run("bin/rails runner",
-                                :params => ["puts MiqDbConfig.current.options.values_at(:host, :adapter, :database)"],
-                                :chdir  => RAILS_ROOT
-                               )
+    def self.db_host_database_region
+      result = AwesomeSpawn.run(
+        "bin/rails runner",
+        :params => ["puts Rails.configuration.database_configuration[Rails.env].values_at('host', 'database'), ApplicationRecord.my_region_number"],
+        :chdir  => RAILS_ROOT
+      )
 
-      host, type, database = result.output.split("\n").last(3)
-      host = "localhost" if host.blank?
+      host, database, region = result.output.split("\n").last(3)
 
-      if [type, database].any?(&:blank?)
+      if database.blank?
         logger = ApplianceConsole::Logging.logger
         logger.error "db_host_type_database: Failed to detect some/all DB configuration"
         logger.error "Output: #{result.output.inspect}" unless result.output.blank?
         logger.error "Error:  #{result.error.inspect}"  unless result.error.blank?
       end
 
-      return host, type, database
+      return host.presence, database, region
     end
 
     def self.pg_status
-      system("service #{PostgresAdmin.service_name} status > /dev/null 2>&1")
-      $?.exitstatus == 0 ? "running" : "not running"
+      LinuxAdmin::Service.new(PostgresAdmin.service_name).running? ? "running" : "not running"
     end
 
     def self.test_network

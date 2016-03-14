@@ -1,5 +1,3 @@
-require 'spec_helper'
-
 describe MiqEventDefinition do
   describe '.seed_default_events' do
     context 'there are 2 event definition sets' do
@@ -17,7 +15,7 @@ describe MiqEventDefinition do
 
         context 'seeding default event definitions from that csv' do
           before do
-            File.stub(:open).and_return(StringIO.new(csv))
+            allow(File).to receive(:open).and_return(StringIO.new(csv))
             MiqEventDefinition.seed_default_events
           end
 
@@ -38,7 +36,7 @@ describe MiqEventDefinition do
 
             context 'seeding again' do
               before do
-                File.stub(:open).and_return(StringIO.new(csv))
+                allow(File).to receive(:open).and_return(StringIO.new(csv))
                 MiqEventDefinition.seed_default_events
               end
 

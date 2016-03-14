@@ -2,7 +2,7 @@ require 'ostruct'
 require 'cgi'
 require 'uri'
 
-class VmOrTemplate < ActiveRecord::Base
+class VmOrTemplate < ApplicationRecord
   include NewWithTypeStiMixin
   include ScanningMixin
 
@@ -23,13 +23,15 @@ class VmOrTemplate < ActiveRecord::Base
   include ComplianceMixin
   include OwnershipMixin
   include CustomAttributeMixin
-  include WebServiceAttributeMixin
 
   include EventMixin
   include ProcessTasksMixin
   include TenancyMixin
 
-  has_many :ems_custom_attributes, -> { where "source = 'VC'" }, :as => :resource, :dependent => :destroy, :class_name => "CustomAttribute"
+  include AvailabilityMixin
+
+  has_many :ems_custom_attributes, -> { where(:source => 'VC') }, :as => :resource, :dependent => :destroy,
+           :class_name => "CustomAttribute"
 
   VENDOR_TYPES = {
     # DB            Displayed
@@ -41,15 +43,16 @@ class VmOrTemplate < ActiveRecord::Base
     "amazon"    => "Amazon",
     "redhat"    => "RedHat",
     "openstack" => "OpenStack",
+    "google"    => "Google",
     "unknown"   => "Unknown"
   }
 
   POWER_OPS = %w(start stop suspend reset shutdown_guest standby_guest reboot_guest)
 
   validates_presence_of     :name, :location
-  validates_inclusion_of    :vendor, :in => VENDOR_TYPES.values
+  validates                 :vendor, :inclusion => {:in => VENDOR_TYPES.keys}
 
-  has_one                   :miq_server, :foreign_key => :vm_id
+  has_one                   :miq_server, :foreign_key => :vm_id, :inverse_of => :vm
 
   has_one                   :operating_system, :dependent => :destroy
   has_one                   :hardware, :dependent => :destroy
@@ -64,7 +67,7 @@ class VmOrTemplate < ActiveRecord::Base
 
   has_one                   :miq_provision, :dependent => :nullify, :as => :destination
   has_many                  :miq_provisions_from_template, :class_name => "MiqProvision", :as => :source, :dependent => :nullify
-  has_many                  :miq_provision_vms, :through => :miq_provisions_from_template, :source => :vm, :class_name => "Vm"
+  has_many                  :miq_provision_vms, :through => :miq_provisions_from_template, :source => :destination, :source_type => "VmOrTemplate"
   has_many                  :miq_provision_requests, :as => :source, :dependent => :destroy
 
   has_many                  :guest_applications, :dependent => :destroy
@@ -101,7 +104,9 @@ class VmOrTemplate < ActiveRecord::Base
   has_many                  :storage_files_files, -> { where "rsc_type = 'file'" }, :class_name => "StorageFile"
 
   # EMS Events
-  has_many                  :ems_events, -> { where(["vm_or_template_id = ? OR dest_vm_or_template_id = ?", id, id]).order(:timestamp) }, :class_name => "EmsEvent"
+  has_many                  :ems_events, ->(vmt) { where(["vm_or_template_id = ? OR dest_vm_or_template_id = ?", vmt.id, vmt.id]).order(:timestamp) },
+                            :class_name => "EmsEvent"
+
   has_many                  :ems_events_src,  :class_name => "EmsEvent"
   has_many                  :ems_events_dest, :class_name => "EmsEvent", :foreign_key => :dest_vm_or_template_id
 
@@ -121,8 +126,8 @@ class VmOrTemplate < ActiveRecord::Base
   include ReportableMixin
 
   virtual_column :active,                               :type => :boolean
-  virtual_column :archived,                             :type => :boolean,    :uses => [:host, :storage]
-  virtual_column :orphaned,                             :type => :boolean,    :uses => [:host, :storage]
+  virtual_column :archived,                             :type => :boolean
+  virtual_column :orphaned,                             :type => :boolean
   virtual_column :disconnected,                         :type => :boolean
   virtual_column :is_evm_appliance,                     :type => :boolean,    :uses => :miq_server
   virtual_column :os_image_name,                        :type => :string,     :uses => [:operating_system, :hardware]
@@ -295,6 +300,10 @@ class VmOrTemplate < ActiveRecord::Base
   # TODO: Vmware specific, and is this even being used anywhere?
   def connected_to_ems?
     connection_state == 'connected'
+  end
+
+  def terminated?
+    current_state == 'terminated'
   end
 
   def raw_set_custom_field(attribute, value)
@@ -470,7 +479,7 @@ class VmOrTemplate < ActiveRecord::Base
   end
 
   def self.invoke_tasks_remote(options)
-    ids_by_region = options[:ids].group_by { |id| ActiveRecord::Base.id_to_region(id.to_i) }
+    ids_by_region = options[:ids].group_by { |id| ApplicationRecord.id_to_region(id.to_i) }
     ids_by_region.each do |region, ids|
       remote_options = options.merge(:ids => ids)
       hostname = MiqRegion.find_by_region(region).remote_ws_address
@@ -549,11 +558,7 @@ class VmOrTemplate < ActiveRecord::Base
 
   # Generates the contents of the RSS feed that lists VMs that fail policy
   def self.rss_fails_policy(_name, options)
-    result = []
-    vms = find(:all,
-               :order => options[:orderby],
-               :limit => options[:limit_to_count]
-              ).each do|vm|
+    order(options[:orderby]).limit(options[:limit_to_count]).each_with_object([]) do |vm, result|
       rec = OpenStruct.new(vm.attributes)
       if vm.host.nil?
         rec.host_name = "unknown"
@@ -573,20 +578,10 @@ class VmOrTemplate < ActiveRecord::Base
         end
       end
     end
-    result
   end
 
-  def vendor
-    v = read_attribute(:vendor)
-    VENDOR_TYPES[v]
-  end
-
-  def vendor=(v)
-    unless VENDOR_TYPES.key?(v)
-      v = VENDOR_TYPES.key(v)
-      raise "vendor must be one of VENDOR_TYPES" unless VENDOR_TYPES.key?(v)
-    end
-    write_attribute(:vendor, v)
+  def vendor_display
+    VENDOR_TYPES[vendor]
   end
 
   #
@@ -902,9 +897,7 @@ class VmOrTemplate < ActiveRecord::Base
     !self.scan_via_host?
   end
 
-  def scan_via_ems?
-    self.class.scan_via_ems?
-  end
+  delegate :scan_via_ems?, :to => :class
 
   # Cache the proxy host for repository scans because the JobProxyDispatch calls this for each Vm scan job in a loop
   cache_with_timeout(:proxy_host_for_repository_scans, 30.seconds) do
@@ -1005,8 +998,8 @@ class VmOrTemplate < ActiveRecord::Base
       hosts = [myhost] if hosts.empty?
 
       # VMware needs a VMware host to resolve datastore names
-      if vendor == 'VMware'
-        hosts.delete_if { |h| h.vmm_vendor != 'VMware' }
+      if vendor == 'vmware'
+        hosts.delete_if { |h| !h.is_vmware? }
       end
     end
 
@@ -1057,10 +1050,12 @@ class VmOrTemplate < ActiveRecord::Base
   end
 
   def miq_server_proxies
-    case vm_vendor = vendor.to_s
-    when 'VMware'
+    case vendor
+    when 'vmware'
       # VM cannot be scanned by server if they are on a repository
       return [] if storage_id.blank? || self.repository_vm?
+    when 'microsoft'
+      return [] if storage_id.blank?
     else
       _log.debug "else"
       return []
@@ -1086,7 +1081,7 @@ class VmOrTemplate < ActiveRecord::Base
 
     miq_servers.select! do |svr|
       result = svr.status == "started" && svr.has_zone?(my_zone)
-      result &&= svr.is_vix_disk? if vm_vendor == 'VMware'
+      result &&= svr.is_vix_disk? if vendor == 'vmware'
       result
     end
     _log.debug "miq_servers2.length = #{miq_servers.length}"
@@ -1204,7 +1199,7 @@ class VmOrTemplate < ActiveRecord::Base
   end
 
   def self.assign_ems_created_on(vm_ids)
-    vms_to_update = VmOrTemplate.find_all_by_id_and_ems_created_on(vm_ids, nil)
+    vms_to_update = VmOrTemplate.where(:id => vm_ids, :ems_created_on => nil)
     return if vms_to_update.empty?
 
     # Of the VMs without a VM create time, filter out the ones for which we
@@ -1263,10 +1258,12 @@ class VmOrTemplate < ActiveRecord::Base
     return rhevm_config_path if vendor.to_s == 'RedHat'
 
     case storage.store_type
-    when "VMFS" then "[#{storage.name}] #{location}"
-    when "VSAN" then "[#{storage.name}] #{location}"
-    when "NFS"  then "[#{storage.name}] #{location}"
-    when "NAS"  then File.join(storage.name, location)
+    when "VMFS"  then "[#{storage.name}] #{location}"
+    when "VSAN"  then "[#{storage.name}] #{location}"
+    when "NFS"   then "[#{storage.name}] #{location}"
+    when "NTFS"  then "[#{storage.name}] #{location}"
+    when "CSVFS" then "[#{storage.name}] #{location}"
+    when "NAS"   then File.join(storage.name, location)
     else
       _log.warn("VM [#{name}] storage type [#{storage.store_type}] not supported")
       @path = location
@@ -1334,12 +1331,12 @@ class VmOrTemplate < ActiveRecord::Base
   end
 
   def archived?
-    ext_management_system.nil? && storage.nil?
+    ems_id.nil? && storage_id.nil?
   end
   alias_method :archived, :archived?
 
   def orphaned?
-    ext_management_system.nil? && !storage.nil?
+    ems_id.nil? && !storage_id.nil?
   end
   alias_method :orphaned, :orphaned?
 
@@ -1734,31 +1731,6 @@ class VmOrTemplate < ActiveRecord::Base
     direct_service.try(:root_service)
   end
 
-  #
-  # UI Button Validation Methods
-  #
-
-  # The UI calls this method to determine if a feature is supported for this VM
-  # and determines if a button should be displayed.  This method should return
-  # false is the feature is not supported.  This method should return true
-  # even if a function is not 'currently' available due to some condition that
-  # is not being met.
-  #
-  # For example: If the VM needs credentials to be scanning, but they are not
-  # available this method should still return true.  The UI will call the method
-  # 'is_available_now_error_message' to determine if the button should be available
-  # or greyed-out.  However, if the VM is a type that we cannot scan or we cannot get
-  # to the storage to scan it then this method would be expected to return false.
-  def is_available?(request_type)
-    send("validate_#{request_type}")[:available]
-  end
-
-  # Returns an error message string if there is an error.  Otherwise nil to
-  # indicate no errors.
-  def is_available_now_error_message(request_type)
-    send("validate_#{request_type}")[:message]
-  end
-
   def raise_is_available_now_error_message(request_type)
     msg = send("validate_#{request_type}")[:message]
     raise MiqException::MiqVmError, msg unless msg.nil?
@@ -1908,6 +1880,21 @@ class VmOrTemplate < ActiveRecord::Base
     vms = VmOrTemplate.where(:id => ids)
     return false if vms.blank?
     vms.all?(&:reconfigurable?)
+  end
+
+  def self.tenant_id_clause(user_or_group)
+    template_tenant_ids = MiqTemplate.accessible_tenant_ids(user_or_group, Rbac.accessible_tenant_ids_strategy(MiqTemplate))
+    vm_tenant_ids       = Vm.accessible_tenant_ids(user_or_group, Rbac.accessible_tenant_ids_strategy(Vm))
+    return if template_tenant_ids.empty? && vm_tenant_ids.empty?
+
+    ["(vms.template = true AND vms.tenant_id IN (?)) OR (vms.template = false AND vms.tenant_id IN (?))",
+     template_tenant_ids, vm_tenant_ids]
+  end
+
+  def tenant_identity
+    user = evm_owner
+    user = User.super_admin.tap { |u| u.current_group = miq_group } if user.nil? || !user.miq_group_ids.include?(miq_group_id)
+    user
   end
 
   private

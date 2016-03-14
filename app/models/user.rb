@@ -1,4 +1,4 @@
-class User < ActiveRecord::Base
+class User < ApplicationRecord
   include RelationshipMixin
   acts_as_miq_taggable
   include RegionMixin
@@ -16,6 +16,7 @@ class User < ActiveRecord::Base
   has_many   :miq_widget_contents, :dependent => :destroy
   has_many   :miq_widget_sets, :as => :owner, :dependent => :destroy
   has_many   :miq_reports, :dependent => :nullify
+  has_many   :service_orders, :dependent => :nullify
   belongs_to :current_group, :class_name => "MiqGroup"
   has_and_belongs_to_many :miq_groups
   scope      :admin, -> { where(:userid => "admin") }
@@ -36,20 +37,8 @@ class User < ActiveRecord::Base
   # use authenticate_bcrypt rather than .authenticate to avoid confusion
   # with the class method of the same name (User.authenticate)
   alias_method :authenticate_bcrypt, :authenticate
-  serialize :filters
 
   include ReportableMixin
-
-  include DeprecationMixin
-  deprecate_belongs_to :miq_group, :current_group
-
-  @@role_ns  = "/managed/user"
-  @@role_cat = "role"
-
-  @role_changed = false
-
-  EVMROLE_SELF_SERVICE_ROLE_NAME         = "EvmRole-user_self_service"
-  EVMROLE_LIMITED_SELF_SERVICE_ROLE_NAME = "EvmRole-user_limited_self_service"
 
   serialize     :settings, Hash   # Implement settings column as a hash
   default_value_for(:settings) { Hash.new }
@@ -94,7 +83,7 @@ class User < ActiveRecord::Base
   before_validation :dummy_password_for_external_auth
   before_destroy :destroy_subscribed_widget_sets
 
-  def miq_group_description=(group_description)
+  def current_group_by_description=(group_description)
     if group_description
       desired_group = miq_groups.detect { |g| g.description == group_description }
       desired_group ||= MiqGroup.find_by_description(group_description) if super_admin_user?
@@ -116,10 +105,10 @@ class User < ActiveRecord::Base
   def change_password(oldpwd, newpwd)
     auth = self.class.authenticator(userid)
     raise MiqException::MiqEVMLoginError, "password change not allowed when authentication mode is #{auth.class.proper_name}" unless auth.uses_stored_password?
-    raise MiqException::MiqEVMLoginError, "old password does not match current password" unless User.authenticate(userid, oldpwd)
-
-    self.password = newpwd
-    self.save!
+    if auth.authenticate(userid, oldpwd)
+      self.password = newpwd
+      self.save!
+    end
   end
 
   def ldap_group
@@ -196,34 +185,9 @@ class User < ActiveRecord::Base
     settings.fetch_path(:display, :timezone) || self.class.server_timezone
   end
 
-  def current_group=(group)
-    log_prefix = "User: [#{userid}]"
-    super
-
-    if group
-      self.filters = group.filters
-      _log.info("#{log_prefix} Assigning Role: [#{group.miq_user_role_name}] from Group: [#{group.description}]")
-    else
-      self.filters = nil
-      _log.info("#{log_prefix} Removing Role: [#{miq_user_role_name}] and Group: [#{miq_group_description}]")
-    end
-  end
-
   def miq_groups=(groups)
     super
     self.current_group = groups.first if current_group.nil? || !groups.include?(current_group)
-  end
-
-  def miq_group_ids
-    miq_groups.collect(&:id)
-  end
-
-  def self.all_users_of_group(group)
-    User.includes(:miq_groups).select { |u| u.miq_groups.include?(group) }
-  end
-
-  def all_groups
-    miq_groups
   end
 
   def admin?
@@ -234,28 +198,8 @@ class User < ActiveRecord::Base
     MiqWidgetSet.subscribed_for_user(self)
   end
 
-  def group_ids_of_subscribed_widget_sets
-    subscribed_widget_sets.pluck(:group_id).compact.uniq
-  end
-
-  def subscribed_widget_sets_for_group(group_id)
-    subscribed_widget_sets.where(:group_id => group_id)
-  end
-
   def destroy_subscribed_widget_sets
     subscribed_widget_sets.destroy_all
-  end
-
-  def destroy_widget_sets_for_group(group_id)
-    subscribed_widget_sets_for_group(group_id).destroy_all
-  end
-
-  def destroy_orphaned_dashboards
-    (group_ids_of_subscribed_widget_sets - miq_group_ids).each { |group_id| destroy_widget_sets_for_group(group_id) }
-  end
-
-  def valid_for_login?
-    !!miq_user_role
   end
 
   def accessible_vms
@@ -274,17 +218,30 @@ class User < ActiveRecord::Base
 
   private
 
-  def self.seed
-    user = in_my_region.find_by_userid("admin")
-    if user.nil?
-      _log.info("Creating default admin user...")
-      user = create(:userid => "admin", :name => "Administrator", :password => "smartvm")
-      _log.info("Creating default admin user... Complete")
-    end
+  def self.seed_file_name
+    @seed_file_name ||= Rails.root.join("db", "fixtures", "#{table_name}.yml")
+  end
 
-    admin_group     = MiqGroup.in_my_region.find_by_description("EvmGroup-super_administrator")
-    user.miq_groups = [admin_group] if admin_group
-    user.save
+  def self.seed_data
+    File.exist?(seed_file_name) ? YAML.load_file(seed_file_name) : []
+  end
+
+  def self.seed
+    seed_data.each do |user_attributes|
+      user_id = user_attributes[:userid]
+      next if in_my_region.find_by_userid(user_id)
+      log_attrs = user_attributes.slice(:name, :userid, :group)
+      _log.info("Creating user with parameters #{log_attrs.inspect}")
+
+      group_description = user_attributes.delete(:group)
+      group = MiqGroup.in_my_region.find_by_description(group_description)
+
+      _log.info("Creating #{user_id} user...")
+      user = create(user_attributes)
+      user.miq_groups = [group] if group
+      user.save
+      _log.info("Creating #{user_id} user... Complete")
+    end
   end
 
   def self.current_tenant
@@ -315,5 +272,9 @@ class User < ActiveRecord::Base
 
   def self.current_user
     Thread.current[:user] ||= find_by_userid(current_userid)
+  end
+
+  def self.with_current_user_groups
+    current_user.admin_user? ? all : includes(:miq_groups).where(:miq_groups => {:id => current_user.miq_group_ids})
   end
 end

@@ -49,7 +49,7 @@ module RelationshipMixin
     to_clear = options[:only] ? options[:only].to_miq_a : (RelationshipMixin::MEMOIZED_METHODS - options[:except].to_miq_a)
     flush_cache *to_clear
 
-    association_cache.delete(:all_relationships)
+    @association_cache.delete(:all_relationships)
   end
 
   #
@@ -89,7 +89,7 @@ module RelationshipMixin
   end
 
   def relationships_of(rel_type)
-    if association_cache.include?(:all_relationships)
+    if @association_cache.include?(:all_relationships)
       all_relationships.select { |r| r.relationship == rel_type }
     else
       all_relationships.in_relationship(rel_type)
@@ -673,7 +673,7 @@ module RelationshipMixin
   def self.deprecate_of_type_parameter(*args)
     return args if args.empty? || args.first.kind_of?(Hash)
 
-    Vmdb::Deprecation.deprecation_warning("of_type parameter without hash symbol", "use :of_type => 'Type' style instead") unless Rails.env.production?
+    Vmdb::Deprecation.deprecation_warning("of_type parameter without hash symbol", "use :of_type => 'Type' style instead", caller(2)) unless Rails.env.production?
 
     options = args.extract_options!
     [options.merge(:of_type => args.first)]
@@ -682,12 +682,12 @@ module RelationshipMixin
   def self.deprecate_of_type_and_rel_type_parameter(*args)
     return args if args.empty? || args.first.kind_of?(Hash)
 
-    Vmdb::Deprecation.deprecation_warning("of_type parameter without hash symbol", "use :of_type => 'Type' style instead") unless Rails.env.production?
+    Vmdb::Deprecation.deprecation_warning("of_type parameter without hash symbol", "use :of_type => 'Type' style instead", caller(2)) unless Rails.env.production?
 
     options = args.extract_options!
 
     if args.length > 1
-      Vmdb::Deprecation.deprecation_warning("relationship_type parameter", "use with_relationship_type method before calling instead") unless Rails.env.production?
+      Vmdb::Deprecation.deprecation_warning("relationship_type parameter", "use with_relationship_type method before calling instead", caller(2)) unless Rails.env.production?
     end
 
     [options.merge(:of_type => args.first)]
@@ -696,7 +696,7 @@ module RelationshipMixin
   def self.deprecate_start_parameter(*args)
     return args if args.empty? || args.first.kind_of?(Hash)
 
-    Vmdb::Deprecation.deprecation_warning("start parameter") unless Rails.env.production?
+    Vmdb::Deprecation.deprecation_warning("start parameter", nil, caller(2)) unless Rails.env.production?
 
     [args.extract_options!]
   end

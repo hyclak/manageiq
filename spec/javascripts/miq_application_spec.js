@@ -38,6 +38,29 @@ describe('miq_application.js', function() {
     });
   });
 
+  describe('miqToolbarOnClick', function () {
+    beforeEach(function () {
+      var html  = '<div id="toolbar"><div class="btn-group"><button class="btn btn-default dropdown-toggle" id="second">Click me!</button><ul class="dropdown-menu"><li><a id="reportButton" data-explorer="true" data-url_parms="?render_type=pdf" title="Download this report in PDF format" data-click="download_choice__render_report_pdf" name="download_choice__render_report_pdf" href="#"><i class="fa fa-file-text-o fa-lg" style="margin-right: 5px;"></i>Download as PDF</a></li><li><a id="notAReportButton" data-url="x_history?item=1" title="Go to this item" data-click="history_choice__history_1" name="history_choice__history_1" href="#"><i class="fa fa-arrow-left fa-lg" style="margin-right: 5px;"></i>All Saved Reports</a></li>';
+      setFixtures(html);
+    });
+
+    it('leaves miqSparkle on for Report download buttons', function () {
+      spyOn(window, "miqJqueryRequest");
+      miqInitToolbars();
+      $('#reportButton').click();
+      expect(miqJqueryRequest).toHaveBeenCalledWith('/null/x_button?pressed=render_report_pdf', { beforeSend:true,
+        complete: false,
+        data: 'render_type=pdf' });
+    });
+
+    it('turns miqSparkle off for non-Report buttons', function () {
+      spyOn(window, "miqJqueryRequest");
+      miqInitToolbars();
+      $('#notAReportButton').click();
+      expect(miqJqueryRequest).toHaveBeenCalledWith('/null/x_history?item=1', { beforeSend:true, complete: true, data: undefined });
+    });
+  });
+
   describe('miqButtonOnWhen', function () {
     beforeEach(function () {
       var html = '<button id="button">Click me!</button>';
@@ -101,6 +124,16 @@ describe('miq_application.js', function() {
           expect(button.hasClass('disabled')).toBe(true);
       });
     })
+  });
+
+  describe('miqShowAE_Tree', function () {
+    it('uses url with the current controller', function() {
+      ManageIQ.controller = 'catalog';
+      spyOn(window, 'miqJqueryRequest');
+      ae_url = "/" + ManageIQ.controller + "/ae_tree_select_toggle";
+      miqShowAE_Tree('field_entry_point');
+      expect(miqJqueryRequest).toHaveBeenCalledWith('/catalog/ae_tree_select_toggle?typ=field_entry_point');
+    });
   });
 
 });

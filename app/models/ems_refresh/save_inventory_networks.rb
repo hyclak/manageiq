@@ -13,9 +13,9 @@ module EmsRefresh
     def save_cloud_networks_inventory(ems, hashes, target = nil)
       target = ems if target.nil?
 
-      ems.cloud_networks(true)
+      ems.cloud_networks.reset
       deletes = if (target == ems)
-                  ems.cloud_networks.dup
+                  :use_association
                 else
                   []
                 end
@@ -25,8 +25,7 @@ module EmsRefresh
         h[:orchestration_stack_id] = h.fetch_path(:orchestration_stack, :id)
       end
 
-      save_inventory_multi(:cloud_networks,
-                           ems,
+      save_inventory_multi(ems.cloud_networks,
                            hashes,
                            deletes,
                            [:ems_ref],
@@ -36,13 +35,15 @@ module EmsRefresh
     end
 
     def save_cloud_subnets_inventory(cloud_network, hashes)
-      deletes = cloud_network.cloud_subnets(true).dup
-
       hashes.each do |h|
-        h[:availability_zone_id] = h.fetch_path(:availability_zone, :id)
+        %i(availability_zone).each do |relation|
+          h[relation] = h.fetch_path(relation, :_object) if h.fetch_path(relation, :_object)
+        end
+
+        h[:ems_id] = cloud_network.ems_id
       end
 
-      save_inventory_multi(:cloud_subnets, cloud_network, hashes, deletes, [:ems_ref], nil, :availability_zone)
+      save_inventory_multi(cloud_network.cloud_subnets, hashes, :use_association, [:ems_ref], nil, [:network_router])
 
       cloud_network.save!
       store_ids_for_new_records(cloud_network.cloud_subnets, hashes, :ems_ref)
@@ -51,9 +52,9 @@ module EmsRefresh
     def save_security_groups_inventory(ems, hashes, target = nil)
       target = ems if target.nil?
 
-      ems.security_groups(true)
+      ems.security_groups.reset
       deletes = if (target == ems)
-                  ems.security_groups.dup
+                  :use_association
                 else
                   []
                 end
@@ -64,8 +65,7 @@ module EmsRefresh
         h[:orchestration_stack_id] = h.fetch_path(:orchestration_stack, :id)
       end
 
-      save_inventory_multi(:security_groups,
-                           ems, hashes,
+      save_inventory_multi(ems.security_groups, hashes,
                            deletes,
                            [:ems_ref],
                            :firewall_rules,
@@ -86,20 +86,20 @@ module EmsRefresh
     def save_floating_ips_inventory(ems, hashes, target = nil)
       target = ems if target.nil?
 
-      ems.floating_ips(true)
+      ems.floating_ips.reset
       deletes = if (target == ems)
-                  ems.floating_ips.dup
+                  :use_association
                 else
                   []
                 end
 
       hashes.each do |h|
-        %i(vm cloud_tenant cloud_network network_router).each do |relation|
+        %i(vm cloud_tenant cloud_network).each do |relation|
           h[relation] = h.fetch_path(relation, :_object) if h.fetch_path(relation, :_object)
         end
       end
 
-      save_inventory_multi(:floating_ips, ems, hashes, deletes, [:ems_ref], nil, [:network_port])
+      save_inventory_multi(ems.floating_ips, hashes, deletes, [:ems_ref], nil, [:network_port])
       store_ids_for_new_records(ems.floating_ips, hashes, :ems_ref)
     end
 
@@ -121,8 +121,7 @@ module EmsRefresh
           [:name]
         end
 
-      deletes = parent.firewall_rules(true).dup
-      save_inventory_multi(:firewall_rules, parent, hashes, deletes, find_key, nil, [:source_security_group])
+      save_inventory_multi(parent.firewall_rules, hashes, :use_association, find_key, nil, [:source_security_group])
 
       parent.save!
       store_ids_for_new_records(parent.firewall_rules, hashes, find_key)
@@ -131,9 +130,9 @@ module EmsRefresh
     def save_network_routers_inventory(ems, hashes, target = nil)
       target = ems if target.nil?
 
-      ems.network_routers(true)
+      ems.network_routers.reset
       deletes = if (target == ems)
-                  ems.network_routers.dup
+                  :use_association
                 else
                   []
                 end
@@ -143,8 +142,7 @@ module EmsRefresh
         h[:cloud_network_id] = h.fetch_path(:cloud_network, :id)
       end
 
-      save_inventory_multi(:network_routers,
-                           ems,
+      save_inventory_multi(ems.network_routers,
                            hashes,
                            deletes,
                            [:ems_ref],
@@ -156,28 +154,31 @@ module EmsRefresh
     def save_network_ports_inventory(ems, hashes, target = nil)
       target = ems if target.nil?
 
-      ems.network_ports(true)
+      ems.network_ports.reset
       deletes = if (target == ems)
-                  ems.network_ports.dup
+                  :use_association
                 else
                   []
                 end
 
+      # Remove non valid ports stored as nil
+      hashes.compact!
+
       hashes.each do |h|
-        %i(cloud_tenant device cloud_network cloud_subnet).each do |relation|
+        %i(cloud_tenant device cloud_subnet).each do |relation|
           h[relation] = h.fetch_path(relation, :_object) if h.fetch_path(relation, :_object)
         end
 
         h[:security_groups] = h.fetch_path(:security_groups).map { |x| x[:_object] }
       end
 
-      save_inventory_multi(:network_ports, ems, hashes, deletes, [:ems_ref], nil, [])
+      save_inventory_multi(ems.network_ports, hashes, deletes, [:ems_ref], nil, [])
 
       store_ids_for_new_records(ems.network_ports, hashes, :ems_ref)
     end
 
     def link_floating_ips_to_network_ports(hashes)
-      # Association of floating_ip to network_port. For backwards compatibilty, we are keeping relation to Vm, even
+      # Association of floating_ip to network_port. For backwards compatibility, we are keeping relation to Vm, even
       # when it's redundant, since we can get vm through network_port.
       hashes.each do |hash|
         network_port = hash.fetch_path(:network_port, :_object)
@@ -188,6 +189,13 @@ module EmsRefresh
         next unless hash.key?(:cloud_network) # only neutron has cloud_network associated
 
         hash[:_object].update_attributes(:network_port => network_port, :vm => network_port.try(:device))
+      end
+    end
+
+    def link_cloud_subnets_to_network_routers(hashes)
+      hashes.each do |hash|
+        network_router = hash.fetch_path(:network_router, :_object)
+        hash[:_object].update_attributes(:network_router => network_router)
       end
     end
   end

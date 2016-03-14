@@ -67,7 +67,7 @@
             :owner_manager_phone, :owner_phone, :owner_phone_mobile,
             :owner_state, :owner_title, :owner_zip, :request_notes,
             :subnet_mask, :memory_limit, :memory_reserve,
-            :root_password, :sysprep_password, :sysprep_domain_admin,
+            :root_username, :root_password, :sysprep_password, :sysprep_domain_admin,
             :sysprep_domain_password, :sysprep_workgroup_name,
             :sysprep_full_name, :sysprep_organization,
             :sysprep_product_id, :sysprep_computer_name,
@@ -112,14 +112,17 @@
           - if field == :owner_email
             - fh = wf.get_field(:owner_load_ldap, dialog)
             - if @edit && field_hash[:display] == :edit && fh[:display] == :show && !@edit[:stamp_typ]
-              = button_tag(_('Lookup'),
-                           :class   => "btn btn-primary",
-                           :alt     => t = _("LDAP Group Lookup"),
-                           :title   => t,
-                           :onclick => "miqAjaxButton('#{url_for(:controller => 'miq_request',
-                                                                 :action     => 'retrieve_email',
-                                                                 :field      => fh[:pressed][:method],
-                                                                 :button     => 'submit')}');")
+              #lookup_button_off{:style => "#{options[field].blank? ? '' : 'display:none'}"}
+                = button_tag(_("Lookup"), :class => "btn btn-default btn-disabled")
+              #lookup_button_on{:style => "#{options[field].blank? ? 'display:none' : ''}"}
+                = button_tag(_('Lookup'),
+                             :class   => "btn btn-primary",
+                             :alt     => t = _("LDAP Group Lookup"),
+                             :title   => t,
+                             :onclick => "miqAjaxButton('#{url_for(:controller => 'miq_request',
+                                                                   :action     => 'retrieve_email',
+                                                                   :field      => fh[:pressed][:method],
+                                                                   :button     => 'submit')}');")
       - elsif [:vm_prefix].include?(field)
         -# text field for vm prefix/suffix
         .col-md-8
@@ -240,8 +243,10 @@
                :vm_tag_2, :vm_tag_3, :vm_tag_4, :vm_tag_5, :vm_tag_6, :vm_tag_7, :vm_tag_8,
                :vm_tag_9, :vm_tag_10, :provision_type, :network_adapters, :retirement,
                :retirement_warn, :cloud_network, :cloud_subnet, :floating_ip_address,
+               :resource_group,
                :sysprep_auto_logon_count, :sysprep_domain_name, :sysprep_server_license_mode,
-               :vlan, :cloud_tenant, :src_configuration_profile_id, :vm_minimum_memory, :vm_maximum_memory].include?(field)
+               :vlan, :cloud_tenant, :src_configuration_profile_id, :vm_minimum_memory, 
+               :vm_maximum_memory, :boot_disk_size].include?(field)
         -# Pull Down fields
         -# Multiple select Pull Down fields
         - multiple = field == :security_groups
@@ -528,7 +533,10 @@
         .col-md-8
           - path = Rails.application.routes.recognize_path request.referrer
           - if path[:controller] == "miq_request"
-            = form_tag({:action => "prov_edit", :req_id => "#{@edit[:req_id]}"}, :multipart => true) do
+            = form_tag({:action    => "prov_edit",
+                        :req_id    => @edit[:req_id].to_s},
+                       :multipart => true,
+                       :method    => :post) do
               .form-group
                 .col-md-4
                   = file_field("upload", "file", :class => "filestyle", "data-buttonName" => "btn-default")
@@ -537,7 +545,10 @@
                 .col-md-6
                   = submit_tag(_("Upload"), :class => "upload btn btn-default")
           - else
-            = form_tag({:controller => path[:controller], :action => "explorer"}, :multipart => true) do
+            = form_tag({:controller => path[:controller],
+                        :action     => "explorer"},
+                       :multipart  => true,
+                       :method     => :post) do
               .form-group
                 .col-md-4
                   = file_field("upload", "file", :class => "filestyle", "data-buttonName" => "btn-default")

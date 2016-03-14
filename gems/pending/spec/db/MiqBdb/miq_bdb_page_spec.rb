@@ -1,5 +1,3 @@
-require "spec_helper"
-
 require 'db/MiqBdb/MiqBdb'
 require "#{__dir__}/test_files"
 
@@ -10,7 +8,7 @@ describe MiqBerkeleyDB::MiqBdbPage do
   end
 
   it "#dump" do
-    @page.dump.should == <<-DUMP
+    expect(@page.dump).to eq <<-DUMP
 Page 1
   type:            btree internal
   prev:            0

@@ -1,5 +1,5 @@
 require 'digest/md5'
-class OrchestrationTemplate < ActiveRecord::Base
+class OrchestrationTemplate < ApplicationRecord
   TEMPLATE_DIR = Rails.root.join("product/orchestration_templates")
 
   include NewWithTypeStiMixin
@@ -10,11 +10,14 @@ class OrchestrationTemplate < ActiveRecord::Base
   has_many :stacks, :class_name => "OrchestrationStack"
 
   default_value_for :draft, false
+  default_value_for :orderable, true
 
   validates :md5,
             :uniqueness => {:scope => :draft, :message => "of content already exists (content must be unique)"},
             :unless     => :draft?
   validates_presence_of :name
+
+  before_destroy :check_not_in_use
 
   # Try to create the template if the name is not found in table
   def self.seed
@@ -25,12 +28,13 @@ class OrchestrationTemplate < ActiveRecord::Base
     end
   end
 
+  # available templates for ordering an orchestration service
   def self.available
-    where(:draft => false)
+    where(:draft => false, :orderable => true)
   end
 
   def self.find_with_content(template_content)
-    available.find_by(:md5 => calc_md5(with_universal_newline(template_content)))
+    where(:draft => false).find_by(:md5 => calc_md5(with_universal_newline(template_content)))
   end
 
   # Find only by template content. Here we only compare md5 considering the table is expected
@@ -49,7 +53,7 @@ class OrchestrationTemplate < ActiveRecord::Base
       end
     end
 
-    existing_templates = available.where(:md5 => md5s).index_by(&:md5)
+    existing_templates = where(:draft => false, :md5 => md5s).index_by(&:md5)
 
     hashes.zip(md5s).collect do |hash, md5|
       template = existing_templates[md5]
@@ -74,7 +78,7 @@ class OrchestrationTemplate < ActiveRecord::Base
 
   # Find all in use and read-only templates
   def self.in_use
-    joins(:stacks).uniq
+    joins(:stacks).distinct
   end
 
   # Find all not in use thus editable templates
@@ -91,9 +95,7 @@ class OrchestrationTemplate < ActiveRecord::Base
     ExtManagementSystem.where(:type => eligible_manager_types.collect(&:name))
   end
 
-  def eligible_managers
-    self.class.eligible_managers
-  end
+  delegate :eligible_managers, :to => :class
 
   # return the validation error message; otherwise nil
   def validate_content(manager = nil)
@@ -108,13 +110,43 @@ class OrchestrationTemplate < ActiveRecord::Base
     raise NotImplementedError, "validate_format must be implemented in subclass"
   end
 
-  def save_with_format_validation!
+  # use cases for md5 conflict:
+  # draft: always save, new or existing
+  # existing:
+  #   discovered duplicate: take over stacks and delete the discovered one
+  #   orderable duplicate: raise error through save! validation
+  # new:
+  #   discovered duplicate: promote discovered to orderable
+  #   orderable duplicate: raise error through save! validation)
+  def save_as_orderable!
     error_msg = validate_format unless draft
     raise MiqException::MiqParsingError, error_msg if error_msg
-    save!
+
+    self.orderable = true
+    return save! if draft?
+
+    old_template = self.class.find_with_content(content)
+    return save! if old_template.nil? || old_template.orderable
+
+    new_record? ? replace_with_old_template(old_template) : transfer_stacks(old_template)
   end
 
   private
+
+  # This is an unsaved template. Replace with an existing one after it is updated
+  def replace_with_old_template(old_template)
+    old_template.update(:name => name, :description => description, :orderable => true)
+    self.id = old_template.id
+    reload
+    true
+  end
+
+  # Take over stacks belongs to the old template and delete the old template
+  def transfer_stacks(old_template)
+    old_template.stacks.update_all(:orchestration_template_id => id)
+    old_template.delete
+    save!
+  end
 
   def md5=(_md5)
     super
@@ -135,5 +167,11 @@ class OrchestrationTemplate < ActiveRecord::Base
 
   def with_universal_newline(text)
     self.class.with_universal_newline(text)
+  end
+
+  def check_not_in_use
+    return true unless in_use?
+    errors[:base] << "Cannot delete the template while it is used by some orchestration stacks"
+    throw :abort
   end
 end
