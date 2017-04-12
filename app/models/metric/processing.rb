@@ -30,6 +30,7 @@ module Metric::Processing
     ContainerService,
     Host,
     AvailabilityZone,
+    HostAggregate,
     EmsCluster,
     ExtManagementSystem,
     MiqRegion,
@@ -37,7 +38,10 @@ module Metric::Processing
   ]
 
   def self.process_derived_columns(obj, attrs, ts = nil)
-    raise "object #{obj} is not one of #{VALID_PROCESS_TARGETS.collect(&:name).join(", ")}" unless VALID_PROCESS_TARGETS.any? { |t| obj.kind_of?(t) }
+    unless VALID_PROCESS_TARGETS.any? { |t| obj.kind_of?(t) }
+      raise _("object %{name} is not one of %{items}") % {:name  => obj,
+                                                          :items => VALID_PROCESS_TARGETS.collect(&:name).join(", ")}
+    end
 
     ts = attrs[:timestamp] if ts.nil?
     state = obj.vim_performance_state_for_ts(ts)
@@ -117,14 +121,14 @@ module Metric::Processing
   def self.add_missing_intervals(obj, interval_name, start_time, end_time)
     klass, meth = Metric::Helper.class_and_association_for_interval_name(interval_name)
 
-    cond = Metric::Helper.range_to_condition(start_time, end_time)
-    if interval_name != "realtime"
-      cond[0] << " AND capture_interval_name = ?"
-      cond << interval_name
-    end
+    scope = obj.send(meth).for_time_range(start_time, end_time)
+    scope = scope.where(:capture_interval_name => interval_name) if interval_name != "realtime"
+    extrapolate(klass, scope)
+  end
 
+  def self.extrapolate(klass, scope)
     last_perf = {}
-    obj.send(meth).where(cond).order("timestamp, capture_interval_name").each do |perf|
+    scope.order("timestamp, capture_interval_name").each do |perf|
       interval = interval_name_to_interval(perf.capture_interval_name)
       last_perf[interval] = perf if last_perf[interval].nil?
 
@@ -133,35 +137,43 @@ module Metric::Processing
         next
       end
 
-      new_perf = klass.new(last_perf[interval].attributes)
-      new_perf.timestamp = last_perf[interval].timestamp + interval
-      new_perf.capture_interval = 0
-      Metric::Rollup::ROLLUP_COLS.each do |c|
-        next if new_perf.send(c).nil? || perf.send(c).nil?
-        new_perf.send(c.to_s + "=", (new_perf.send(c) + perf.send(c)) / 2)
-      end
-
-      unless perf.assoc_ids.nil?
-        Metric::Rollup::ASSOC_KEYS.each do |assoc|
-          next if new_perf.assoc_ids.nil? || new_perf.assoc_ids[assoc].blank? || perf.assoc_ids[assoc].blank?
-          new_perf.assoc_ids[assoc][:on] ||= []
-          new_perf.assoc_ids[assoc][:off] ||= []
-          new_perf.assoc_ids[assoc][:on]  = (new_perf.assoc_ids[assoc][:on] + perf.assoc_ids[assoc][:on]).uniq!
-          new_perf.assoc_ids[assoc][:off] = (new_perf.assoc_ids[assoc][:off] + perf.assoc_ids[assoc][:off]).uniq!
-        end
-      end
-      new_perf.save
+      new_perf = create_new_metric(klass, last_perf[interval], perf, interval)
+      new_perf.save!
 
       last_perf[interval] = perf
     end
   end
+
+  def self.create_new_metric(klass, last_perf, perf, interval)
+    attrs = last_perf.attributes
+    attrs.delete('id')
+    attrs['timestamp'] += interval
+    attrs['capture_interval'] = 0
+    new_perf = klass.new(attrs)
+    Metric::Rollup::ROLLUP_COLS.each do |c|
+      next if new_perf.send(c).nil? || perf.send(c).nil?
+      new_perf.send(c.to_s + "=", (new_perf.send(c) + perf.send(c)) / 2)
+    end
+
+    unless perf.assoc_ids.nil?
+      Metric::Rollup::ASSOC_KEYS.each do |assoc|
+        next if new_perf.assoc_ids.nil? || new_perf.assoc_ids[assoc].blank? || perf.assoc_ids[assoc].blank?
+        new_perf.assoc_ids[assoc][:on] ||= []
+        new_perf.assoc_ids[assoc][:off] ||= []
+        new_perf.assoc_ids[assoc][:on]  = (new_perf.assoc_ids[assoc][:on] + perf.assoc_ids[assoc][:on]).uniq!
+        new_perf.assoc_ids[assoc][:off] = (new_perf.assoc_ids[assoc][:off] + perf.assoc_ids[assoc][:off]).uniq!
+      end
+    end
+    new_perf
+  end
+  private_class_method :extrapolate, :create_new_metric
 
   def self.interval_name_to_interval(name)
     case name
     when "realtime" then 20
     when "hourly" then   1.hour.to_i
     when "daily" then    1.day.to_i
-    else             raise "unknown interval name: [#{name}]"
+    else raise _("unknown interval name: [%{name}]") % {:name => name}
     end
   end
 end

@@ -16,12 +16,12 @@ module Metric::Common
     scope :hourly,   -> { where(:capture_interval_name => 'hourly') }
     scope :realtime, -> { where(:capture_interval_name => 'realtime') }
 
-    include ReportableMixin
-
     serialize :assoc_ids
     serialize :min_max   # TODO: Move this to MetricRollup
 
-    virtual_column :v_derived_storage_used, :type => :float
+    virtual_column :v_derived_storage_used, :type => :float, :arel => (lambda do |t|
+      t.grouping(t[:derived_storage_total] - t[:derived_storage_free])
+    end)
 
     [
       :cpu_ready_delta_summation,
@@ -44,21 +44,6 @@ module Metric::Common
     virtual_column :v_derived_cpu_reserved_pct,     :type => :float
     virtual_column :v_derived_memory_reserved_pct,  :type => :float
     virtual_column :v_derived_cpu_total_cores_used, :type => :float
-
-    virtual_column :v_derived_logical_cpus_used, :type => :float # Deprecated
-  end
-
-  def v_find_min_max(vcol)
-    interval, mode = vcol.to_s.split("_")[1..2]
-    col = vcol.to_s.split("_")[3..-1].join("_")
-
-    return nil unless interval == "daily" && capture_interval == 1.day
-
-    cond = ["resource_type = ? and resource_id = ? and capture_interval_name = 'hourly' and timestamp >= ? and timestamp < ?",
-            resource_type, resource_id, timestamp.to_date.to_s,  (timestamp + 1.day).to_date.to_s]
-    direction = mode == "min" ? "ASC" : "DESC"
-    rec = MetricRollup.where(cond).order("#{col} #{direction}").first
-    rec.nil? ? nil : rec.send(col)
   end
 
   def v_derived_storage_used
@@ -67,20 +52,20 @@ module Metric::Common
   end
 
   def min_max_v_derived_storage_used(mode)
-    cond = ["resource_type = ? and resource_id = ? and capture_interval_name = 'hourly' and timestamp >= ? and timestamp < ?",
-            resource_type, resource_id, timestamp.to_date.to_s, (timestamp + 1.day).to_date.to_s]
-    meth = mode == :min ? :first : :last
-    recs = MetricRollup.where(cond)
-    rec = recs.sort { |a, b| (a.v_derived_storage_used && b.v_derived_storage_used) ? (a.v_derived_storage_used <=> b.v_derived_storage_used) : (a.v_derived_storage_used ? 1 : -1) }.send(meth)
-    rec.nil? ? nil : rec.v_derived_storage_used
+    recs = MetricRollup.where(:resource_type => resource_type, :resource_id => resource_id)
+                       .where(:capture_interval_name => 'hourly')
+                       .where('timestamp >= ? and timestamp < ?', # This picks only the first midnight
+                              timestamp.to_date, (timestamp + 1.day).to_date)
+                       .where.not(:derived_storage_total => nil, :derived_storage_free => nil)
+    recs.send(mode, MetricRollup.arel_attribute(:v_derived_storage_used))
   end
 
   def min_v_derived_storage_used
-    @min_v_derived_storage_used ||= min_max_v_derived_storage_used(:min)
+    @min_v_derived_storage_used ||= min_max_v_derived_storage_used(:minimum)
   end
 
   def max_v_derived_storage_used
-    @max_v_derived_storage_used ||= min_max_v_derived_storage_used(:max)
+    @max_v_derived_storage_used ||= min_max_v_derived_storage_used(:maximum)
   end
 
   CHILD_ROLLUP_INTERVAL = {
@@ -147,37 +132,57 @@ module Metric::Common
     return nil if cpu_usage_rate_average.nil? || derived_vm_numvcpus.nil? || derived_vm_numvcpus == 0
     (cpu_usage_rate_average * derived_vm_numvcpus) / 100.0
   end
-  alias_method :v_derived_logical_cpus_used, :v_derived_cpu_total_cores_used
-  Vmdb::Deprecation.deprecate_methods(self, :v_derived_logical_cpus_used => :v_derived_cpu_total_cores_used)
 
+  # Applies the given time profile to this metric record
+  # unless record already refer to some time profile (which were used for aggregation)
   def apply_time_profile(profile)
-    method = "apply_time_profile_#{capture_interval_name}"
-    return send(method, profile) if self.respond_to?(method)
-  end
-
-  def apply_time_profile_hourly(profile)
-    unless profile.ts_in_profile?(timestamp)
+    if time_profile_id || profile.ts_in_profile?(timestamp)
+      self.inside_time_profile = true
+    else
       self.inside_time_profile = false
       nil_out_values_for_apply_time_profile
       _log.debug("Hourly Timestamp: [#{timestamp}] is outside of time profile: [#{profile.description}]")
-    else
-      self.inside_time_profile = true
-    end
-    inside_time_profile
-  end
-
-  def apply_time_profile_daily(profile)
-    unless profile.ts_day_in_profile?(timestamp)
-      self.inside_time_profile = false
-      nil_out_values_for_apply_time_profile
-      _log.debug("Daily Timestamp: [#{timestamp}] is outside of time profile: [#{profile.description}]")
-    else
-      self.inside_time_profile = true
     end
     inside_time_profile
   end
 
   def nil_out_values_for_apply_time_profile
     (Metric::Rollup::ROLLUP_COLS + ["assoc_ids", "min_max"]).each { |c| send("#{c}=", nil) }
+  end
+
+  class_methods do
+    def for_tag_names(*args)
+      where("tag_names like ?", "%" + args.join("/") + "%")
+    end
+
+    def for_time_range(start_time, end_time)
+      if start_time.nil?
+        none
+      elsif start_time == end_time
+        where(:timestamp => start_time)
+      elsif end_time.nil?
+        where(arel_table[:timestamp].gteq(start_time))
+      else
+        where(:timestamp => start_time..end_time)
+      end
+    end
+
+    # @param :time_profile_or_tz [TimeProfile|Timezone] (default: DEFAULT_TIMEZONE)
+    def with_time_profile_or_tz(time_profile_or_tz = nil)
+      if (time_profile = TimeProfile.default_time_profile(time_profile_or_tz))
+        tp_ids = time_profile.profile_for_each_region
+        where(:time_profile => tp_ids)
+      else
+        none
+      end
+    end
+
+    def with_interval_and_time_range(interval, timestamp)
+      where(:capture_interval_name => interval, :timestamp => timestamp)
+    end
+
+    def with_resource
+      where.not(:resource => nil)
+    end
   end
 end

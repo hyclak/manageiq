@@ -6,6 +6,7 @@ describe DialogField do
 
     it "sets default value for required attribute" do
       expect(@df.required).to eq(false)
+      expect(@df.visible).to eq(true)
     end
 
     it "fields named 'action' or 'controller' are invalid" do
@@ -26,52 +27,82 @@ describe DialogField do
     end
 
     describe "#validate" do
-      let(:dialog_field) do
+      let(:visible_dialog_field) do
         described_class.new(:label    => 'dialog_field',
                             :name     => 'dialog_field',
                             :required => required,
-                            :value    => value)
+                            :value    => value,
+                            :visible  => true)
       end
+      let(:invisible_dialog_field) do
+        described_class.new(:label    => 'dialog_field',
+                            :name     => 'dialog_field',
+                            :required => required,
+                            :value    => value,
+                            :visible  => false)
+      end
+
       let(:dialog_tab)   { double('DialogTab',   :label => 'tab') }
       let(:dialog_group) { double('DialogGroup', :label => 'group') }
 
       shared_examples_for "DialogField#validate that returns nil" do
         it "returns nil" do
-          expect(dialog_field.validate_field_data(dialog_tab, dialog_group)).to be_nil
+          expect(invisible_dialog_field.validate_field_data(dialog_tab, dialog_group)).to be_nil
         end
       end
 
-      context "when required is true" do
-        let(:required) { true }
-
-        context "with a blank value" do
-          let(:value) { "" }
-
-          it "returns error message" do
-            expect(dialog_field.validate_field_data(dialog_tab, dialog_group)).to eq("tab/group/dialog_field is required")
+      context "when visible is true" do
+        let(:visible) { true }
+        context "when required is true" do
+          let(:required) { true }
+          context "with a blank value" do
+            let(:value) { "" }
+            it "returns error message" do
+              expect(visible_dialog_field.validate_field_data(dialog_tab, dialog_group))
+                .to eq("tab/group/dialog_field is required")
+            end
+          end
+          context "with a non-blank value" do
+            let(:value) { "test value" }
+            it_behaves_like "DialogField#validate that returns nil"
           end
         end
-
-        context "with a non-blank value" do
-          let(:value) { "test value" }
-
-          it_behaves_like "DialogField#validate that returns nil"
+        context "when required is false" do
+          let(:required) { false }
+          context "with a blank value" do
+            let(:value) { "" }
+            it_behaves_like "DialogField#validate that returns nil"
+          end
+          context "with a non-blank value" do
+            let(:value) { "test value" }
+            it_behaves_like "DialogField#validate that returns nil"
+          end
         end
       end
 
-      context "when required is false" do
-        let(:required) { false }
-
-        context "with a blank value" do
-          let(:value) { "" }
-
-          it_behaves_like "DialogField#validate that returns nil"
+      context "when visible is false" do
+        let(:visible) { false }
+        context "when required is false" do
+          let(:required) { false }
+          context "with a blank value" do
+            let(:value) { "test value" }
+            it_behaves_like "DialogField#validate that returns nil"
+          end
+          context "with a non-blank value" do
+            let(:value) { "test value" }
+            it_behaves_like "DialogField#validate that returns nil"
+          end
         end
-
-        context "with a non-blank value" do
-          let(:value) { "test value" }
-
-          it_behaves_like "DialogField#validate that returns nil"
+        context "when required is true" do
+          let(:required) { true }
+          context "with a blank value" do
+            let(:value) { "" }
+            it_behaves_like "DialogField#validate that returns nil"
+          end
+          context "with a non-blank value" do
+            let(:value) { "test value" }
+            it_behaves_like "DialogField#validate that returns nil"
+          end
         end
       end
     end
@@ -142,5 +173,9 @@ describe DialogField do
       expect(DialogFieldSerializer).to receive(:serialize).with(dialog_field)
       dialog_field.update_and_serialize_values
     end
+  end
+
+  it "does not use attr_accessor for default_value" do
+    expect(described_class.new(:default_value => "test")[:default_value]).to eq("test")
   end
 end

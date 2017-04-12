@@ -26,26 +26,37 @@ class ExtManagementSystem < ApplicationRecord
   end
 
   belongs_to :provider
+  include CustomAttributeMixin
   belongs_to :tenant
-
+  has_many :container_deployments, :foreign_key => :deployed_on_ems_id, :inverse_of => :deployed_on_ems
   has_many :endpoints, :as => :resource, :dependent => :destroy, :autosave => true
 
   has_many :hosts, :foreign_key => "ems_id", :dependent => :nullify, :inverse_of => :ext_management_system
+  has_many :non_clustered_hosts, -> { non_clustered }, :class_name => "Host", :foreign_key => "ems_id"
+  has_many :clustered_hosts, -> { clustered }, :class_name => "Host", :foreign_key => "ems_id"
   has_many :vms_and_templates, :foreign_key => "ems_id", :dependent => :nullify,
            :class_name => "VmOrTemplate", :inverse_of => :ext_management_system
   has_many :miq_templates,     :foreign_key => :ems_id, :inverse_of => :ext_management_system
   has_many :vms,               :foreign_key => :ems_id, :inverse_of => :ext_management_system
+  has_many :hardwares,         :through => :vms_and_templates
+  has_many :networks,          :through => :hardwares
+  has_many :disks,             :through => :hardwares
 
+  has_many :storages,       -> { distinct },          :through => :hosts
   has_many :ems_events,     -> { order "timestamp" }, :class_name => "EmsEvent",    :foreign_key => "ems_id",
                                                       :inverse_of => :ext_management_system
+  has_many :generated_events, -> { order "timestamp" }, :class_name => "EmsEvent", :foreign_key => "generating_ems_id",
+                                                          :inverse_of => :generating_ems
   has_many :policy_events,  -> { order "timestamp" }, :class_name => "PolicyEvent", :foreign_key => "ems_id"
 
   has_many :blacklisted_events, :foreign_key => "ems_id", :dependent => :destroy, :inverse_of => :ext_management_system
+  has_many :miq_alert_statuses, :foreign_key => "ems_id"
   has_many :ems_folders,    :foreign_key => "ems_id", :dependent => :destroy, :inverse_of => :ext_management_system
   has_many :ems_clusters,   :foreign_key => "ems_id", :dependent => :destroy, :inverse_of => :ext_management_system
   has_many :resource_pools, :foreign_key => "ems_id", :dependent => :destroy, :inverse_of => :ext_management_system
-
   has_many :customization_specs, :foreign_key => "ems_id", :dependent => :destroy, :inverse_of => :ext_management_system
+  has_many :storage_profiles,    :foreign_key => "ems_id", :dependent => :destroy, :inverse_of => :ext_management_system
+  has_many :physical_servers,    :foreign_key => "ems_id", :dependent => :destroy, :inverse_of => :ext_management_system
 
   has_one  :iso_datastore, :foreign_key => "ems_id", :dependent => :destroy, :inverse_of => :ext_management_system
 
@@ -55,6 +66,7 @@ class ExtManagementSystem < ApplicationRecord
   has_many :metric_rollups, :as => :resource  # Destroy will be handled by purger
   has_many :vim_performance_states, :as => :resource # Destroy will be handled by purger
   has_many :miq_events,             :as => :target, :dependent => :destroy
+  has_many :cloud_subnets, :foreign_key => :ems_id, :dependent => :destroy
 
   validates :name,     :presence => true, :uniqueness => {:scope => [:tenant_id]}
   validates :hostname, :presence => true, :if => :hostname_required?
@@ -63,36 +75,33 @@ class ExtManagementSystem < ApplicationRecord
   def hostname_uniqueness_valid?
     return unless hostname_required?
     return unless hostname.present? # Presence is checked elsewhere
+    # check uniqueness per provider type
 
-    existing_hostnames = Endpoint.where.not(:resource_id => id).pluck(:hostname).compact.map(&:downcase)
+    existing_hostnames = (self.class.all - [self]).map(&:hostname).compact.map(&:downcase)
 
-    errors.add(:hostname, "has already been taken") if existing_hostnames.include?(hostname.downcase)
+    errors.add(:hostname, N_("has to be unique per provider type")) if existing_hostnames.include?(hostname.downcase)
   end
 
   include NewWithTypeStiMixin
   include UuidMixin
   include EmsRefresh::Manager
   include TenancyMixin
+  include AvailabilityMixin
+  include SupportsFeatureMixin
+  include ComplianceMixin
+  include CustomAttributeMixin
 
   after_destroy { |record| $log.info "MIQ(ExtManagementSystem.after_destroy) Removed EMS [#{record.name}] id [#{record.id}]" }
 
   acts_as_miq_taggable
 
   include FilterableMixin
-  include ReportableMixin
-
   include EventMixin
-
   include MiqPolicyMixin
-
   include RelationshipMixin
   self.default_relationship_type = "ems_metadata"
 
   include AggregationMixin
-  # Since we've overridden the implementation of methods from AggregationMixin,
-  # we must also override the :uses portion of the virtual columns.
-  override_aggregation_mixin_virtual_columns_uses(:all_hosts, :hosts)
-  override_aggregation_mixin_virtual_columns_uses(:all_vms_and_templates, :vms_and_templates)
 
   include AuthenticationMixin
   include Metric::CiMixin
@@ -104,43 +113,44 @@ class ExtManagementSystem < ApplicationRecord
            :hostname=,
            :port,
            :port=,
-           :to => :default_endpoint
+           :security_protocol,
+           :security_protocol=,
+           :certificate_authority,
+           :certificate_authority=,
+           :to => :default_endpoint,
+           :allow_nil => true
 
   alias_method :address, :hostname # TODO: Remove all callers of address
 
   virtual_column :ipaddress,               :type => :string,  :uses => :endpoints
   virtual_column :hostname,                :type => :string,  :uses => :endpoints
   virtual_column :port,                    :type => :integer, :uses => :endpoints
+  virtual_column :security_protocol,       :type => :string,  :uses => :endpoints
 
   virtual_column :emstype,                 :type => :string
   virtual_column :emstype_description,     :type => :string
   virtual_column :last_refresh_status,     :type => :string
-  virtual_column :total_vms_and_templates, :type => :integer
-  virtual_column :total_vms,               :type => :integer
-  virtual_column :total_miq_templates,     :type => :integer
-  virtual_column :total_hosts,             :type => :integer
-  virtual_column :total_storages,          :type => :integer
-  virtual_column :total_clusters,          :type => :integer
+  virtual_total  :total_vms_and_templates, :vms_and_templates
+  virtual_total  :total_vms,               :vms
+  virtual_total  :total_miq_templates,     :miq_templates
+  virtual_total  :total_hosts,             :hosts
+  virtual_total  :total_storages,          :storages
+  virtual_total  :total_clusters,          :clusters
   virtual_column :zone_name,               :type => :string, :uses => :zone
   virtual_column :total_vms_on,            :type => :integer
   virtual_column :total_vms_off,           :type => :integer
   virtual_column :total_vms_unknown,       :type => :integer
   virtual_column :total_vms_never,         :type => :integer
   virtual_column :total_vms_suspended,     :type => :integer
+  virtual_total  :total_subnets,           :cloud_subnets
+
+  virtual_aggregate :total_vcpus, :hosts, :sum, :total_vcpus
+  virtual_aggregate :total_memory, :hosts, :sum, :ram_size
+  virtual_aggregate :total_cloud_vcpus, :vms, :sum, :cpu_total_cores
+  virtual_aggregate :total_cloud_memory, :vms, :sum, :ram_size
 
   alias_method :clusters, :ems_clusters # Used by web-services to return clusters as the property name
   alias_attribute :to_s, :name
-
-  EMS_INFRA_DISCOVERY_TYPES = {
-    'vmware'    => 'virtualcenter',
-    'microsoft' => 'scvmm',
-    'redhat'    => 'rhevm',
-  }
-
-  EMS_CLOUD_DISCOVERY_TYPES = {
-    'azure'  => 'azure',
-    'amazon' => 'ec2',
-  }
 
   def self.with_ipaddress(ipaddress)
     joins(:endpoints).where(:endpoints => {:ipaddress => ipaddress})
@@ -150,13 +160,17 @@ class ExtManagementSystem < ApplicationRecord
     joins(:endpoints).where(:endpoints => {:hostname => hostname})
   end
 
+  def self.with_role(role)
+    joins(:endpoints).where(:endpoints => {:role => role})
+  end
+
   def self.with_port(port)
     joins(:endpoints).where(:endpoints => {:port => port})
   end
 
   def self.create_discovered_ems(ost)
     ip = ost.ipaddr
-    unless with_ipaddress(ip).exist?
+    unless with_ipaddress(ip).exists?
       hostname = Socket.getaddrinfo(ip, nil)[0][2]
 
       ems_klass, ems_name = if ost.hypervisor.include?(:scvmm)
@@ -175,8 +189,17 @@ class ExtManagementSystem < ApplicationRecord
       )
 
       _log.info "#{ui_lookup(:table => "ext_management_systems")} #{ems.name} created"
-      AuditEvent.success(:event => "ems_created", :target_id => ems.id, :target_class => "ExtManagementSystem",
-                         :message => "#{ui_lookup(:table => "ext_management_systems")} #{ems.name} created")
+      AuditEvent.success(
+        :event        => "ems_created",
+        :target_id    => ems.id,
+        :target_class => "ExtManagementSystem",
+        :message      => "%{provider_type} %{provider_name} created" % {
+          :provider_type => Dictionary.gettext("ext_management_systems",
+                                               :type      => :table,
+                                               :notfound  => :titleize,
+                                               :plural    => false,
+                                               :translate => false),
+          :provider_name => ems.name})
     end
   end
 
@@ -260,6 +283,77 @@ class ExtManagementSystem < ApplicationRecord
     default || endpoints.build(:role => "default")
   end
 
+  # Takes multiple connection data
+  # endpoints, and authentications
+  def connection_configurations=(options)
+    options.each do |option|
+      add_connection_configuration_by_role(option)
+    end
+
+    delete_unused_connection_configurations(options)
+  end
+
+  def delete_unused_connection_configurations(options)
+    chosen_endpoints = options.map { |x| x.deep_symbolize_keys.fetch_path(:endpoint, :role).try(:to_sym) }.compact.uniq
+    existing_endpoints = endpoints.pluck(:role).map(&:to_sym)
+    # Delete endpoint that were not picked
+    roles_for_deletion = existing_endpoints - chosen_endpoints
+    endpoints.select { |x| x.role && roles_for_deletion.include?(x.role.to_sym) }.each(&:mark_for_destruction)
+    authentications.select { |x| x.authtype && roles_for_deletion.include?(x.authtype.to_sym) }.each(&:mark_for_destruction)
+  end
+
+  def connection_configurations
+    roles = endpoints.map(&:role)
+    options = {}
+
+    roles.each do |role|
+      conn = connection_configuration_by_role(role)
+      options[role] = conn
+    end
+
+    connections = OpenStruct.new(options)
+    connections.roles = roles
+    connections
+  end
+
+  # Takes a hash of connection data
+  # hostname, port, and authentication
+  # if no role is passed in assume is default role
+  def add_connection_configuration_by_role(connection)
+    connection.deep_symbolize_keys!
+    unless connection[:endpoint].key?(:role)
+      connection[:endpoint][:role] ||= "default"
+    end
+    if connection[:authentication].blank?
+      connection.delete(:authentication)
+    else
+      unless connection[:authentication].key?(:role)
+        endpoint_role = connection[:endpoint][:role]
+        authentication_role = endpoint_role == "default" ? default_authentication_type.to_s : endpoint_role
+        connection[:authentication][:role] ||= authentication_role
+      end
+    end
+
+    build_connection(connection)
+  end
+
+  def connection_configuration_by_role(role = "default")
+    endpoint = endpoints.detect { |e| e.role == role }
+
+    if endpoint
+      authtype = endpoint.role == "default" ? default_authentication_type.to_s : endpoint.role
+      auth = authentications.detect { |a| a.authtype == authtype }
+
+      options = {:endpoint => endpoint, :authentication => auth}
+      OpenStruct.new(options)
+    end
+  end
+
+  def hostnames
+    hostnames ||= endpoints.map(&:hostname)
+    hostnames
+  end
+
   def authentication_check_role
     'ems_operations'
   end
@@ -279,7 +373,7 @@ class ExtManagementSystem < ApplicationRecord
   end
 
   def with_provider_connection(options = {})
-    raise "no block given" unless block_given?
+    raise _("no block given") unless block_given?
     _log.info("Connecting through #{self.class.name}: [#{name}]")
     yield connect(options)
   end
@@ -306,18 +400,18 @@ class ExtManagementSystem < ApplicationRecord
     end
   end
 
-  def refresh_ems
-    raise "no #{ui_lookup(:table => "ext_management_systems")} credentials defined" if self.missing_credentials?
-    raise "#{ui_lookup(:table => "ext_management_systems")} failed last authentication check" unless self.authentication_status_ok?
-    EmsRefresh.queue_refresh(self)
+  def refresh_ems(opts = {})
+    if missing_credentials?
+      raise _("no %{table} credentials defined") % {:table => ui_lookup(:table => "ext_management_systems")}
+    end
+    unless authentication_status_ok?
+      raise _("%{table} failed last authentication check") % {:table => ui_lookup(:table => "ext_management_systems")}
+    end
+    EmsRefresh.queue_refresh(self, nil, opts)
   end
 
   def self.ems_infra_discovery_types
-    EMS_INFRA_DISCOVERY_TYPES.values
-  end
-
-  def self.ems_cloud_discovery_types
-    EMS_CLOUD_DISCOVERY_TYPES
+    @ems_infra_discovery_types ||= %w(virtualcenter scvmm rhevm)
   end
 
   def disconnect_inv
@@ -336,25 +430,8 @@ class ExtManagementSystem < ApplicationRecord
     MiqEvent.raise_evm_event(target, event, inputs)
   end
 
-  def non_clustered_hosts
-    hosts.where(:ems_cluster_id => nil)
-  end
-
-  def clustered_hosts
-    hosts.where.not(:ems_cluster_id => nil)
-  end
-
-  alias_method :storages,               :all_storages
-  alias_method :datastores,             :all_storages # Used by web-services to return datastores as the property name
-
-  alias_method :all_hosts,              :hosts
-  alias_method :all_host_ids,           :host_ids
-  alias_method :all_vms_and_templates,  :vms_and_templates
-  alias_method :all_vm_or_template_ids, :vm_or_template_ids
-  alias_method :all_vms,                :vms
-  alias_method :all_vm_ids,             :vm_ids
-  alias_method :all_miq_templates,      :miq_templates
-  alias_method :all_miq_template_ids,   :miq_template_ids
+  alias_method :all_storages,           :storages
+  alias_method :datastores,             :storages # Used by web-services to return datastores as the property name
 
   #
   # Relationship methods
@@ -399,30 +476,6 @@ class ExtManagementSystem < ApplicationRecord
     ["#{events_table_name(assoc)}.ems_id = ?", id]
   end
 
-  def total_vms_and_templates
-    vms_and_templates.size
-  end
-
-  def total_vms
-    vms.size
-  end
-
-  def total_miq_templates
-    miq_templates.size
-  end
-
-  def total_hosts
-    hosts.size
-  end
-
-  def total_clusters
-    ems_clusters.size
-  end
-
-  def total_storages
-    HostStorage.where(:host_id => host_ids).count("DISTINCT storage_id")
-  end
-
   def vm_count_by_state(state)
     vms.inject(0) { |t, vm| vm.power_state == state ? t + 1 : t }
   end
@@ -464,13 +517,12 @@ class ExtManagementSystem < ApplicationRecord
     [MiqRegion.my_region].compact unless interval_name == 'realtime'
   end
 
-  def perf_capture_enabled
+  def perf_capture_enabled?
     return @perf_capture_enabled unless @perf_capture_enabled.nil?
-    return @perf_capture_enabled = true if ems_clusters.any?(&:perf_capture_enabled?)
-    return @perf_capture_enabled = true if hosts.any?(&:perf_capture_enabled?)
-    @perf_capture_enabled = false
+    @perf_capture_enabled = ems_clusters.any?(&:perf_capture_enabled?) || host.any?(&:perf_capture_enabled?)
   end
-  alias_method :perf_capture_enabled?, :perf_capture_enabled
+  alias_method :perf_capture_enabled, :perf_capture_enabled?
+  Vmdb::Deprecation.deprecate_methods(self, :perf_capture_enabled => :perf_capture_enabled?)
 
   ###################################
   # Event Monitor
@@ -547,6 +599,29 @@ class ExtManagementSystem < ApplicationRecord
   end
 
   private
+
+  def build_connection(options = {})
+    build_endpoint_by_role(options[:endpoint])
+    build_authentication_by_role(options[:authentication])
+  end
+
+  def build_endpoint_by_role(options)
+    return if options.blank?
+    endpoint = endpoints.detect { |e| e.role == options[:role].to_s }
+    if endpoint
+      endpoint.assign_attributes(options)
+    else
+      endpoints.build(options)
+    end
+  end
+
+  def build_authentication_by_role(options)
+    return if options.blank?
+    role = options.delete(:role)
+    creds = {}
+    creds[role] = options
+    update_authentication(creds,options)
+  end
 
   def clear_association_cache
     @storages = nil

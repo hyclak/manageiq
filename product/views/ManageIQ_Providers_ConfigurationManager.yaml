@@ -20,9 +20,7 @@ db: ManageIQ::Providers::ConfigurationManager
 # Columns to fetch from the main table
 cols:
 - name
-- url
 - type
-- zone.name
 - last_refresh_date
 - region_description
 - authentication_status
@@ -35,13 +33,10 @@ include:
     - name
   provider:
     columns:
-    - name
     - url
 
 # Included tables and columns for query performance
 include_for_find:
-  :zone: {}
-  :provider: {}
 
 # Order of columns (from all tables)
 col_order:
@@ -68,7 +63,7 @@ headers:
 col_formats:
 -
 -
--
+- :model_name
 -
 -
 -

@@ -41,13 +41,13 @@ class NetappRemoteService < StorageManager
   def ontap_client
     return @ontapClient unless @ontapClient.nil?
     connect
-    @ontapClient || (raise "NetappRemoteService: not connected.")
+    @ontapClient || (raise _("NetappRemoteService: not connected."))
   end
 
   def nma_client
     return @namClient unless @namClient.nil?
     connect
-    @namClient || (raise "NetappRemoteService: not connected.")
+    @namClient || (raise _("NetappRemoteService: not connected."))
   end
 
   def self.refresh_inventory_by_subclass(ids, args = {})
@@ -235,7 +235,7 @@ class NetappRemoteService < StorageManager
         agent.connect
         agent.update_metrics(statistic_time)
       rescue Exception => err
-        _log.warn "#{err}"
+        _log.warn err.to_s
         $log.warn err.backtrace.join("\n")
         next
       ensure
@@ -257,7 +257,7 @@ class NetappRemoteService < StorageManager
       begin
         agent.rollup_hourly_metrics(rollup_time)
       rescue Exception => err
-        _log.warn "#{err}"
+        _log.warn err.to_s
         $log.warn err.backtrace.join("\n")
         next
       ensure
@@ -295,7 +295,7 @@ class NetappRemoteService < StorageManager
       begin
         agent.rollup_daily_metrics(rollup_time, time_profile)
       rescue Exception => err
-        _log.warn "#{err}"
+        _log.warn err.to_s
         $log.warn err.backtrace.join("\n")
         next
       ensure
@@ -463,7 +463,9 @@ class NetappRemoteService < StorageManager
     hostNames =  (hosts.kind_of?(Array) ? hosts : [hosts])
 
     rv = nma_client.nfs_exportfs_list_rules(:pathname, path)
-    raise "NetappRemoteService.nfs_add_root_hosts: No export rules found for path #{path}" unless rv.kind_of?(NetAppManageability::NAMHash)
+    unless rv.kind_of?(NetAppManageability::NAMHash)
+      raise _("NetappRemoteService.nfs_add_root_hosts: No export rules found for path %{path}") % {:path => path}
+    end
 
     rules = rv.rules
     rules.exports_rule_info.root = NetAppManageability::NAMHash.new if rules.exports_rule_info.root.nil?
@@ -523,17 +525,18 @@ class NetappRemoteService < StorageManager
   end
 
   def verify_credentials(auth_type = nil)
-    raise "no credentials defined" if self.missing_credentials?(auth_type)
+    raise _("no credentials defined") if missing_credentials?(auth_type)
 
     begin
       volume_list_info
       disconnect
     rescue NetAppManageability::Error, NameError, Errno::ETIMEDOUT, Errno::ENETUNREACH
-      _log.warn("#{$!.inspect}")
+      _log.warn($!.inspect)
       raise $!.message
     rescue Exception
-      _log.warn("#{$!.inspect}")
-      raise "Unexpected response returned from #{ui_lookup(:table => "storage_managers")}, see log for details"
+      _log.warn($!.inspect)
+      raise _("Unexpected response returned from %{table}, see log for details") %
+              {:table => ui_lookup(:table => "storage_managers")}
     else
       true
     end

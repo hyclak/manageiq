@@ -1,8 +1,9 @@
-require 'MiqVim'
-require 'MiqVimBroker'
+require 'VMwareWebService/MiqVim'
+require 'VMwareWebService/MiqVimBroker'
 
 describe MiqVimBrokerWorker::Runner do
   before(:each) do
+    _guid_2, _server_2, @zone_2 = EvmSpecHelper.create_guid_miq_server_zone
     guid, server, @zone = EvmSpecHelper.create_guid_miq_server_zone
     @ems = FactoryGirl.create(:ems_vmware_with_authentication, :zone => @zone)
     other_ems = FactoryGirl.create(:ems_vmware_with_authentication, :zone => @zone)
@@ -23,7 +24,7 @@ describe MiqVimBrokerWorker::Runner do
     expect_any_instance_of(described_class).to receive(:start_broker_server).once
     expect_any_instance_of(described_class).to receive(:reset_broker_update_notification).once
     expect_any_instance_of(described_class).to receive(:reset_broker_update_sleep_interval).once
-    vim_broker_worker = described_class.new({:guid => @worker_guid})
+    vim_broker_worker = described_class.new(:guid => @worker_guid)
 
     expect(vim_broker_worker.instance_variable_get(:@initial_emses_to_monitor)).to match_array @zone.ext_management_systems
 
@@ -35,7 +36,9 @@ describe MiqVimBrokerWorker::Runner do
   context "with a worker created" do
     before(:each) do
       expect_any_instance_of(described_class).to receive(:after_initialize).once
-      @vim_broker_worker = described_class.new({:guid => @worker_guid})
+      @vim_broker_worker = described_class.new(:guid => @worker_guid)
+      allow(@vim_broker_worker).to receive(:worker_settings).and_return(
+        :vim_broker_worker_max_wait => 60, :vim_broker_worker_max_objects => 250)
     end
 
     context "#start_broker_server" do
@@ -220,8 +223,8 @@ describe MiqVimBrokerWorker::Runner do
           expect(MiqQueue.count).to eq(1)
           q = MiqQueue.first
           expect(q.class_name).to eq("EmsRefresh")
-          expect(q.method_name).to eq("vc_update")
-          expect(q.args).to eq([@ems.id, event])
+          expect(q.method_name).to eq("refresh")
+          expect(q.args).to eq([[[vm.class.name, vm.id]]])
         end
 
         it "will handle queued Host updates properly" do
@@ -242,8 +245,8 @@ describe MiqVimBrokerWorker::Runner do
           expect(MiqQueue.count).to eq(1)
           q = MiqQueue.first
           expect(q.class_name).to eq("EmsRefresh")
-          expect(q.method_name).to eq("vc_update")
-          expect(q.args).to eq([@ems.id, event])
+          expect(q.method_name).to eq("refresh")
+          expect(q.args).to eq([[[host.class.name, host.id]]])
         end
 
         it "will ignore updates to unknown properties" do
@@ -313,8 +316,38 @@ describe MiqVimBrokerWorker::Runner do
           expect(MiqQueue.count).to eq(1)
           q = MiqQueue.first
           expect(q.class_name).to eq("EmsRefresh")
-          expect(q.method_name).to eq("vc_update")
-          expect(q.args).to eq([ems2.id, event])
+          expect(q.method_name).to eq("refresh")
+          expect(q.args).to eq([[[vm2.class.name, vm2.id]]])
+        end
+
+        it "will reconnect to an EMS" do
+          event = {
+            :server   => @ems.address,
+            :username => @ems.authentication_userid,
+            :op       => "MiqVimRemoved",
+            :error    => "Connection timed out",
+          }
+
+          @vim_broker_worker.instance_variable_get(:@queue).enq(event.dup)
+
+          expect(@vim_broker_worker).to receive(:reconnect_ems).with(@ems)
+          @vim_broker_worker.drain_event
+        end
+
+        it "will not reconnect to an EMS in another zone" do
+          ems_2 = FactoryGirl.create(:ems_vmware_with_authentication, :zone => @zone_2)
+
+          event = {
+            :server   => ems_2.address,
+            :username => ems_2.authentication_userid,
+            :op       => "MiqVimRemoved",
+          }
+
+          @vim_broker_worker.instance_variable_get(:@queue).enq(event.dup)
+
+          expect(@vim_broker_worker).not_to receive(:reconnect_ems)
+
+          @vim_broker_worker.drain_event
         end
       end
     end

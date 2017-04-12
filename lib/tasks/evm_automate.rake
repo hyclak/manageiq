@@ -69,7 +69,7 @@ namespace :evm do
       puts "The following automate tasks are available"
       puts " Import          - Usage: rake evm:automate:import PREVIEW=true DOMAIN=domain_name " \
                                 "IMPORT_AS=new_domain_name IMPORT_DIR=./model_export|ZIP_FILE=filename|YAML_FILE=filename " \
-                                "SYSTEM=true|false ENABLED=true|false"
+                                "SYSTEM=true|false ENABLED=true|false OVERWRITE=true|false"
       puts " Export          - Usage: rake evm:automate:export DOMAIN=domain_name "  \
                                "EXPORT_AS=new_domain_name NAMESPACE=sample CLASS=methods EXPORT_DIR=./model_export|ZIP_FILE=filename|YAML_FILE=filename"
       puts " Backup          - Usage: rake evm:automate:backup BACKUP_ZIP_FILE=filename OVERWRITE=false"
@@ -126,18 +126,20 @@ namespace :evm do
     desc 'Import automate model information from an export folder or zip file. '
     task :import => :environment do
       begin
-        raise "Must specify domain for import:" if ENV['DOMAIN'].blank?
-        if ENV['YAML_FILE'].blank? && ENV['IMPORT_DIR'].blank? && ENV['ZIP_FILE'].blank?
-          raise 'Must specify either a directory with exported automate model or a zip file'
+        raise "Must specify domain for import:" if ENV['DOMAIN'].blank? && ENV['GIT_URL'].blank?
+        if ENV['YAML_FILE'].blank? && ENV['IMPORT_DIR'].blank? && ENV['ZIP_FILE'].blank? && ENV['GIT_URL'].blank?
+          raise 'Must specify either a directory with exported automate model or a zip file or a http based git url'
         end
         preview        = ENV['PREVIEW'] ||= 'true'
         raise 'Preview must be true or false' unless %w{true false}.include?(preview)
         mode           = ENV['MODE'] ||= 'add'
         import_as      = ENV['IMPORT_AS']
+        overwrite      = (ENV['OVERWRITE'] ||= 'false').casecmp('true').zero?
         import_options = {'preview'   => (preview.to_s.downcase == 'true'),
                           'mode'      => mode.to_s.downcase,
                           'namespace' => ENV['NAMESPACE'],
                           'class'     => ENV['CLASS'],
+                          'overwrite' => overwrite,
                           'import_as' => import_as}
         if ENV['ZIP_FILE'].present?
           puts "Importing automate domain: #{ENV['DOMAIN']} from file #{ENV['ZIP_FILE']}"
@@ -148,6 +150,16 @@ namespace :evm do
         elsif ENV['YAML_FILE'].present?
           puts "Importing automate domain: #{ENV['DOMAIN']} from file #{ENV['YAML_FILE']}"
           import_options['yaml_file']   = ENV['YAML_FILE']
+        elsif ENV['GIT_URL'].present?
+          puts "Importing automate domain from url #{ENV['GIT_URL']}"
+          ENV['DOMAIN'] = nil
+          import_options['git_url'] = ENV['GIT_URL']
+          import_options['overwrite'] = true
+          import_options['userid'] = ENV['USERID']
+          import_options['password'] = ENV['PASSWORD']
+          import_options['ref'] = ENV['REF'] || MiqAeGitImport::DEFAULT_BRANCH
+          import_options['ref_type'] = ENV['REF_TYPE'] || MiqAeGitImport::BRANCH
+          import_options['verify_ssl'] = ENV['VERIFY_SSL'] || OpenSSL::SSL::VERIFY_PEER
         end
         %w(SYSTEM ENABLED).each do |name|
           if ENV[name].present?

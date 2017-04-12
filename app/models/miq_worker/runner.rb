@@ -8,7 +8,6 @@ class MiqWorker::Runner
   include Vmdb::Logging
   attr_accessor :last_hb, :worker, :worker_settings
   attr_reader   :active_roles, :server
-  attr_writer   :vmdb_config
 
   INTERRUPT_SIGNALS = ["SIGINT", "SIGTERM"]
 
@@ -22,10 +21,6 @@ class MiqWorker::Runner
     new(*args).start
   end
 
-  def vmdb_config
-    @vmdb_config ||= VMDB::Config.new("vmdb")
-  end
-
   def poll_method
     return @poll_method unless @poll_method.nil?
     self.poll_method = worker_settings[:poll_method]
@@ -33,7 +28,7 @@ class MiqWorker::Runner
 
   def poll_method=(val)
     val = "sleep_poll_#{val}"
-    raise ArgumentError, "poll method '#{val}' not defined" unless self.respond_to?(val)
+    raise ArgumentError, _("poll method '%{value}' not defined") % {:value => val} unless respond_to?(val)
     @poll_method = val.to_sym
   end
 
@@ -100,12 +95,21 @@ class MiqWorker::Runner
   end
 
   def worker_monitor_drb
-    raise "#{log_prefix} No MiqServer found to establishing DRb Connection to" if server.nil?
-    drb_uri = server.reload.drb_uri
-    raise "#{log_prefix} Blank DRb_URI for MiqServer with ID=[#{server.id}], NAME=[#{server.name}], PID=[#{server.pid}], GUID=[#{server.guid}]"    if drb_uri.blank?
-    _log.info("#{log_prefix} Initializing DRb Connection to MiqServer with ID=[#{server.id}], NAME=[#{server.name}], PID=[#{server.pid}], GUID=[#{server.guid}] DRb URI=[#{drb_uri}]")
-    require 'drb'
-    DRbObject.new(nil, drb_uri)
+    @worker_monitor_drb ||= begin
+      raise _("%{log} No MiqServer found to establishing DRb Connection to") % {:log => log_prefix} if server.nil?
+      drb_uri = server.reload.drb_uri
+      if drb_uri.blank?
+        raise _("%{log} Blank DRb_URI for MiqServer with ID=[%{number}], NAME=[%{name}], PID=[%{pid_number}], GUID=[%{guid_number}]") %
+          {:log         => log_prefix,
+           :number      => server.id,
+           :name        => server.name,
+           :pid_number  => server.pid,
+           :guid_number => server.guid}
+      end
+      _log.info("#{log_prefix} Initializing DRb Connection to MiqServer with ID=[#{server.id}], NAME=[#{server.name}], PID=[#{server.pid}], GUID=[#{server.guid}] DRb URI=[#{drb_uri}]")
+      require 'drb'
+      DRbObject.new(nil, drb_uri)
+    end
   end
 
   ###############################
@@ -160,7 +164,7 @@ class MiqWorker::Runner
   #
 
   def find_worker_record
-    @worker = self.class.corresponding_model.find_by_guid(@cfg[:guid])
+    @worker = self.class.corresponding_model.find_by(:guid => @cfg[:guid])
     do_exit("Unable to find instance for worker GUID [#{@cfg[:guid]}].", 1) if @worker.nil?
   end
 
@@ -271,15 +275,14 @@ class MiqWorker::Runner
     _log.info("#{log_prefix} Synchronizing active roles complete...")
   end
 
-  def message_sync_config(*args)
+  def message_sync_config(*_args)
     _log.info("#{log_prefix} Synchronizing configuration...")
-    opts = args.extract_options!
-    sync_config(opts[:config])
+    sync_config
     _log.info("#{log_prefix} Synchronizing configuration complete...")
   end
 
-  def sync_config(config = nil)
-    self.vmdb_config = config
+  def sync_config
+    Vmdb::Settings.reload!
     @my_zone ||= MiqServer.my_zone
     sync_log_level
     sync_worker_settings
@@ -293,11 +296,12 @@ class MiqWorker::Runner
   end
 
   def sync_log_level
-    Vmdb::Loggers.apply_config(vmdb_config.config[:log])
+    # TODO: Can this be removed since the VMDB::Config::Activator will do this anyway?
+    Vmdb::Loggers.apply_config(::Settings.log)
   end
 
   def sync_worker_settings
-    @worker_settings = self.class.corresponding_model.worker_settings(:config => vmdb_config)
+    @worker_settings = self.class.corresponding_model.worker_settings(:config => ::Settings.to_hash)
     @poll = @worker_settings[:poll]
     poll_method
   end
@@ -312,7 +316,7 @@ class MiqWorker::Runner
   #
 
   def do_work
-    raise NotImplementedError, "must be implemented in a subclass"
+    raise NotImplementedError, _("must be implemented in a subclass")
   end
 
   def do_wait_for_worker_monitor
@@ -330,7 +334,10 @@ class MiqWorker::Runner
       begin
         heartbeat
         do_work
-      rescue TemporaryFailure
+      rescue TemporaryFailure => error
+        msg = "#{log_prefix} Temporary failure (message: '#{error}') caught"\
+            " during #do_work. Sleeping for a while before resuming."
+        _log.warn(msg)
         recover_from_temporary_failure
       rescue SystemExit
         do_exit("SystemExit signal received.  ")
@@ -341,6 +348,7 @@ class MiqWorker::Runner
       end
 
       do_gc
+      self.class.log_ruby_object_usage(worker_settings[:top_ruby_object_classes_to_log].to_i)
       send(poll_method)
     end
   end
@@ -349,10 +357,8 @@ class MiqWorker::Runner
     now = Time.now.utc
     # Heartbeats can be expensive, so do them only when needed
     return if @last_hb.kind_of?(Time) && (@last_hb + worker_settings[:heartbeat_freq]) >= now
-    @worker_monitor_drb ||= worker_monitor_drb
-    messages = @worker_monitor_drb.worker_heartbeat(@worker.pid, @worker.class.name, @worker.queue_name)
+    messages = worker_monitor_drb.worker_heartbeat(@worker.pid, @worker.class.name, @worker.queue_name)
     @last_hb = now
-    log_ruby_object_usage(worker_settings[:log_top_ruby_objects_on_heartbeat].to_i)
     messages.each { |msg, *args| process_message(msg, *args) }
     do_heartbeat_work
   rescue DRb::DRbError => err
@@ -425,6 +431,28 @@ class MiqWorker::Runner
     sleep(seconds % SAFE_SLEEP_SECONDS)
   end
 
+  def self.ruby_object_usage
+    types = Hash.new { |h, k| h[k] = 0 }
+    ObjectSpace.each_object do |obj|
+      types[obj.class.name] += 1
+    end
+    types
+  end
+
+  LOG_RUBY_OBJECT_USAGE_INTERVAL = 60
+  def self.log_ruby_object_usage(top = 20)
+    return unless top > 0
+
+    t = Time.now.utc
+    @last_ruby_object_usage ||= t
+
+    if (@last_ruby_object_usage + LOG_RUBY_OBJECT_USAGE_INTERVAL) < t
+      types = ruby_object_usage
+      _log.info("Ruby Object Usage: #{types.sort_by { |_k, v| -v }.take(top).inspect}")
+      @last_ruby_object_usage = t
+    end
+  end
+
   protected
 
   def process_message(message, *args)
@@ -443,29 +471,6 @@ class MiqWorker::Runner
     end
   rescue => err
     _log.info("#{log_prefix} Releasing any broker connections for pid: [#{Process.pid}], ERROR: #{err.message}")
-  end
-
-  def ruby_object_usage
-    types = Hash.new { |h, k| h[k] = Hash.new(0) }
-    ObjectSpace.each_object do |obj|
-      types[obj.class][:count] += 1
-      next if obj.kind_of?(DRbObject) || obj.kind_of?(WeakRef)
-      if obj.respond_to?(:length)
-        len = obj.length
-        if len.kind_of?(Numeric)
-          types[obj.class][:max]    = len if len > types[obj.class][:max]
-          types[obj.class][:total] += len
-        end
-      end
-    end
-    types
-  end
-
-  def log_ruby_object_usage(top = 20)
-    if top > 0
-      types = ruby_object_usage
-      $log.info("Ruby Object Usage: #{types.sort_by { |_klass, h| h[:count] }.reverse[0, top].inspect}")
-    end
   end
 
   def set_process_title

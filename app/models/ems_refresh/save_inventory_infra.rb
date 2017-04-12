@@ -2,6 +2,7 @@
 # Calling order for EmsInfra:
 # - ems
 #   - storages
+#   - storage_profiles
 #   - ems_clusters
 #   - hosts
 #     - storages (link)
@@ -51,9 +52,18 @@ module EmsRefresh::SaveInventoryInfra
       _log.debug "#{log_header} hashes:\n#{YAML.dump(hashes)}"
     end
 
-    child_keys = [:storages, :clusters, :hosts, :vms, :folders, :resource_pools, :customization_specs,
-                  :orchestration_templates, :orchestration_stacks, :cloud_networks, :security_groups, :floating_ips,
-                  :network_routers, :network_ports]
+    child_keys = [
+      :storages,
+      :storage_profiles,
+      :clusters,
+      :hosts,
+      :vms,
+      :folders,
+      :resource_pools,
+      :customization_specs,
+      :orchestration_templates,
+      :orchestration_stacks
+    ]
 
     # Save and link other subsections
     save_child_inventory(ems, hashes, child_keys, target)
@@ -68,6 +78,7 @@ module EmsRefresh::SaveInventoryInfra
 
     new_relats = hashes_relats(hashes)
     link_ems_inventory(ems, target, prev_relats, new_relats)
+    remove_obsolete_switches
 
     ems
   end
@@ -114,7 +125,7 @@ module EmsRefresh::SaveInventoryInfra
                     []
                   end
 
-    child_keys = [:operating_system, :switches, :hardware, :system_services]
+    child_keys = [:operating_system, :switches, :hardware, :system_services, :host_storages]
     extra_keys = [:ems_cluster, :storages, :vms, :power_state, :ems_children]
     remove_keys = child_keys + extra_keys
 
@@ -147,9 +158,15 @@ module EmsRefresh::SaveInventoryInfra
           #   Keep the previous hostname unless it's nil or it's an ip address
           h[:hostname] = found.hostname unless found.hostname.nil? || (found.hostname =~ ip_whole)
 
-          #   Update the name to the hostname if the new name has an ip address,
-          #   and the new hostname is not an ip address
-          h[:name] = h[:hostname] if h[:name] =~ ip_part && !(h[:hostname] =~ ip_whole)
+          if found.name =~ /#{h[:name]} - \d+$/
+            # Update the name to be found.name if it has the same ems_ref and the name
+            # already has a '- int' suffix to work around duplicate hostnames
+            h[:name] = found.name
+          elsif h[:name] =~ ip_part && h[:hostname] !~ ip_whole
+            # Update the name to the hostname if the new name has an ip address,
+            # and the new hostname is not an ip address
+            h[:name] = h[:hostname]
+          end
 
           h.delete(:type)
 
@@ -176,7 +193,6 @@ module EmsRefresh::SaveInventoryInfra
 
         found.save!
         h[:id] = found.id
-        h[:_object] = found
       rescue => err
         # If a host failed to process, mark it as invalid and log an error
         h[:invalid] = invalids_found = true
@@ -201,6 +217,26 @@ module EmsRefresh::SaveInventoryInfra
         disconnects.each(&:disconnect_inv)
       end
     end
+  end
+
+  def save_host_storages_inventory(host, hashes, target = nil)
+    target = host if target.nil?
+
+    # Update the associated ids
+    hashes.each do |h|
+      h[:host_id]    = host.id
+      h[:storage_id] = h.fetch_path(:storage, :id)
+    end
+
+    host.host_storages(true)
+    deletes =
+      if target == host
+        host.host_storages.dup
+      else
+        []
+      end
+
+    save_inventory_multi(host.host_storages, hashes, deletes, [:host_id, :storage_id], nil, [:storage])
   end
 
   def save_folders_inventory(ems, hashes, target = nil)
@@ -249,6 +285,33 @@ module EmsRefresh::SaveInventoryInfra
     store_ids_for_new_records(ems.resource_pools, hashes, :uid_ems)
   end
 
+  def save_storage_profiles_inventory(ems, hashes, target = nil)
+    target = ems if target.nil?
+
+    ems.storage_profiles.reset
+    deletes =
+      if target == ems
+        :use_association
+      else
+        []
+      end
+
+    save_inventory_multi(ems.storage_profiles, hashes, deletes, [:ems_ref], [:storage_profile_storages])
+    store_ids_for_new_records(ems.storage_profiles, hashes, [:ems_ref])
+  end
+
+  def save_storage_profile_storages_inventory(storage_profile, storages)
+    hashes = storages.collect do |storage|
+      {
+        :storage_profile_id => storage_profile.id,
+        :storage_id         => storage[:id]
+      }
+    end
+
+    save_inventory_multi(storage_profile.storage_profile_storages, hashes,
+                         [], [:storage_profile_id, :storage_id])
+  end
+
   def save_customization_specs_inventory(ems, hashes, _target = nil)
     save_inventory_multi(ems.customization_specs, hashes, :use_association, [:name])
   end
@@ -262,7 +325,11 @@ module EmsRefresh::SaveInventoryInfra
   end
 
   def save_switches_inventory(host, hashes)
-    save_inventory_multi(host.switches, hashes, :use_association, [:uid_ems], :lans)
+    already_saved, not_yet_saved = hashes.partition { |h| h[:id] }
+    save_inventory_multi(host.switches, not_yet_saved, [], [:uid_ems], :lans)
+    host_switches_hash = already_saved.collect { |switch| {:host_id => host.id, :switch_id => switch[:id]} }
+    save_inventory_multi(host.host_switches, host_switches_hash, [], [:host_id, :switch_id])
+    host.switches(true)
 
     host.save!
 
@@ -277,6 +344,17 @@ module EmsRefresh::SaveInventoryInfra
         lh[:id] = lan.id
       end
     end
+
+    # handle deletes here instead of inside #save_inventory_multi
+    switch_ids = Set.new(hashes.collect { |s| s[:id] })
+    deletes = host.switches.select { |s| !switch_ids.include?(s.id) }
+    host.switches.delete(deletes)
+  end
+
+  def remove_obsolete_switches
+    # delete from switches as s where s.shared is NULL and s.id not in (select switch_id from host_switches)
+    # delete from switches as s where s.shared = 't' and s.id not in (select switch_id from host_switches)
+    Switch.where.not(:id => HostSwitch.all.collect(&:switch).uniq).destroy_all
   end
 
   def save_lans_inventory(switch, hashes)

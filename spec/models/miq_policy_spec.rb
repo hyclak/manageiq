@@ -9,6 +9,9 @@ describe MiqPolicy do
       @ps = FactoryGirl.create(:miq_policy_set)
       @p  = FactoryGirl.create(:miq_policy)
       @ps.add_member(@p)
+
+      @ps2 = FactoryGirl.create(:miq_policy_set)
+      @p2  = FactoryGirl.create(:miq_policy)
     end
 
     it "should return the correct conditions" do
@@ -97,6 +100,16 @@ describe MiqPolicy do
       end
     end
 
+    describe '#miq_event_definitions' do
+      before do
+        policy.miq_policy_contents.push(FactoryGirl.create(:miq_policy_content))
+      end
+
+      it 'lists event definition' do
+        expect(policy.miq_event_definitions).to eq([event])
+      end
+    end
+
     describe "#sync_events, #add_event, #delete_event" do
       let(:new_events) { [FactoryGirl.create(:miq_event_definition), FactoryGirl.create(:miq_event_definition)] }
 
@@ -123,12 +136,6 @@ describe MiqPolicy do
       it "replaces actions for an event" do
         policy.replace_actions_for_event(event, [[new_action, {:qualifier => :success}]])
         expect(policy.actions_for_event(event, :success)).to eq([new_action])
-      end
-    end
-
-    describe "#action_result_for_event" do
-      it "finds the action result to be true or false" do
-        expect(policy.action_result_for_event(action, event)).to be true
       end
     end
 
@@ -277,6 +284,36 @@ describe MiqPolicy do
       expect(policy.events).not_to                      be_empty
       expect(policy.actions_for_event).not_to           be_empty
       expect(policy.applies_to?(double, double)).not_to be_nil
+    end
+  end
+
+  describe "(Built-in) Prevent Retired Instance from Starting policy" do
+    before do
+      FactoryGirl.create(:miq_event_definition, :name => "vm_resume")
+      FactoryGirl.create(:miq_action, :name => "vm_suspend", :action_type => 'default')
+      MiqPolicy.class_variable_set(:@@built_in_policies, nil)
+      @vm = FactoryGirl.create(:vm_openstack,
+                               :ext_management_system => FactoryGirl.create(:ems_openstack,
+                                                                            :zone => FactoryGirl.create(:zone)))
+    end
+    subject { MiqPolicy.enforce_policy(@vm, "vm_resume", {}) }
+
+    it 'prevents retired instance from starting' do
+      MiqQueue.destroy_all
+      @vm.update_attributes(:retired => true)
+      expect(subject[:result]).to be false
+      expect(subject[:actions].size).to eq(1)
+      expect(subject[:details].first["name"]).to eq("(Built-in) Prevent Retired Instance from Starting")
+      q = MiqQueue.first
+      expect(q.method_name).to eq('suspend')
+      expect(q.class_name).to  eq(@vm.class.name)
+      expect(q.instance_id).to eq(@vm.id)
+    end
+
+    it 'allows active vm to start' do
+      expect(subject[:result]).to be true
+      expect(subject[:actions].size).to eq(0)
+      expect(subject[:details].first["name"]).to eq("(Built-in) Prevent Retired Instance from Starting")
     end
   end
 end

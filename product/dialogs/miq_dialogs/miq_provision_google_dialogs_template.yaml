@@ -32,7 +32,7 @@
           :data_type: :string
         :owner_first_name:
           :description: First Name
-          :required: true
+          :required: false
           :display: :edit
           :data_type: :string
         :owner_manager:
@@ -52,7 +52,7 @@
           :data_type: :string
         :owner_last_name:
           :description: Last Name
-          :required: true
+          :required: false
           :display: :edit
           :data_type: :string
         :owner_manager_mail:
@@ -100,7 +100,7 @@
         :owner_email:
           :description: E-Mail
           :required_method: :validate_regex
-          :required_regex: !ruby/regexp /\A[\w!#$\%&'*+\/=?`\{|\}~^-]+(?:\.[\w!#$\%&'*+\/=?`\{|\}~^-]+)*@(?:[A-Z0-9-]+\.)+[A-Z]{2,6}\Z/i 
+          :required_regex: !ruby/regexp /\A[\w!#$\%&'*+\/=?`\{|\}~^-]+(?:\.[\w!#$\%&'*+\/=?`\{|\}~^-]+)*@(?:[A-Z0-9-]+\.)+[A-Z]{2,6}\Z/i
           :required: true
           :display: :edit
           :data_type: :string
@@ -205,14 +205,18 @@
           :notes_display: :show
         :vm_name:
           :description: Instance Name
-          :required_method: :validate_vm_name
+          :required_method:
+            - :validate_vm_name
+            - :validate_regex
+          :required_regex: !ruby/regexp /\A(?:[a-z](?:[-a-z0-9]{0,61}[a-z0-9])?)\Z/
+          :required_regex_fail_details: The name must be composed only of lower-case English alphabet characters (a-z), numbers (0-9), and dashes (-). The first character must be a lower-case English alphabet character, and the last character must not be a dash.
           :required: true
           :notes:
           :display: :edit
           :data_type: :string
           :notes_display: :show
-          :min_length:
-          :max_length:
+          :min_length: 1
+          :max_length: 63
       :display: :show
     :schedule:
       :description: Schedule
@@ -266,7 +270,7 @@
       :description: Properties
       :fields:
         :boot_disk_size:
-          :description: Boot Disk Size (GB)
+          :description: Boot Disk Size
           :values:
             10.GB: 10 GB
             50.GB: 50 GB
@@ -285,6 +289,16 @@
           :required: true
           :display: :edit
           :data_type: :integer
+        :is_preemptible:
+          :values:
+            false: 0
+            true: 1
+          :description: Preemptible
+          :help: "A <a target=\"_blank\" href=\"https://cloud.google.com/compute/docs/instances/preemptible\">preemptible VM</a> will run for at most 24 hours and may be prematurely-terminated."
+          :required: false
+          :display: :edit
+          :default: false
+          :data_type: :boolean
       :display: :show
   :dialog_order:
   - :requester

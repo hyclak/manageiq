@@ -1,9 +1,10 @@
 class DialogFieldTextBox < DialogField
-  AUTOMATE_VALUE_FIELDS = %w(protected required validator_rule validator_type read_only)
+  AUTOMATE_VALUE_FIELDS = %w(data_type protected required validator_rule validator_type read_only visible).freeze
 
   def value
     @value = values_from_automate if dynamic && @value.blank?
-    @value
+    return nil if @value.nil?
+    convert_value_to_type
   end
 
   def initial_values
@@ -24,8 +25,9 @@ class DialogFieldTextBox < DialogField
   end
 
   def automate_output_value
+    return nil if @value.nil?
     return MiqPassword.encrypt(@value) if self.protected?
-    @value
+    convert_value_to_type
   end
 
   def automate_key_name
@@ -34,13 +36,15 @@ class DialogFieldTextBox < DialogField
   end
 
   def validate_field_data(dialog_tab, dialog_group)
-    return if !required? && value.blank?
+    return if !required? && @value.blank? || !visible
 
-    return "#{dialog_tab.label}/#{dialog_group.label}/#{label} is required" if required? && value.blank?
+    return "#{dialog_tab.label}/#{dialog_group.label}/#{label} is required" if required? && @value.blank?
+    if data_type == "integer" && !@value.match(/^[0-9]+$/)
+      return "#{dialog_tab.label}/#{dialog_group.label}/#{label} must be an integer"
+    end
 
     # currently only regex is supported
     rule = validator_rule if validator_type == 'regex'
-    rule ||= "^[0-9]+$" if data_type == "integer"
 
     return unless rule
     "#{dialog_tab.label}/#{dialog_group.label}/#{label} is invalid" unless value.match(/#{rule}/)
@@ -65,10 +69,16 @@ class DialogFieldTextBox < DialogField
   def refresh_json_value
     @value = values_from_automate
 
-    {:text => @value}
+    {:text => @value, :read_only => read_only?, :visible => visible?}
   end
 
   def trigger_automate_value_updates
     values_from_automate
+  end
+
+  private
+
+  def convert_value_to_type
+    data_type == "integer" ? @value.to_i : @value
   end
 end

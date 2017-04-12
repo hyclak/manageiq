@@ -1,11 +1,10 @@
 module MiqReport::Generator::Sorting
   SORT_COL_SUFFIX = "_sort_"
 
+  # @param table [Ruport::Data::Table] Enumerable of Ruport::Data::Record
+  # @param col_names [Array<String>] Array of column names to be sorted
+  # @param order [Symbol] :ascending, :descending
   def sort_table(table, col_names, order)
-    # => Add special sorting logic here
-    # => table     - Ruport::Data::Table. This class includes enumerable so it can be accessed as a collection of Ruport::Data::Record objects
-    # => col_names - Array of column names to be sorted
-    # => order     - Sort order: "Ascending" | "Descending"
     table.sort_rows_by(col_names, order)
   end
 
@@ -34,8 +33,8 @@ module MiqReport::Generator::Sorting
       end
     end
 
-    order = self.order.blank? ? "Ascending" : self.order                        # Default to Ascending sort
-    @table = sort_table(@table, new_sortby, :order => order.downcase.to_sym)      # Sort the table
+    order = ascending? ? :ascending : :descending
+    @table = sort_table(@table, new_sortby, :order => order)
 
     # Remove any subtituted values we put in the table earlier
     new_sortby.each_with_index do |sb, idx|
@@ -79,11 +78,11 @@ module MiqReport::Generator::Sorting
         ts_str[14..18] = "00:00"
         Time.parse(ts_str)
       end
-    when :day           then value ? value.beginning_of_day : nil
-    when :week          then value ? value.beginning_of_week : nil
-    when :month         then value ? value.beginning_of_month : nil
-    when :quarter       then value ? value.beginning_of_quarter : nil
-    when :year          then value ? value.beginning_of_year : nil
+    when :day           then value.try(:beginning_of_day)
+    when :week          then value.try(:beginning_of_week)
+    when :month         then value.try(:beginning_of_month)
+    when :quarter       then value.try(:beginning_of_quarter)
+    when :year          then value.try(:beginning_of_year)
     when :hour_of_day   then value ? value.hour : 999
     when :day_of_week   then value ? value.wday : 999
     when :week_of_year  then value ? value.strftime("%W").to_i : 999

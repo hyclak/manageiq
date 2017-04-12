@@ -32,7 +32,8 @@ class VmScan < Job
       :data               => {'snapshot_create' => 'scanning',
                               'scanning'        => 'scanning',
                               'snapshot_delete' => 'snapshot_delete',
-                              'synchronizing'   => 'synchronizing'}
+                              'synchronizing'   => 'synchronizing',
+                              'finished'        => 'finished'}
     }
   end
 
@@ -98,32 +99,9 @@ class VmScan < Job
       #       or, make type-specific Job classes.
       if vm.kind_of?(ManageIQ::Providers::Openstack::CloudManager::Vm) ||
          vm.kind_of?(ManageIQ::Providers::Microsoft::InfraManager::Vm)
-        if vm.ext_management_system
-          sn_description = snapshotDescription
-          _log.info("Creating snapshot, description: [#{sn_description}]")
-          user_event = start_user_event_message(vm, false)
-          options[:snapshot] = :server
-          begin
-            # TODO: should this be a vm method?
-            sn = vm.ext_management_system.vm_create_evm_snapshot(vm, :desc => sn_description, :user_event => user_event).to_s
-          rescue Exception => err
-            msg = "Failed to create evm snapshot with EMS. Error: [#{err.class.name}]: [#{err}]"
-            _log.error("#{msg}")
-            err.kind_of?(MiqException::MiqVimBrokerUnavailable) ? signal(:broker_unavailable) : signal(:abort, msg, "error")
-            return
-          end
-          context[:snapshot_mor] = sn
-          _log.info("Created snapshot, description: [#{sn_description}], reference: [#{context[:snapshot_mor]}]")
-          set_status("Snapshot created: reference: [#{context[:snapshot_mor]}]")
-          options[:snapshot] = :created
-          options[:use_existing_snapshot] = true
-        else
-          signal(:abort, "No #{ui_lookup(:table => "ext_management_systems")} available to create snapshot, skipping", "error")
-          return
-        end
+        return unless create_snapshot(vm)
       elsif vm.require_snapshot_for_scan?
-        host  = Object.const_get(agent_class).find(agent_id)
-        proxy = host.respond_to?("miq_proxy") ? host.miq_proxy : nil
+        proxy = MiqServer.find(miq_server_id)
 
         # Check if the broker is available
         if MiqServer.use_broker_for_embedded_proxy? && !MiqVimBrokerWorker.available?
@@ -140,29 +118,7 @@ class VmScan < Job
         else
           set_status("Creating VM snapshot")
 
-          if vm.ext_management_system
-            sn_description = snapshotDescription
-            _log.info("Creating snapshot, description: [#{sn_description}]")
-            user_event = start_user_event_message(vm, false)
-            options[:snapshot] = :server
-            begin
-              # TODO: should this be a vm method?
-              sn = vm.ext_management_system.vm_create_evm_snapshot(vm, :desc => sn_description, :user_event => user_event).to_s
-            rescue Exception => err
-              msg = "Failed to create evm snapshot with EMS. Error: [#{err.class.name}]: [#{err}]"
-              _log.error("#{msg}")
-              err.kind_of?(MiqException::MiqVimBrokerUnavailable) ? signal(:broker_unavailable) : signal(:abort, msg, "error")
-              return
-            end
-            context[:snapshot_mor] = sn
-            _log.info("Created snapshot, description: [#{sn_description}], reference: [#{context[:snapshot_mor]}]")
-            set_status("Snapshot created: reference: [#{context[:snapshot_mor]}]")
-            options[:snapshot] = :created
-            options[:use_existing_snapshot] = true
-          else
-            signal(:abort, "No #{ui_lookup(:table => "ext_management_systems")} available to create snapshot, skipping", "error")
-            return
-          end
+          return unless create_snapshot(vm)
         end
       else
         start_user_event_message(vm)
@@ -177,7 +133,7 @@ class VmScan < Job
             when :smartProxy, :skipped then "Request to log snapshot user event with EMS timed out."
             else "Request to create snapshot timed out"
             end
-      _log.error("#{msg}")
+      _log.error(msg)
       signal(:abort, msg, "error")
     end
   end
@@ -199,7 +155,7 @@ class VmScan < Job
     _log.info "Enter"
 
     begin
-      host = Object.const_get(agent_class).find(agent_id)
+      host = MiqServer.find(miq_server_id)
       vm = VmOrTemplate.find(target_id)
       # Send down metadata to allow the host to make decisions.
       scan_args = create_scan_args(vm)
@@ -211,20 +167,23 @@ class VmScan < Job
         scan_ci_type = ems_list['connect_to']
         if host.is_vix_disk? && ems_list[scan_ci_type] && (ems_list[scan_ci_type][:username].nil? || ems_list[scan_ci_type][:password].nil?)
           context[:snapshot_mor] = nil unless options[:snapshot] == :created
-          raise "no credentials defined for #{scan_ci_type} #{ems_list[scan_ci_type][:hostname]}"
+          raise _("no credentials defined for %{type} %{name}") % {:type => scan_ci_type,
+                                                                   :name => ems_list[scan_ci_type][:hostname]}
         end
       end
-
-      _log.info "[#{host.name}] communicates with [#{scan_ci_type}:#{ems_list[scan_ci_type][:hostname]}(#{ems_list[scan_ci_type][:address]})] to scan vm [#{vm.name}]" if agent_class == "MiqServer" && !ems_list[scan_ci_type].nil?
+      if ems_list[scan_ci_type]
+        _log.info "[#{host.name}] communicates with [#{scan_ci_type}:#{ems_list[scan_ci_type][:hostname]}"\
+                  "(#{ems_list[scan_ci_type][:address]})] to scan vm [#{vm.name}]"
+      end
       vm.scan_metadata(options[:categories], "taskid" => jobid, "host" => host, "args" => [YAML.dump(scan_args)])
     rescue Timeout::Error
       message = "timed out attempting to scan, aborting"
-      _log.error("#{message}")
+      _log.error(message)
       signal(:abort, message, "error")
       return
     rescue => message
-      _log.error("#{message}")
-      _log.error("#{message.backtrace.join("\n")}")
+      _log.error(message.to_s)
+      _log.error(message.backtrace.join("\n"))
       signal(:abort, message.message, "error")
     end
 
@@ -232,11 +191,10 @@ class VmScan < Job
   end
 
   def config_snapshot
-    config = VMDB::Config.new('vmdb').config
     snapshot = {"use_existing" => options[:use_existing_snapshot],
                 "description"  => options[:snapshot_description]}
-    snapshot['create_free_percent'] = config.fetch_path(:snapshots, :create_free_percent) || 100
-    snapshot['remove_free_percent'] = config.fetch_path(:snapshots, :remove_free_percent) || 100
+    snapshot['create_free_percent'] = ::Settings.snapshots.create_free_percent
+    snapshot['remove_free_percent'] = ::Settings.snapshots.remove_free_percent
     snapshot
   end
 
@@ -288,11 +246,11 @@ class VmScan < Job
             delete_snapshot(mor)
           end
         rescue => err
-          _log.error("#{err}")
+          _log.error(err.to_s)
           return
         rescue Timeout::Error
           msg = "Request to delete snapshot timed out"
-          _log.error("#{msg}")
+          _log.error(msg)
         end
 
         unless options[:snapshot] == :smartProxy
@@ -315,7 +273,7 @@ class VmScan < Job
     _log.info "Enter"
 
     begin
-      host = Object.const_get(agent_class).find(agent_id)
+      host = MiqServer.find(miq_server_id)
       vm = VmOrTemplate.find(target_id)
       vm.sync_metadata(options[:categories],
                        "taskid" => jobid,
@@ -323,11 +281,11 @@ class VmScan < Job
                       )
     rescue Timeout::Error
       message = "timed out attempting to synchronize, aborting"
-      _log.error("#{message}")
+      _log.error(message)
       signal(:abort, message, "error")
       return
     rescue => message
-      _log.error("#{message}")
+      _log.error(message.to_s)
       signal(:abort, message.message, "error")
       return
     end
@@ -367,11 +325,11 @@ class VmScan < Job
           end
           unless request_docs.empty? || (request_docs.length != all_docs.length)
             message = "scan operation yielded no data. aborting"
-            _log.error("#{message}")
+            _log.error(message)
             signal(:abort, message, "error")
           else
             _log.info("sending :finish")
-            vm = VmOrTemplate.find_by_id(target_id)
+            vm = VmOrTemplate.find_by(:id => target_id)
 
             # Collect any VIM data here
             # TODO: Make this a separate state?
@@ -396,7 +354,7 @@ class VmScan < Job
             signal(:finish, "Process completed successfully", "ok")
 
             begin
-              raise "Unable to find Vm" if vm.nil?
+              raise _("Unable to find Vm") if vm.nil?
               inputs = {:vm => vm, :host => vm.host}
               MiqEvent.raise_evm_job_event(vm, {:type => "scan", :suffix => "complete"}, inputs)
             rescue => err
@@ -433,10 +391,11 @@ class VmScan < Job
             vm.ext_management_system.vm_remove_snapshot(vm, :snMor => mor, :user_event => user_event)
           end
         else
-          raise "No #{ui_lookup(:table => "ext_management_systems")} available to delete snapshot"
+          raise _("No %{table} available to delete snapshot") %
+                  {:table => ui_lookup(:table => "ext_management_systems")}
         end
       rescue => err
-        _log.error("#{err.message}")
+        _log.error(err.message)
         _log.debug err.backtrace.join("\n")
       end
     else
@@ -459,7 +418,7 @@ class VmScan < Job
             $vim_broker_client ||= MiqVimBroker.new(:client, MiqVimBrokerWorker.drb_port)
             miqVim = $vim_broker_client.getMiqVim(miqVimHost[:address], miqVimHost[:username], password_decrypt)
           else
-            require 'MiqVim'
+            require 'VMwareWebService/MiqVim'
             miqVim = MiqVim.new(miqVimHost[:address], miqVimHost[:username], password_decrypt)
           end
 
@@ -529,7 +488,7 @@ class VmScan < Job
 
   def process_abort(*args)
     begin
-      vm = VmOrTemplate.find_by_id(target_id)
+      vm = VmOrTemplate.find_by(:id => target_id)
       unless context[:snapshot_mor].nil?
         mor = context[:snapshot_mor]
         context[:snapshot_mor] = nil
@@ -596,6 +555,33 @@ class VmScan < Job
   alias_method :error,              :process_error
 
   private
+
+  def create_snapshot(vm)
+    if vm.ext_management_system
+      sn_description = snapshotDescription
+      _log.info("Creating snapshot, description: [#{sn_description}]")
+      user_event = start_user_event_message(vm, false)
+      options[:snapshot] = :server
+      begin
+        # TODO: should this be a vm method?
+        sn = vm.ext_management_system.vm_create_evm_snapshot(vm, :desc => sn_description, :user_event => user_event).to_s
+      rescue Exception => err
+        msg = "Failed to create evm snapshot with EMS. Error: [#{err.class.name}]: [#{err}]"
+        _log.error(msg)
+        err.kind_of?(MiqException::MiqVimBrokerUnavailable) ? signal(:broker_unavailable) : signal(:abort, msg, "error")
+        return false
+      end
+      context[:snapshot_mor] = sn
+      _log.info("Created snapshot, description: [#{sn_description}], reference: [#{context[:snapshot_mor]}]")
+      set_status("Snapshot created: reference: [#{context[:snapshot_mor]}]")
+      options[:snapshot] = :created
+      options[:use_existing_snapshot] = true
+      return true
+    else
+      signal(:abort, "No #{ui_lookup(:table => "ext_management_systems")} available to create snapshot, skipping", "error")
+      return false
+    end
+  end
 
   def log_user_event(user_event, vm)
     if vm.ext_management_system

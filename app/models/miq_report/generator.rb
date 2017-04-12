@@ -9,17 +9,17 @@ module MiqReport::Generator
   include_concern 'Utilization'
 
   DATE_TIME_BREAK_SUFFIXES = [
-    ["Hour",              "hour"],
-    ["Day",               "day"],
-    ["Week",              "week"],
-    ["Month",             "month"],
-    ["Quarter",           "quarter"],
-    ["Year",              "year"],
-    ["Hour of the Day",   "hour_of_day"],
-    ["Day of the Week",   "day_of_week"],
-    ["Day of the Month",  "day_of_month"],
-    ["Week of the Year",  "week_of_year"],
-    ["Month of the Year", "month_of_year"]
+    [_("Hour"),              "hour"],
+    [_("Day"),               "day"],
+    [_("Week"),              "week"],
+    [_("Month"),             "month"],
+    [_("Quarter"),           "quarter"],
+    [_("Year"),              "year"],
+    [_("Hour of the Day"),   "hour_of_day"],
+    [_("Day of the Week"),   "day_of_week"],
+    [_("Day of the Month"),  "day_of_month"],
+    [_("Week of the Year"),  "week_of_year"],
+    [_("Month of the Year"), "month_of_year"]
   ].freeze
 
   module ClassMethods
@@ -48,8 +48,7 @@ module MiqReport::Generator
     end
 
     def default_queue_timeout
-      value = VMDB::Config.new("vmdb").config.fetch_path(:reporting, :queue_timeout) || 3600
-      value.to_i_with_method
+      ::Settings.reporting.queue_timeout.to_i_with_method
     end
   end
 
@@ -68,12 +67,8 @@ module MiqReport::Generator
 
     @table2class[table] ||= begin
       case table.to_sym
-      # when :users, :groups
-      #   "Account"
       when :ports, :nics, :storage_adapters
         "GuestDevice"
-      # when :system_services, :win32_services, :kernel_drivers, :filesystem_drivers, :linux_initprocesses, :host_services
-      #   "SystemService"
       when :"<compare>"
         self.class.name
       else
@@ -85,42 +80,44 @@ module MiqReport::Generator
     @table2class[table]
   end
 
-  def get_include_for_find(includes, klass = nil)
-    if klass.nil?
-      klass = db_class
-      result = {}
-      cols.each { |c| result.merge!(c.to_sym => {}) if klass.virtual_attribute?(c) } if cols
+  def get_include_for_find
+    (include_as_hash.presence || invent_includes).deep_merge(include_for_find || {}).presence
+  end
+
+  def invent_includes
+    return {} unless col_order
+    col_order.each_with_object({}) do |col, ret|
+      next unless col.include?(".")
+      *rels, _col = col.split(".")
+      rels.inject(ret) { |h, rel| h[rel.to_sym] ||= {} } unless col =~ /managed\./
+    end
+  end
+
+  def include_as_hash(includes = include, klass = db_class, klass_cols = cols)
+    result = {}
+    if klass_cols && klass && klass.respond_to?(:virtual_attribute?)
+      klass_cols.each do |c|
+        result[c.to_sym] = {} if klass.virtual_attribute?(c) && !klass.attribute_supported_by_sql?(c)
+      end
     end
 
     if includes.kind_of?(Hash)
-      result ||= {}
       includes.each do |k, v|
         k = k.to_sym
         if k == :managed
-          result.merge!(:tags => {})
+          result[:tags] = {}
         else
           assoc_reflection = klass.reflect_on_association(k)
-          assoc_klass = assoc_reflection.nil? ? nil : (assoc_reflection.options[:polymorphic] ? k : assoc_reflection.klass)
+          assoc_klass = (assoc_reflection.options[:polymorphic] ? k : assoc_reflection.klass) if assoc_reflection
 
-          if v.nil? || v["include"].blank?
-            result.merge!(k => {})
-          else
-            result.merge!(k => get_include_for_find(v["include"], assoc_klass)) if assoc_klass
-          end
-
-          v["columns"].each { |c| result[k].merge!(c.to_sym => {}) if assoc_klass.virtual_attribute?(c) } if assoc_klass && assoc_klass.respond_to?(:virtual_attribute?) && v["columns"]
+          result[k] = include_as_hash(v && v["include"], assoc_klass, v && v["columns"])
         end
       end
     elsif includes.kind_of?(Array)
-      result ||= {}
-      includes.each { |i| result.merge!(i.to_sym => {}) }
+      includes.each { |i| result[i.to_sym] = {} }
     end
 
     result
-  end
-
-  def report
-    @report ||= YAML.object_maker(MIQ_Report, attributes)
   end
 
   def queue_generate_table(options = {})
@@ -128,9 +125,9 @@ module MiqReport::Generator
     options[:mode] ||= "async"
     options[:report_source] ||= "Requested by user"
 
-    sync = VMDB::Config.new("vmdb").config[:product][:report_sync]
+    sync = options.delete(:report_sync) || ::Settings.product.report_sync
 
-    task = MiqTask.create(:name => "Generate Report: '#{name}'")
+    task = MiqTask.create(:name => "Generate Report: '#{name}'", :userid => options[:userid])
 
     report_result = MiqReportResult.create(
       :name          => title,
@@ -183,25 +180,32 @@ module MiqReport::Generator
     return build_table_from_report(options) if db == self.class.name # Build table based on data from passed in report object
 
     klass = db.kind_of?(Class) ? db : Object.const_get(db)
+    interval = db_options.present? && db_options[:interval]
     custom_results_method = (db_options && db_options[:rpt_type]) ? "build_results_for_report_#{db_options[:rpt_type]}" : nil
 
-    includes = get_include_for_find(include)
-    where_clause = MiqExpression.merge_where_clauses(self.where_clause, options[:where_clause])
+    includes = get_include_for_find
+
+    load_custom_attributes
 
     time_profile.tz ||= tz if time_profile # Default time zone in profile to report time zone
-    ext_options = {:only_cols => cols, :tz => tz, :time_profile => time_profile}
+    ext_options = {:tz => tz, :time_profile => time_profile}
+    # TODO: these columns need to be converted to real SQL columns
+    # only_cols = cols
     self.extras ||= {}
 
     if custom_results_method
       if klass.respond_to?(custom_results_method)
         # Use custom method in DB class to get report results if defined
-        results, ext = klass.send(custom_results_method, db_options[:options].merge(:userid => options[:userid], :ext_options => ext_options))
+        results, ext = klass.send(custom_results_method, db_options[:options].merge(:userid      => options[:userid],
+                                                                                    :ext_options => ext_options,
+                                                                                    :report_cols => cols))
       elsif self.respond_to?(custom_results_method)
         # Use custom method in MiqReport class to get report results if defined
         results, ext = send(custom_results_method, options)
       else
-        raise "Unsupported report type '#{db_options[:rpt_type]}'"
+        raise _("Unsupported report type '%{type}'") % {:type => db_options[:rpt_type]}
       end
+      # TODO: results = results.select(only_cols)
       self.extras.merge!(ext) if ext && ext.kind_of?(Hash)
 
     elsif performance
@@ -210,56 +214,47 @@ module MiqReport::Generator
         results, self.extras[:interval]  = db_class.vms_by_category(performance)
         build_table(results, db, options)
       else
-        results, self.extras[:group_by_tag_cols], self.extras[:group_by_tags] = db_class.find_and_group_by_tags(
-          :where_clause => where_clause,
+        results, self.extras[:group_by_tag_cols], self.extras[:group_by_tags] = db_class.group_by_tags(
+          db_class.find_entries(ext_options).where(where_clause).where(options[:where_clause]),
           :category     => performance[:group_by_category],
           :cat_model    => options[:cat_model],
-          :ext_options  => ext_options,
           :include      => includes
         )
         build_correlate_tag_cols
       end
 
-    elsif !db_options.blank? && db_options[:interval] == 'daily' && klass <= MetricRollup
+    elsif interval == 'daily' && klass <= MetricRollup
       # Ad-hoc daily performance reports
       #   Daily for: Performance - Clusters...
-      associations = includes.kind_of?(Hash) ? includes.keys : Array(includes)
-
-      results = []
-
       unless conditions.nil?
         conditions.preprocess_options = {:vim_performance_daily_adhoc => (time_profile && time_profile.rollup_daily_metrics)}
         exp_sql, exp_includes = conditions.to_sql
-        where_clause, includes = MiqExpression.merge_where_clauses_and_includes([where_clause, exp_sql], [includes, exp_includes])
-        ext_options[:only_cols] += conditions.columns_for_sql # Add cols references in expression to ensure they are present for evaluation
+        # only_cols += conditions.columns_for_sql # Add cols references in expression to ensure they are present for evaluation
       end
 
-      start_time, end_time = Metric::Helper.get_time_range_from_offset(db_options[:start_offset], db_options[:end_offset], :tz => tz)
-      results = VimPerformanceDaily
-                .find_entries(ext_options.merge(:reflections => associations, :class => klass))
-                .where(where_clause)
-                .where(:timestamp => start_time..end_time)
-                .includes(includes)
-                .references(includes)
-                .limit(options[:limit])
+      time_range = Metric::Helper.time_range_from_offset(interval, db_options[:start_offset], db_options[:end_offset], tz)
+      # TODO: add .select(only_cols)
+      results = Metric::Helper.find_for_interval_name('daily', time_profile || tz, klass)
+                              .where(where_clause).where(exp_sql).where(options[:where_clause])
+                              .where(:timestamp => time_range)
+                              .includes(includes).includes(exp_includes || []).references(includes)
+                              .limit(options[:limit])
       results = Rbac.filtered(results, :class        => db,
                                        :filter       => conditions,
                                        :userid       => options[:userid],
                                        :miq_group_id => options[:miq_group_id])
       results = Metric::Helper.remove_duplicate_timestamps(results)
-    elsif !db_options.blank? && db_options.key?(:interval)
+    elsif interval
       # Ad-hoc performance reports
 
-      start_time = Time.now.utc - db_options[:start_offset].seconds
-      end_time   =  db_options[:end_offset].nil? ? Time.now.utc : Time.now.utc - db_options[:end_offset].seconds
+      time_range = Metric::Helper.time_range_from_offset(interval, db_options[:start_offset], db_options[:end_offset])
 
       # Only build where clause from expression for hourly report. It will not work properly for daily because many values are rolled up from hourly.
       exp_sql, exp_includes = conditions.to_sql(tz) unless conditions.nil? || klass.respond_to?(:instances_are_derived?)
-      where_clause, includes = MiqExpression.merge_where_clauses_and_includes([where_clause, exp_sql], [includes, exp_includes])
 
-      results = klass.find_all_by_interval_and_time_range(
-        db_options[:interval], start_time, end_time
-      ).where(where_clause).includes(includes).limit(options[:limit])
+      results = klass.with_interval_and_time_range(interval, time_range)
+                     .where(where_clause).where(options[:where_clause]).where(exp_sql)
+                     .includes(includes).includes(exp_includes || []).limit(options[:limit])
 
       results = Rbac.filtered(results, :class        => db,
                                        :filter       => conditions,
@@ -269,18 +264,29 @@ module MiqReport::Generator
     else
       # Basic report
       # Daily and Hourly for: C&U main reports go through here too
-      ext_options[:only_cols] += conditions.columns_for_sql if conditions # Add cols references in expression to ensure they are present for evaluation
+      # TODO: need to enhance only_cols to better support virtual columns
+      # only_cols += conditions.columns_for_sql if conditions # Add cols references in expression to ensure they are present for evaluation
       # NOTE: using search to get user property "managed", otherwise this is overkill
-      results, attrs = Rbac.search(
-        options.merge(
-          :class            => db,
-          :filter           => conditions,
-          :include_for_find => includes,
-          :where_clause     => where_clause,
-          :results_format   => :objects,
-          :ext_options      => ext_options
-        )
+      targets = db_class
+      targets = db_class.find_entries(ext_options) if targets.respond_to?(:find_entries)
+      # TODO: add once only_cols is fixed
+      # targets = targets.select(only_cols)
+      where_clause = MiqExpression.merge_where_clauses(self.where_clause, options[:where_clause])
+      ## add in virtual attributes that can be calculated from sql
+      va_sql_cols = cols.select do |col|
+        db_class.virtual_attribute?(col) && db_class.attribute_supported_by_sql?(col)
+      end
+      rbac_opts = options.merge(
+        :targets          => targets,
+        :filter           => conditions,
+        :include_for_find => includes,
+        :where_clause     => where_clause,
+        :skip_counts      => true,
       )
+
+      rbac_opts[:extra_cols] = va_sql_cols unless va_sql_cols.nil? || va_sql_cols.empty?
+
+      results, attrs = Rbac.search(rbac_opts)
       results = Metric::Helper.remove_duplicate_timestamps(results)
       results = BottleneckEvent.remove_duplicate_find_results(results) if db == "BottleneckEvent"
       @user_categories = attrs[:user_filters]["managed"]
@@ -351,6 +357,8 @@ module MiqReport::Generator
     data = data.to_a
     objs = data[0] && data[0].kind_of?(Integer) ? klass.where(:id => data) : data.compact
 
+    remove_loading_relations_for_virtual_custom_attributes
+
     # Add resource columns to performance reports cols and col_order arrays for widget click thru support
     if klass.to_s.ends_with?("Performance")
       res_cols = ['resource_name', 'resource_type', 'resource_id']
@@ -370,7 +378,7 @@ module MiqReport::Generator
 
     data = build_includes(objs)
     result = data.collect do|entry|
-      build_reportable_data(entry, :only => only_cols, "include" => include)
+      build_reportable_data(entry, {:only => only_cols, "include" => include}, nil)
     end.flatten
 
     if rpt_options && rpt_options[:pivot]
@@ -382,7 +390,7 @@ module MiqReport::Generator
     result = build_apply_display_filter(result) unless display_filter.nil?
 
     @table = Ruport::Data::Table.new(:data => result, :column_names => column_names)
-    @table.reorder(column_names) unless @table.data.length == 0
+    @table.reorder(column_names) unless @table.data.empty?
 
     # Remove any resource columns that were added earlier to col_order so they won't appear in the report
     col_order.delete_if { |c| res_cols.include?(c) && !orig_col_order.include?(c) } if res_cols
@@ -399,8 +407,12 @@ module MiqReport::Generator
   end
 
   def build_table_from_report(options = {})
-    raise "No #{self.class.name} object provided" unless db_options && db_options[:report]
-    raise "DB option :report must be a #{self.class.name} object" unless db_options[:report].kind_of?(self.class)
+    unless db_options && db_options[:report]
+      raise _("No %{class_name} object provided") % {:class_name => self.class.name}
+    end
+    unless db_options[:report].kind_of?(self.class)
+      raise _("DB option :report must be a %{class_name} object") % {:class_name => self.class.name}
+    end
 
     result = generate_rows_from_data(get_data_from_report(db_options[:report]))
 
@@ -408,19 +420,19 @@ module MiqReport::Generator
     only_cols = options[:only] || (self.cols + generate_cols + build_cols_from_include(include)).uniq
     column_names = result.empty? ? self.cols : result.first.keys
     @table = Ruport::Data::Table.new(:data => result, :column_names => column_names)
-    @table.reorder(only_cols) unless @table.data.length == 0
+    @table.reorder(only_cols) unless @table.data.empty?
 
     build_sort_table
   end
 
   def get_data_from_report(rpt)
-    raise "Report table is nil" if rpt.table.nil?
+    raise _("Report table is nil") if rpt.table.nil?
 
-    rpt_data = if db_options[:row_col] && db_options[:row_val]
-                 rpt.table.find_all { |d| d.data.key?(db_options[:row_col]) && (d.data[db_options[:row_col]] == db_options[:row_val]) }.collect(&:data)
-               else
-                 rpt.table.collect(&:data)
-               end
+    if db_options[:row_col] && db_options[:row_val]
+      rpt.table.find_all { |d| d.data.key?(db_options[:row_col]) && (d.data[db_options[:row_col]] == db_options[:row_val]) }.collect(&:data)
+    else
+      rpt.table.collect(&:data)
+    end
   end
 
   def generate_rows_from_data(data)
@@ -441,7 +453,9 @@ module MiqReport::Generator
     unless col_def.kind_of?(Hash)
       return col_def
     else
-      raise "Column '#{col_def[:col_name]} does not exist in data" unless data.key?(col_def[:col_name])
+      unless data.key?(col_def[:col_name])
+        raise _("Column '%{name} does not exist in data") % {:name => col_def[:col_name]}
+      end
       return col_def.key?(:function) ? apply_col_function(col_def, data) : data[col_def[:col_name]]
     end
   end
@@ -449,13 +463,17 @@ module MiqReport::Generator
   def apply_col_function(col_def, data)
     case col_def[:function]
     when 'percent_of_col'
-      raise "Column '#{gen_row[:col_name]} does not exist in data" unless data.key?(col_def[:col_name])
-      raise "Column '#{gen_row[:pct_col_name]} does not exist in data" unless data.key?(col_def[:pct_col_name])
+      unless data.key?(col_def[:col_name])
+        raise _("Column '%{name} does not exist in data") % {:name => gen_row[:col_name]}
+      end
+      unless data.key?(col_def[:pct_col_name])
+        raise _("Column '%{name} does not exist in data") % {:name => gen_row[:pct_col_name]}
+      end
       col_val = data[col_def[:col_name]] || 0
       pct_val = data[col_def[:pct_col_name]] || 0
       return pct_val == 0 ? 0 : (col_val / pct_val * 100.0)
     else
-      raise "Column function '#{col_def[:function]}' not supported"
+      raise _("Column function '%{name}' not supported") % {:name => col_def[:function]}
     end
   end
 
@@ -482,7 +500,7 @@ module MiqReport::Generator
     while arr.first[1] == "[None]"; arr.push(arr.shift); end unless arr.blank? || (arr.first[1] == "[None]" && arr.last[1] == "[None]")
     arr.each { |c, h| self.cols.push(c); col_order.push(c); headers.push(h) }
 
-    tarr = Array(tags2desc).sort { |a, b| a[1] <=> b[1] }
+    tarr = Array(tags2desc).sort_by { |t| t[1] }
     while tarr.first[1] == "[None]"; tarr.push(tarr.shift); end unless tarr.blank? || (tarr.first[1] == "[None]" && tarr.last[1] == "[None]")
     self.extras[:group_by_tags] = tarr.collect { |a| a[0] }
     self.extras[:group_by_tag_descriptions] = tarr.collect { |a| a[1] }
@@ -497,7 +515,7 @@ module MiqReport::Generator
     klass = recs.first.class
     last_rec = nil
 
-    results = recs.sort { |a, b| a.resource_type + a.resource_id.to_s + a.timestamp.iso8601 <=> b.resource_type + b.resource_id.to_s + b.timestamp.iso8601 }.inject([]) do |arr, rec|
+    results = recs.sort_by { |r| [r.resource_type, r.resource_id.to_s, r.timestamp.iso8601] }.inject([]) do |arr, rec|
       last_rec ||= rec
       while (rec.timestamp - last_rec.timestamp) > int
         base_attrs = last_rec.attributes.reject { |k, _v| !base_cols.include?(k) }
@@ -593,11 +611,12 @@ module MiqReport::Generator
     end
   end
 
-  def build_cols_from_include(hash)
+  def build_cols_from_include(hash, parent_association = nil)
     return [] if hash.blank?
     hash.inject([]) do |a, (k, v)|
-      v["columns"].each { |c| a << "#{k}.#{c}" }              if v.key?("columns")
-      a += (build_cols_from_include(v["include"]) || []) if v.key?("include")
+      full_path = get_full_path(parent_association, k)
+      v["columns"].each { |c| a << get_full_path(full_path, c) } if v.key?("columns")
+      a += (build_cols_from_include(v["include"], full_path) || []) if v.key?("include")
       a
     end
   end
@@ -628,10 +647,10 @@ module MiqReport::Generator
     end
   end
 
-  def build_reportable_data(entry, options = {})
+  def build_reportable_data(entry, options, parent_association)
     rec = entry[:obj]
     data_records = [build_get_attributes_with_options(rec, options)]
-    data_records = build_add_includes(data_records, entry, options["include"]) if options["include"]
+    data_records = build_add_includes(data_records, entry, options["include"], parent_association) if options["include"]
     data_records
   end
 
@@ -655,18 +674,19 @@ module MiqReport::Generator
     attrs
   end
 
-  def build_add_includes(data_records, entry, includes)
+  def build_add_includes(data_records, entry, includes, parent_association)
     include_has_options = includes.kind_of?(Hash)
     associations = include_has_options ? includes.keys : Array(includes)
 
     associations.each do |association|
       existing_records = data_records.dup
       data_records = []
-
+      full_path = get_full_path(parent_association, association)
       if include_has_options
-        assoc_options = includes[association].merge(:qualify_attribute_names => association, :only =>  includes[association]["columns"])
+        assoc_options = includes[association].merge(:qualify_attribute_names => full_path,
+                                                    :only                    => includes[association]["columns"])
       else
-        assoc_options = {:qualify_attribute_names => association, :only =>  includes[association]["columns"]}
+        assoc_options = {:qualify_attribute_names => full_path, :only => includes[association]["columns"]}
       end
 
       if association == "categories" || association == "managed"
@@ -683,7 +703,7 @@ module MiqReport::Generator
             next unless @descriptions_by_tag_id.key?(t.id)
             entarr << @descriptions_by_tag_id[t.id]
           end
-          assochash[association + "." + c] = entarr unless entarr.empty?
+          assochash[full_path + "." + c] = entarr unless entarr.empty?
         end
         # join the the category data together
         longest = 0
@@ -705,7 +725,7 @@ module MiqReport::Generator
         else
           association_objects.each do |obj|
             unless association == "categories" || association == "managed"
-              association_records = build_reportable_data(obj, assoc_options)
+              association_records = build_reportable_data(obj, assoc_options, full_path)
             else
               association_records = [obj]
             end
@@ -750,7 +770,7 @@ module MiqReport::Generator
 
       # Reload the task after the _async_generate_table has updated it
       task.reload
-      if task.status != "Ok"
+      if !task.results_ready?
         _log.warn("Generating report table with taskid [#{taskid}]... Failed to complete, '#{task.message}'")
         return
       else
@@ -762,7 +782,9 @@ module MiqReport::Generator
 
     # If a scheduler :at time was provided, convert that to a Time object, otherwise use the current time
     if res_opts[:at]
-      raise "Expected scheduled time 'at' to be 'numeric', received '#{res_opts[:at].class}'" unless res_opts[:at].kind_of?(Numeric)
+      unless res_opts[:at].kind_of?(Numeric)
+        raise _("Expected scheduled time 'at' to be 'numeric', received '%{type}'") % {:type => res_opts[:at].class}
+      end
       at = Time.at(res_opts[:at]).utc
     else
       at = res_last_run_on
@@ -783,7 +805,7 @@ module MiqReport::Generator
   end
 
   def table_has_records?
-    table.length > 0
+    !table.empty?
   end
 
   def queue_timeout
@@ -808,5 +830,15 @@ module MiqReport::Generator
 
   def get_time_zone(default_tz = nil)
     time_profile ? time_profile.tz || tz || default_tz : tz || default_tz
+  end
+
+  private
+
+  def get_full_path(parent, child)
+    if parent
+      "#{parent}.#{child}"
+    else
+      child.to_s
+    end
   end
 end

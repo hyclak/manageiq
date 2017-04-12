@@ -1,7 +1,11 @@
 module MiqAeMethodService
   class MiqAeServiceEmsEvent < MiqAeServiceEventStream
-    def refresh(*targets)
-      ar_method { @object.refresh(*targets) } unless targets.blank?
+    def refresh(*targets, sync)
+      ar_method { @object.refresh(*targets, sync) } unless targets.blank?
+    end
+
+    def refresh_new_target
+      ar_method { @object.refresh_new_target }
     end
 
     def policy(target_str, policy_event, param)
@@ -26,10 +30,6 @@ module MiqAeMethodService
 
     def src_vm_disconnect_storage
       ar_method { @object.src_vm_disconnect_storage }
-    end
-
-    def src_vm_refresh_on_reconfig
-      ar_method { @object.src_vm_refresh_on_reconfig }
     end
   end
 end

@@ -13,14 +13,16 @@ class ManageIQ::Providers::Openshift::ContainerManager < ManageIQ::Providers::Co
   end
 
   def self.description
-    @description ||= "OpenShift Origin".freeze
+    @description ||= "OpenShift".freeze
   end
 
   def self.event_monitor_class
     ManageIQ::Providers::Openshift::ContainerManager::EventCatcher
   end
 
-  def supported_auth_attributes
-    %w(userid password auth_key)
+  def create_project(project)
+    connect.create_project_request(project)
+  rescue KubeException => e
+    raise MiqException::MiqProvisionError, "Unexpected Exception while creating project: #{e}"
   end
 end

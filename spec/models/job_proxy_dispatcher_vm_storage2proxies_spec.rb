@@ -1,6 +1,5 @@
 describe "JobProxyDispatcherVmStorage2Proxies" do
-  require File.expand_path(File.join(File.dirname(__FILE__), 'job_proxy_dispatcher/job_proxy_dispatcher_helper'))
-  include JobProxyDispatcherHelper
+  include Spec::Support::JobProxyDispatcherHelper
 
   context "two vix disk enabled servers," do
     before(:each) do
@@ -11,7 +10,7 @@ describe "JobProxyDispatcherVmStorage2Proxies" do
 
     context "hosts with proxy and vmware vms," do
       before(:each) do
-        @hosts, @proxies, @storages, @vms = build_hosts_proxies_storages_vms
+        @hosts, @proxies, @storages, @vms = build_entities
         @vm = @vms.first
       end
 

@@ -1,8 +1,12 @@
 describe Tenant do
   include_examples ".seed called multiple times"
 
-  let(:config) { {} }
   let(:tenant) { described_class.new(:domain => 'x.com', :parent => default_tenant) }
+  let(:user_admin) {
+    user = FactoryGirl.create(:user_admin)
+    allow(user).to receive(:get_timezone).and_return("UTC")
+    user
+  }
 
   let(:default_tenant) do
     root_tenant
@@ -11,10 +15,6 @@ describe Tenant do
 
   let(:root_tenant) do
     Tenant.seed
-  end
-
-  before do
-    stub_server_configuration(config)
   end
 
   describe "#default_tenant" do
@@ -135,8 +135,6 @@ describe Tenant do
   end
 
   describe "#name" do
-    let(:config) { {:server => {:company => "settings"}} }
-
     it "has default name" do
       expect(tenant.name).to eq("My Company")
     end
@@ -169,6 +167,7 @@ describe Tenant do
 
     context "for root_tenants" do
       it "reads settings" do
+        stub_settings(:server => {:company => "settings"})
         expect(root_tenant.name).to eq("settings")
       end
 
@@ -187,155 +186,6 @@ describe Tenant do
     expect(default_tenant.parent_name).to eql nil
   end
 
-  describe "#logo" do
-    # would prefer if url was nil, but this is how paperclip works
-    # but basically checking tht it is not /uploads/custom_logo
-    it "has bogus url (but not typical custom logo)" do
-      tenant.save!
-      expect(tenant.logo.url).to match(/missing/)
-    end
-
-    it "has the correct logo url" do
-      tenant.update_attributes!(:logo_file_name => "custom_logo.png")
-      expect(tenant.logo.url).to eq("/uploads/custom_logo.png")
-    end
-
-    it "points to the correct logo file" do
-      tenant.update_attributes!(:logo_file_name => "custom_logo.png")
-      expect(tenant.logo.path).to eq(Rails.root.join("public/uploads/custom_logo.png").to_s)
-    end
-
-    it "has no logo for root_tenant" do
-      expect(root_tenant.logo.url).to match(/missing/)
-    end
-
-    context "with server configurations" do
-      let(:config) { {:server => {:custom_logo => true}} }
-
-      it "uses configurations value for root_tenant" do
-        expect(root_tenant.logo.url).to eq("/uploads/custom_logo.png")
-      end
-
-      it "overrides configurations for root_tenant" do
-        root_tenant.update_attributes(:logo_file_name => "different.png", :use_config_for_attributes => false)
-        expect(root_tenant.logo.url).to eq("/uploads/different.png")
-      end
-
-      # would prefer if url was nil, but this is how paperclip works
-      it "does not use configurations for regular tenant" do
-        tenant.save!
-        expect(tenant.logo.url).to match(/missing/)
-      end
-    end
-  end
-
-  describe "#logo?" do
-    let(:settings) { {:server => {:custom_logo => false}} }
-
-    it "knows there is a logo" do
-      tenant.logo_file_name = "custom_logo.png"
-      expect(tenant).to be_logo
-    end
-
-    it "knows there is no logo" do
-      expect(tenant).not_to be_logo
-    end
-
-    context "for root_tenant" do
-      it "knows there is no logo from configuration" do
-        expect(root_tenant).not_to be_logo
-      end
-
-      it "knows there is a logo overriding configuration" do
-        root_tenant.logo_file_name = "custom_logo.png"
-        root_tenant.use_config_for_attributes = false
-        expect(root_tenant).to be_logo
-      end
-
-      context "#with custom_logo configuration" do
-        let(:config) { {:server => {:custom_logo => true}} }
-
-        it "knows there is a logo from configuration" do
-          expect(root_tenant).to be_logo
-        end
-
-        it "knows there is no logo when not using config" do
-          root_tenant.use_config_for_attributes = false
-          expect(root_tenant).not_to be_logo
-        end
-      end
-    end
-  end
-
-  # NOTE: much of this functionality was tested in #logo?
-  describe "#logo_file_name" do
-    it "has custom filename" do
-      tenant.logo_file_name = "custom_logo.png"
-      expect(tenant.logo_file_name).to eq("custom_logo.png")
-    end
-  end
-
-  describe "#logo_content_type" do
-    it "has custom content_type" do
-      tenant.logo_content_type = "image/jpg"
-      expect(tenant.logo_content_type).to eq("image/jpg")
-    end
-
-    it "has no custom content_type" do
-      expect(tenant.logo_content_type).to be_nil
-    end
-
-    context "for root_tenant" do
-      it "has custom content_type" do
-        expect(root_tenant.logo_content_type).to eq("image/png")
-      end
-
-      context "#with custom logo configuration" do
-        let(:settings) { {:server => {:custom_logo => true}} }
-
-        it "has custom content_type" do
-          expect(root_tenant.logo_content_type).to eq("image/png")
-        end
-      end
-    end
-  end
-
-  describe "#login_logo" do
-    # NOTE: initializers/paperclip.rb sets up :default_login_logo
-
-    it "has a default login image" do
-      tenant.save!
-      expect(tenant.login_logo.url).to match(/login-screen-logo.*\.png/)
-    end
-
-    it "has a default login image for root_tenant" do
-      expect(root_tenant.login_logo.url).to match(/login-screen-logo.*\.png/)
-    end
-
-    it "has custom login logo" do
-      tenant.update_attributes(:login_logo_file_name => "custom_login_logo.png")
-      expect(tenant.login_logo.url).to match(/custom_login_logo.png/)
-    end
-
-    context "with custom login logo configuration" do
-      let(:config) { {:server => {:custom_login_logo => true}} }
-
-      it "has custom login logo" do
-        expect(root_tenant.login_logo.url).to match(/custom_login_logo.png/)
-      end
-    end
-  end
-
-  describe "#login_logo?" do
-    it "knows when there is a login logo" do
-      expect(described_class.new(:login_logo_file_name => "image.png")).to be_login_logo
-    end
-
-    it "knows when there is no login logo" do
-      expect(described_class.new).not_to be_login_logo
-    end
-  end
-
   describe "#nil_blanks" do
     it "nulls out blank domain" do
       expect(described_class.create!(:domain => "  ", :parent => root_tenant).domain).to be_nil
@@ -348,6 +198,7 @@ describe Tenant do
 
   context "#validate_only_one_root" do
     it "allows child tenants" do
+      stub_settings(:server => {})
       root_tenant.children.create!
     end
 
@@ -377,10 +228,17 @@ describe Tenant do
   end
 
   context "#ensure_can_be_destroyed" do
+    let(:tenant)       { FactoryGirl.create(:tenant) }
+    let(:cloud_tenant) { FactoryGirl.create(:cloud_tenant) }
+
     it "wouldn't delete tenant with groups associated" do
-      tenant = FactoryGirl.create(:tenant)
       FactoryGirl.create(:miq_group, :tenant => tenant)
       expect { tenant.destroy! }.to raise_error(RuntimeError, /A tenant with groups.*cannot be deleted/)
+    end
+
+    it "does not delete tenant created by tenant mapping process" do
+      tenant.source = cloud_tenant
+      expect { tenant.destroy! }.to raise_error(RuntimeError, /A tenant created by tenant mapping cannot be deleted/)
     end
   end
 
@@ -439,6 +297,49 @@ describe Tenant do
     let(:t1_1) { FactoryGirl.create(:tenant, :name => 'T1_1', :domain => 'a.a.com', :parent => t1) }
     let(:t2_2) { FactoryGirl.create(:tenant, :name => 'T2_1', :domain => 'b.b.com', :parent => t2) }
 
+    context "reset priority" do
+      it "#reset_domain_priority_by_ordered_ids" do
+        FactoryGirl.create(:miq_ae_system_domain, :name => 'ManageIQ', :priority => 0,
+                           :tenant_id => root_tenant.id)
+        FactoryGirl.create(:miq_ae_system_domain, :name => 'Redhat', :priority => 1,
+                           :tenant_id => root_tenant.id)
+        dom3 = FactoryGirl.create(:miq_ae_domain, :name => 'A', :tenant_id => root_tenant.id)
+        dom4 = FactoryGirl.create(:miq_ae_domain, :name => 'B', :tenant_id => root_tenant.id)
+
+        expect(root_tenant.visible_domains.collect(&:name)).to eq(%w(B A Redhat ManageIQ))
+        ids = [dom4.id, dom3.id]
+        root_tenant.reset_domain_priority_by_ordered_ids(ids)
+        expect(root_tenant.visible_domains.collect(&:name)).to eq(%w(A B Redhat ManageIQ))
+        dom4.reload
+        expect(dom4.priority).to eq(2)
+      end
+
+      it "#reset_domain_priority_by_ordered_ids by subtenant" do
+        FactoryGirl.create(:miq_ae_system_domain, :name => 'ManageIQ', :priority => 0,
+                           :tenant_id => root_tenant.id)
+        FactoryGirl.create(:miq_ae_system_domain, :name => 'Redhat', :priority => 1,
+                           :tenant_id => root_tenant.id)
+        FactoryGirl.create(:miq_ae_domain, :name => 'T1_A', :tenant_id => t1.id)
+        FactoryGirl.create(:miq_ae_domain, :name => 'T1_B', :tenant_id => t1.id)
+        dom5 = FactoryGirl.create(:miq_ae_domain, :name => 'T1_1_A', :tenant_id => t1_1.id)
+        dom6 = FactoryGirl.create(:miq_ae_domain, :name => 'T1_1_B', :tenant_id => t1_1.id)
+        expect(t1_1.visible_domains.collect(&:name)).to eq(%w(T1_1_B T1_1_A T1_B T1_A Redhat ManageIQ))
+        ids = [dom6.id, dom5.id]
+        t1_1.reset_domain_priority_by_ordered_ids(ids)
+        expect(t1_1.visible_domains.collect(&:name)).to eq(%w(T1_1_A T1_1_B T1_B T1_A Redhat ManageIQ))
+      end
+    end
+
+    it '#sequenceable_domains' do
+      t1_1
+      FactoryGirl.create(:miq_ae_domain, :name => 'DOM15', :priority => 15,
+                         :tenant_id => t1_1.id)
+      FactoryGirl.create(:miq_ae_system_domain, :name => 'DOM10', :priority => 10,
+                         :tenant_id => root_tenant.id, :enabled => false)
+
+      expect(t1_1.sequenceable_domains.collect(&:name)).to eq(%w(DOM15))
+    end
+
     context "visibility" do
       before do
         dom1
@@ -496,11 +397,10 @@ describe Tenant do
 
     it "no editable domains available for current tenant" do
       t1_1
-      FactoryGirl.create(:miq_ae_domain,
+      FactoryGirl.create(:miq_ae_system_domain,
                          :name      => 'non_editable',
                          :priority  => 3,
-                         :tenant_id => t1_1.id,
-                         :system    => true)
+                         :tenant_id => t1_1.id)
       expect(t1_1.any_editable_domains?).to eq(false)
     end
 
@@ -808,7 +708,9 @@ describe Tenant do
   end
 
   describe ".tenant_and_project_names" do
-    let(:config) { {:server => {:company => "root"}} }
+    before do
+      stub_settings(:server => {:company => "root"})
+    end
 
     # root
     #   ten1
@@ -817,9 +719,11 @@ describe Tenant do
       ten1 = FactoryGirl.create(:tenant, :name => "ten1", :parent => root_tenant)
       ten2 = FactoryGirl.create(:tenant, :name => "ten2", :parent => ten1)
 
-      tenants, projects = Tenant.tenant_and_project_names
-      expect(tenants).to eq([["root", root_tenant.id], ["root.ten1", ten1.id], ["root.ten1.ten2", ten2.id]])
-      expect(projects).to be_empty
+      User.with_user(user_admin) do
+        tenants, projects = Tenant.tenant_and_project_names
+        expect(tenants).to eq([["root", root_tenant.id], ["root/ten1", ten1.id], ["root/ten1/ten2", ten2.id]])
+        expect(projects).to be_empty
+      end
     end
 
     # root
@@ -829,9 +733,11 @@ describe Tenant do
       proj2 = FactoryGirl.create(:tenant, :name => "proj2", :divisible => false, :parent => root_tenant)
       proj1 = FactoryGirl.create(:tenant, :name => "proj1", :divisible => false, :parent => root_tenant)
 
-      tenants, projects = Tenant.tenant_and_project_names
-      expect(tenants).to eq([["root", root_tenant.id]])
-      expect(projects).to eq([["root.proj1", proj1.id], ["root.proj2", proj2.id]])
+      User.with_user(user_admin) do
+        tenants, projects = Tenant.tenant_and_project_names
+        expect(tenants).to eq([["root", root_tenant.id]])
+        expect(projects).to eq([["root/proj1", proj1.id], ["root/proj2", proj2.id]])
+      end
     end
 
     # root
@@ -849,11 +755,29 @@ describe Tenant do
       FactoryGirl.create(:tenant, :name => "proj1", :divisible => false, :parent => ten1)
       FactoryGirl.create(:tenant, :name => "proj3", :divisible => false, :parent => root_tenant)
 
-      tenants, projects = Tenant.tenant_and_project_names
-      expect(tenants.map(&:first)).to eq(%w(root root.ten1 root.ten2 root.ten3))
-      expect(tenants.first.last).to eq(root_tenant.id)
+      User.with_user(user_admin) do
+        tenants, projects = Tenant.tenant_and_project_names
+        expect(tenants.map(&:first)).to eq(%w(root root/ten1 root/ten2 root/ten3))
+        expect(tenants.first.last).to eq(root_tenant.id)
 
-      expect(projects.map(&:first)).to eq(%w(root.proj3 root.ten1.proj1 root.ten2.proj2))
+        expect(projects.map(&:first)).to eq(%w(root/proj3 root/ten1/proj1 root/ten2/proj2))
+      end
+    end
+  end
+
+  describe ".build_tenant_tree" do
+    let!(:tenant)   { FactoryGirl.create(:tenant) }
+    let!(:tenantA)  { FactoryGirl.create(:tenant, :parent => tenant) }
+    let!(:tenantA1) { FactoryGirl.create(:tenant, :parent => tenantA) }
+
+    it "returns subtenants of a tenant" do
+      expected_array = [{:name => tenantA.name, :id => tenantA.id, :parent => tenant.id},
+                        {:name => tenantA1.name, :id => tenantA1.id, :parent => tenantA.id}]
+      expect(tenant.build_tenant_tree).to match_array(expected_array)
+    end
+
+    it "returns [] of a tenant without subtenants" do
+      expect(tenantA1.build_tenant_tree).to be_empty
     end
   end
 end

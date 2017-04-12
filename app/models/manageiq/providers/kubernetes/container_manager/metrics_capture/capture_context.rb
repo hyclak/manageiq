@@ -1,19 +1,21 @@
 class ManageIQ::Providers::Kubernetes::ContainerManager::MetricsCapture
   class CaptureContext
+    include ManageIQ::Providers::Kubernetes::ContainerManager::MetricsCapture::HawkularClientMixin
+
     def initialize(target, start_time, end_time, interval)
       @target = target
       @start_time = start_time || 15.minutes.ago.beginning_of_minute.utc
       @end_time = end_time
       @interval = interval
       @tenant = target.try(:container_project).try(:name) || '_system'
-      @ext_management_system = @target.ext_management_system
+      @ext_management_system = @target.ext_management_system || @target.try(:old_ext_management_system)
       @ts_values = Hash.new { |h, k| h[k] = {} }
       @metrics = []
 
       if @target.respond_to?(:hardware)
         hardware = @target.hardware
       else
-        hardware = @target.container_node.hardware
+        hardware = @target.try(:container_node).try(:hardware)
       end
 
       @node_cores = hardware.try(:cpu_total_cores)
@@ -89,35 +91,10 @@ class ManageIQ::Providers::Kubernetes::ContainerManager::MetricsCapture
       end
       process_mem_gauges_data(compute_summation(mem_gauges))
 
-      net_counters = @target.containers.collect do |c|
-        net_resid = "#{c.name}/#{group_id}/network"
-        compute_summation([fetch_counters_rate("#{net_resid}/tx"),
-                           fetch_counters_rate("#{net_resid}/rx")])
-      end
+      net_resid = "pod/#{group_id}/network"
+      net_counters = [fetch_counters_rate("#{net_resid}/tx"),
+                      fetch_counters_rate("#{net_resid}/rx")]
       process_net_counters_rate(compute_summation(net_counters))
-    end
-
-    def hawkular_client
-      require 'hawkular_all'
-      @client ||= Hawkular::Metrics::Client.new(
-        hawkular_entrypoint, hawkular_credentials, hawkular_options)
-    end
-
-    def hawkular_entrypoint
-      worker_class = ManageIQ::Providers::Kubernetes::ContainerManager::MetricsCollectorWorker
-      URI::HTTPS.build(
-        :host => @ext_management_system.hostname,
-        :port => worker_class.worker_settings[:metrics_port],
-        :path => worker_class.worker_settings[:metrics_path])
-    end
-
-    def hawkular_credentials
-      {:token => @ext_management_system.try(:authentication_token)}
-    end
-
-    def hawkular_options
-      {:tenant     => @tenant,
-       :verify_ssl => @ext_management_system.verify_ssl_mode}
     end
 
     def fetch_counters_rate(resource)
@@ -130,7 +107,7 @@ class ManageIQ::Providers::Kubernetes::ContainerManager::MetricsCapture
           resource,
           :starts         => (@start_time - @interval).to_i.in_milliseconds,
           :bucketDuration => "#{@interval}s"))
-    rescue SystemCallError => e
+    rescue SystemCallError, SocketError, OpenSSL::SSL::SSLError => e
       raise CollectionFailure, e.message
     end
 
@@ -140,7 +117,7 @@ class ManageIQ::Providers::Kubernetes::ContainerManager::MetricsCapture
           resource,
           :starts         => @start_time.to_i.in_milliseconds,
           :bucketDuration => "#{@interval}s"))
-    rescue SystemCallError => e
+    rescue SystemCallError, SocketError, OpenSSL::SSL::SSLError => e
       raise CollectionFailure, e.message
     end
 
@@ -194,7 +171,7 @@ class ManageIQ::Providers::Kubernetes::ContainerManager::MetricsCapture
       # Sorting and removing last entry because always incomplete
       # as it's still in progress.
       norm_data = (data.sort_by { |x| x['start'] }).slice(0..-2)
-      norm_data.reject { |x| x.values.include?('NaN') }
+      norm_data.reject { |x| x.values.include?('NaN') || x['empty'] == true }
     end
 
     def compute_derivative(counters)

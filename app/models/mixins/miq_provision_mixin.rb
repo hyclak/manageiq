@@ -3,6 +3,7 @@ module MiqProvisionMixin
     # Infrastructure
     "Host"                                           => [:hosts,                   :placement_host_name],
     "Storage"                                        => [:storages,                :placement_ds_name],
+    "StorageProfile"                                 => [:storage_profiles,        :placement_storage_profile],
     "EmsCluster"                                     => [:clusters,                :placement_cluster_name],
     "ResourcePool"                                   => [:resource_pools,          :placement_rp_name],
     "EmsFolder"                                      => [:folders,                 :placement_folder_name],
@@ -75,20 +76,22 @@ module MiqProvisionMixin
   def eligible_resources(rsc_type)
     prov_options = options.dup
     prov_options[:placement_auto] = [false, 0]
-    prov_wf = workflow(prov_options, :skip_dialog_load => true)
-    klass = resource_type_to_class(rsc_type)
+    result = nil
+    workflow(prov_options, :skip_dialog_load => true) do |prov_wf|
+      klass = resource_type_to_class(rsc_type)
 
-    allowed_method = "allowed_#{rsc_type}"
-    unless prov_wf.respond_to?(allowed_method)
-      error_str = "Provision workflow does not contain the expected method <#{allowed_method}>"
-      raise MiqException::MiqProvisionError, error_str
+      allowed_method = "allowed_#{rsc_type}"
+      unless prov_wf.respond_to?(allowed_method)
+        error_str = _("Provision workflow does not contain the expected method <%{method}>") % {:method => allowed_method}
+        raise MiqException::MiqProvisionError, error_str
+      end
+
+      result = prov_wf.send(allowed_method)
+      result = result.collect { |rsc| eligible_resource_lookup(klass, rsc) }
+
+      data = result.collect { |rsc| "#{rsc.id}:#{resource_display_name(rsc)}" }
+      _log.info("returning <#{rsc_type}>:<#{data.join(', ')}>")
     end
-
-    result = prov_wf.send(allowed_method)
-    result = result.collect { |rsc| eligible_resource_lookup(klass, rsc) }
-
-    data = result.collect { |rsc| "#{rsc.id}:#{resource_display_name(rsc)}" }
-    _log.info("returning <#{rsc_type}>:<#{data.join(', ')}>")
     result
   end
 
@@ -99,27 +102,14 @@ module MiqProvisionMixin
   def eligible_resource_lookup(klass, rsc_data)
     ci_id = rsc_data.kind_of?(Array) ? rsc_data.first : rsc_data.id
     ci_id = ci_id.split("::").last if ci_id.to_s.include?("::")
-    klass.find_by_id(ci_id)
+    klass.find_by(:id => ci_id)
   end
   private :eligible_resource_lookup
 
   def set_resource(rsc, _options = {})
     return if rsc.nil?
 
-    rsc_class = resource_class(rsc)
-    rsc_type, key = class_to_resource_type_and_key(rsc_class)
-    if rsc_type.nil?
-      raise "Unsupported resource type <#{rsc.class.base_class.name}> passed to set_resource for provisioning."
-    end
-
-    rsc_name = resource_display_name(rsc)
-    result   = eligible_resources(rsc_type).any? { |r| r.id == rsc.id }
-
-    if result == false
-      resource_str = "<#{rsc_class}> <#{rsc.id}:#{rsc_name}>"
-      raise "Resource #{resource_str} is not an eligible resource for this provisioning instance."
-    end
-    value = construct_value(key, rsc_class, rsc.id, rsc_name)
+    key, rsc_type, value = resource_construct_value(rsc)
     _log.info("option <#{key}> being set to <#{value.inspect}>")
     options[key] = value
 
@@ -128,47 +118,49 @@ module MiqProvisionMixin
     update_attribute(:options, options)
   end
 
+  def set_resources(rscs, _options = {})
+    return unless rscs.present?
+
+    key = nil
+    items = []
+    rscs.compact.each do |rsc|
+      key, _rsc_type, value = resource_construct_value(rsc)
+      items << value
+    end
+
+    options[key] = items.flatten
+    _log.info("option <#{key}> being set to <#{items.inspect}>")
+    update_attributes(:options => options)
+  end
+
   def post_customization_templates(template_id)
     options[:customization_template_script] = CustomizationTemplate.find_by(:id => template_id).try(:script)
   end
 
   def set_folder(folder)
     return nil if folder.blank?
-    return set_resource(folder) if folder.kind_of?(MiqAeMethodService::MiqAeServiceEmsFolder)
 
-    result = nil
-    begin
-      if folder.kind_of?(Array) && folder.length == 2 && folder.first.kind_of?(Integer)
-        result = EmsFolder.find_by_id(folder.first)
-        result = [result.id, result.name] unless result.nil?
-      else
-        find_path = folder.to_miq_a.join('/')
-        result = get_folder_paths.detect { |_key, path| path.casecmp(find_path) == 0 }
-      end
-      update_attribute(:options, options.merge(:placement_folder_name => result)) unless result.nil?
-    rescue => err
-      _log.error "#{err}\n#{err.backtrace.join("\n")}"
-    end
-    result
-  end
+    result = if folder.kind_of?(MiqAeMethodService::MiqAeServiceEmsFolder)
+               folder
+             elsif folder.kind_of?(Array) && folder.length == 2 && folder.first.kind_of?(Integer)
+               MiqAeMethodService::MiqAeServiceEmsFolder.find(folder.first)
+             else
+               find_path = folder.to_miq_a.join('/')
+               found = eligible_resources(:folders).detect do |f|
+                 folder_path = f.folder_path(:exclude_root_folder => true, :exclude_non_display_folders => true)
+                 folder_path.casecmp(find_path).zero?
+               end
+               MiqAeMethodService::MiqAeServiceEmsFolder.find(found.id) if found
+             end
 
-  def get_folder_paths
-    # If the host is selected we need to limit the folders returned based on the data-center
-    # the host is in.  Otherwise we return all folders in all data-centers.
-    host = get_option(:placement_host_name)
-    if host.nil?
-      vm_template.ext_management_system.get_folder_paths
-    else
-      dest_host = Host.find(host)
-      vm_template.ext_management_system.get_folder_paths(dest_host.owning_datacenter)
-    end
+    result.tap { set_resource(result) }
   end
 
   def get_source_vm
     vm_id = get_option(:src_vm_id)
-    raise "Source VM not provided" if vm_id.nil?
-    svm = VmOrTemplate.find_by_id(vm_id)
-    raise "Unable to find VM with Id: [#{vm_id}]" if svm.nil?
+    raise _("Source VM not provided") if vm_id.nil?
+    svm = VmOrTemplate.find_by(:id => vm_id)
+    raise _("Unable to find VM with Id: [%{vm_id}]") % {:vm_id => vm_id} if svm.nil?
     svm
   end
 
@@ -193,32 +185,34 @@ module MiqProvisionMixin
     else
       custom_spec_name = custom_spec_name.name unless custom_spec_name.kind_of?(String)
       options = self.options.dup
-      prov_wf = workflow
-      options[:sysprep_enabled] = %w(fields Specification)
-      prov_wf.init_from_dialog(options)
-      prov_wf.get_all_dialogs
-      prov_wf.allowed_customization_specs
-      prov_wf.get_timezones
-      prov_wf.refresh_field_values(options)
-      custom_spec = prov_wf.allowed_customization_specs.detect { |cs| cs.name == custom_spec_name }
-      if custom_spec.nil?
-        raise MiqException::MiqProvisionError, "Customization Specification [#{custom_spec_name}] does not exist."
+      workflow do |prov_wf|
+        options[:sysprep_enabled] = %w(fields Specification)
+        prov_wf.init_from_dialog(options)
+        prov_wf.get_all_dialogs
+        prov_wf.allowed_customization_specs
+        prov_wf.get_timezones
+        prov_wf.refresh_field_values(options)
+        custom_spec = prov_wf.allowed_customization_specs.detect { |cs| cs.name == custom_spec_name }
+        if custom_spec.nil?
+          raise MiqException::MiqProvisionError,
+                _("Customization Specification [%{name}] does not exist.") % {:name => custom_spec_name}
+        end
+
+        options[:sysprep_custom_spec] = [custom_spec.id, custom_spec.name]
+        override_value = override == false ? [false, 0] : [true, 0]
+        options[:sysprep_spec_override] = override_value
+        # Call refresh_field_values a second time so it recognizes the config change
+        # and loads the defaults the customization spec settings
+        prov_wf.refresh_field_values(options)
+
+        self.options.keys.each do |key|
+          v_old = self.options[key]
+          v_new = options[key]
+          _log.info "option <#{key}> was changed from <#{v_old.inspect}> to <#{v_new.inspect}>" unless v_old == v_new
+        end
+
+        update_attribute(:options, options)
       end
-
-      options[:sysprep_custom_spec] = [custom_spec.id, custom_spec.name]
-      override_value = override == false ? [false, 0] : [true, 0]
-      options[:sysprep_spec_override] = override_value
-      # Call refresh_field_values a second time so it recognizes the config change
-      # and loads the defaults the customization spec settings
-      prov_wf.refresh_field_values(options)
-
-      self.options.keys.each do |key|
-        v_old = self.options[key]
-        v_new = options[key]
-        _log.info "option <#{key}> was changed from <#{v_old.inspect}> to <#{v_new.inspect}>" unless v_old == v_new
-      end
-
-      update_attribute(:options, options)
     end
 
     true
@@ -296,9 +290,28 @@ module MiqProvisionMixin
   end
 
   def resource_display_name(rsc)
-    return rsc.address if rsc.respond_to?(:address)
     return rsc.name    if rsc.respond_to?(:name)
     ''
+  end
+
+  def resource_construct_value(rsc)
+    rsc_class = resource_class(rsc)
+    rsc_type, key = class_to_resource_type_and_key(rsc_class)
+    if rsc_type.nil?
+      raise _("Unsupported resource type <%{class_name}> passed to set_resource for provisioning.") %
+            {:class_name => rsc.class.base_class.name}
+    end
+
+    rsc_name = resource_display_name(rsc)
+    result   = eligible_resources(rsc_type).any? { |r| r.id == rsc.id }
+
+    if result == false
+      resource_str = "<#{rsc_class}> <#{rsc.id}:#{rsc_name}>"
+      raise _("Resource %{resource_name} is not an eligible resource for this provisioning instance.") %
+            {:resource_name => resource_str}
+    end
+    value = construct_value(key, rsc_class, rsc.id, rsc_name)
+    [key, rsc_type, value]
   end
 
   def construct_value(key, rsc_class, rsc_id, rsc_name)

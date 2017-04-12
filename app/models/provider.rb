@@ -1,7 +1,6 @@
 class Provider < ApplicationRecord
   include NewWithTypeStiMixin
   include AuthenticationMixin
-  include ReportableMixin
   include AsyncDeleteMixin
   include EmsRefresh::Manager
   include TenancyMixin
@@ -10,14 +9,16 @@ class Provider < ApplicationRecord
   belongs_to :zone
   has_many :managers, :class_name => "ExtManagementSystem"
 
-  has_many :endpoints, :through => :managers
+  has_many :endpoints, :through => :managers, :autosave => true
 
   delegate :verify_ssl,
-           :verify_ssl=,
            :verify_ssl?,
+           :verify_ssl=,
+           :url,
            :to => :default_endpoint
 
-  virtual_column :verify_ssl, :type => :integer
+  virtual_column :verify_ssl,        :type => :integer
+  virtual_column :security_protocol, :type => :string
 
   def self.leaf_subclasses
     descendants.select { |d| d.subclasses.empty? }
@@ -43,7 +44,7 @@ class Provider < ApplicationRecord
   end
 
   def with_provider_connection(options = {})
-    raise "no block given" unless block_given?
+    raise _("no block given") unless block_given?
     _log.info("Connecting through #{self.class.name}: [#{name}]")
     yield connect(options)
   end
@@ -53,9 +54,13 @@ class Provider < ApplicationRecord
   end
   alias_method :zone_name, :my_zone
 
-  def refresh_ems
-    raise "no #{ui_lookup(:table => "provider")} credentials defined" if self.missing_credentials?
-    raise "#{ui_lookup(:table => "provider")} failed last authentication check" unless self.authentication_status_ok?
-    managers.each { |manager| EmsRefresh.queue_refresh(manager) }
+  def refresh_ems(opts = {})
+    if missing_credentials?
+      raise _("no %{table} credentials defined") % {:table => ui_lookup(:table => "provider")}
+    end
+    unless authentication_status_ok?
+      raise _("%{table} failed last authentication check") % {:table => ui_lookup(:table => "provider")}
+    end
+    managers.flat_map { |manager| EmsRefresh.queue_refresh(manager, nil, opts) }
   end
 end

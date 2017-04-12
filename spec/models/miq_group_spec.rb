@@ -1,120 +1,62 @@
 describe MiqGroup do
-  context "set as Super Administrator" do
-    before(:each) do
-      @miq_group = FactoryGirl.create(:miq_group, :group_type => "system", :role => "super_administrator")
+  context "as a Super Administrator" do
+    subject { FactoryGirl.create(:miq_group, :group_type => "system", :role => "super_administrator") }
+
+    before do
+      subject.entitlement.set_managed_filters([['some managed filter']])
+      subject.entitlement.set_belongsto_filters([['some belongsto filter']])
+      subject.entitlement.save!
     end
 
-    describe ".remove_tag_from_all_managed_filters" do
-      let(:other_miq_group) { FactoryGirl.create(:miq_group) }
-      let(:filters) { [["/managed/prov_max_memory/test", "/managed/prov_max_memory/1024"], ["/managed/my_name/test"]] }
-
-      before do
-        @miq_group.set_managed_filters(filters)
-        other_miq_group.set_managed_filters(filters)
-        [@miq_group, other_miq_group].each(&:save)
-      end
-
-      it "removes managed filter from all groups" do
-        MiqGroup.all.each { |group| expect(group.get_managed_filters).to match_array(filters) }
-
-        MiqGroup.remove_tag_from_all_managed_filters("/managed/my_name/test")
-
-        expected_filters = [["/managed/prov_max_memory/test", "/managed/prov_max_memory/1024"]]
-        MiqGroup.all.each { |group| expect(group.get_managed_filters).to match_array(expected_filters) }
+    describe "#get_filters" do
+      it "takes the filters from the group's entitlement" do
+        expect(subject.get_filters).to eq(subject.entitlement.filters)
       end
     end
 
-    context "#get_filters" do
-      it "normal" do
-        expected = {:test => "test filter"}
-        @miq_group.filters = expected
-        expect(@miq_group.get_filters).to eq(expected)
-      end
-
-      it "when nil" do
-        @miq_group.filters = nil
-        expect(@miq_group.get_filters).to eq("managed" => [], "belongsto" => [])
-      end
-
-      it "when {}" do
-        @miq_group.filters = {}
-        expect(@miq_group.get_filters).to eq({})
+    describe "#get_managed_filters" do
+      it "takes managed filters from the group's entitlement" do
+        expect(subject.get_managed_filters).to eq([['some managed filter']])
       end
     end
 
-    context "#has_filters?" do
-      it "normal" do
-        @miq_group.filters = {"managed" => %w(a)}
-        expect(@miq_group).to be_has_filter
-      end
-
-      it "when other" do
-        @miq_group.filters = {"other" => %(x)}
-        expect(@miq_group).not_to be_has_filter
-      end
-
-      it "when nil" do
-        @miq_group.filters = nil
-        expect(@miq_group).not_to be_has_filter
-      end
-
-      it "when {}" do
-        @miq_group.filters = {}
-        expect(@miq_group).not_to be_has_filter
+    describe "#get_belongsto_filters" do
+      it "takes belongsto filters from the group's entitlement" do
+        expect(subject.get_belongsto_filters).to eq([['some belongsto filter']])
       end
     end
 
-    %w(managed belongsto).each do |type|
-      context "#get_#{type}_filters" do
-        let(:method) { "get_#{type}_filters" }
-
-        it "normal" do
-          expected = {type => "test filter"}
-          @miq_group.filters = expected
-          expect(@miq_group.public_send(method)).to eq(expected[type])
-        end
-
-        it "when nil" do
-          @miq_group.filters = nil
-          expect(@miq_group.public_send(method)).to eq([])
-        end
-
-        it "when []" do
-          @miq_group.filters = []
-          expect(@miq_group.public_send(method)).to eq([])
-        end
-
-        it "missing the #{type} key" do
-          expected = {"something" => "test filter"}
-          @miq_group.filters = expected
-          expect(@miq_group.public_send(method)).to eq([])
-        end
+    describe "#has_filters?" do
+      it "is true when the entitlement has filters" do
+        expect(subject.has_filters?).to be_truthy
       end
 
-      it "#set_#{type}_filters" do
-        filters = {type => "test"}
-        @miq_group.public_send("set_#{type}_filters", filters[type])
-        expect(@miq_group.public_send("get_#{type}_filters")).to eq(filters[type])
-        expect(@miq_group.get_filters).to eq(filters)
+      it "is false when the entitlement has no filters" do
+        subject.entitlement.filters = nil
+        subject.entitlement.save!
+        expect(subject.has_filters?).to be_falsey
       end
     end
 
-    it "should return user role name" do
-      expect(@miq_group.miq_user_role_name).to eq("EvmRole-super_administrator")
+    describe "#miq_user_role_name" do
+      it "should return user role name" do
+        expect(subject.miq_user_role_name).to eq("EvmRole-super_administrator")
+      end
     end
+
 
     it "should set group type to 'system' " do
-      expect(@miq_group.group_type).to eq("system")
+      expect(subject.group_type).to eq("system")
     end
 
     it "should return user count" do
       # TODO: - add more users to check for proper user count...
-      expect(@miq_group.user_count).to eq(0)
+      expect(subject.user_count).to eq(0)
     end
 
     it "should strip group description of leading and trailing spaces" do
-      @miq_group.description = "      leading and trailing white spaces     "
-      expect(@miq_group.description).to eq("leading and trailing white spaces")
+      subject.description = "      leading and trailing white spaces     "
+      expect(subject.description).to eq("leading and trailing white spaces")
     end
   end
 
@@ -137,6 +79,15 @@ describe MiqGroup do
       memberships = [%w(foo bar)]
 
       allow(@ifp_interface).to receive(:GetUserGroups).with('user').and_return(memberships)
+
+      expect(MiqGroup.get_httpd_groups_by_user('user')).to eq(memberships.first)
+    end
+
+    it "should remove FQDN from the groups by user name with external authentication" do
+      ifp_memberships = [%w(foo@fqdn bar@fqdn)]
+      memberships = [%w(foo bar)]
+
+      allow(@ifp_interface).to receive(:GetUserGroups).with('user').and_return(ifp_memberships)
 
       expect(MiqGroup.get_httpd_groups_by_user('user')).to eq(memberships.first)
     end
@@ -240,7 +191,7 @@ describe MiqGroup do
 
     %w(allocated_memory allocated_vcpu allocated_storage provisioned_storage).each do |vcol|
       it "should have virtual column #{vcol} " do
-        expect(described_class).to have_virtual_column "#{vcol}", :integer
+        expect(described_class).to have_virtual_column vcol.to_s, :integer
       end
     end
 
@@ -305,12 +256,33 @@ describe MiqGroup do
       expect(MiqGroup.last.sequence).to eql(1)
     end
 
-    it "assigns roles to tenant_groups" do
-      tenant = Tenant.seed
-      expect(tenant.reload.default_miq_group.miq_user_role).not_to be
-      MiqUserRole.seed
-      MiqGroup.seed
-      expect(tenant.reload.default_miq_group.miq_user_role).to be_truthy
+    context "tenant groups" do
+      let!(:tenant) { Tenant.seed }
+      let!(:group_with_no_entitlement) { tenant.default_miq_group }
+      let!(:group_with_existing_entitlement) do
+        FactoryGirl.create(:miq_group,
+                           :tenant_type,
+                           :entitlement => FactoryGirl.create(:entitlement, :miq_user_role => nil))
+      end
+      let(:default_tenant_role) { MiqUserRole.default_tenant_role }
+
+      before do
+        MiqUserRole.seed
+        expect(group_with_no_entitlement.entitlement).not_to be_present
+        expect(group_with_no_entitlement.miq_user_role).not_to be_present
+        expect(group_with_existing_entitlement.entitlement).to be_present
+        expect(group_with_existing_entitlement.miq_user_role).not_to be_present
+        MiqGroup.seed
+        group_with_no_entitlement.reload
+        group_with_existing_entitlement.reload
+      end
+
+      it "assigns the default_tenant_role to tenant_groups without roles" do
+        expect(group_with_no_entitlement.entitlement).to be_present
+        expect(group_with_no_entitlement.miq_user_role).to eq(default_tenant_role)
+        expect(group_with_existing_entitlement.entitlement).to be_present
+        expect(group_with_existing_entitlement.miq_user_role).to eq(default_tenant_role)
+      end
     end
   end
 
@@ -350,7 +322,7 @@ describe MiqGroup do
     end
 
     it "is read_only for system groups" do
-      expect(FactoryGirl.create(:system_group)).to be_read_only
+      expect(FactoryGirl.create(:miq_group, :system_type)).to be_read_only
     end
 
     it "is read_only for tenant groups" do
@@ -384,7 +356,7 @@ describe MiqGroup do
     end
 
     it "is system_group for system groups" do
-      expect(FactoryGirl.create(:system_group)).to be_system_group
+      expect(FactoryGirl.create(:miq_group, :system_type)).to be_system_group
     end
   end
 
@@ -471,6 +443,19 @@ describe MiqGroup do
       FactoryGirl.create(:miq_group, :description => "dont want", :sequence => 1009)
 
       expect(MiqGroup.where("description like 'want%'").next_sequence).to eq(1001)
+    end
+  end
+
+  describe "#user_count" do
+    it "counts none" do
+      group = FactoryGirl.create(:miq_group)
+      expect(group.user_count).to eq(0)
+    end
+
+    it "counts some" do
+      group = FactoryGirl.create(:miq_group)
+      FactoryGirl.create_list(:user, 2, :miq_groups =>[group])
+      expect(group.user_count).to eq(2)
     end
   end
 end

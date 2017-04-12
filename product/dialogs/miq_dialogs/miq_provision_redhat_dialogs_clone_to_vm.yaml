@@ -32,7 +32,7 @@
           :data_type: :string
         :owner_first_name:
           :description: First Name
-          :required: true
+          :required: false
           :display: :edit
           :data_type: :string
         :owner_manager:
@@ -52,7 +52,7 @@
           :data_type: :string
         :owner_last_name:
           :description: Last Name
-          :required: true
+          :required: false
           :display: :edit
           :data_type: :string
         :owner_manager_mail:
@@ -465,9 +465,13 @@
           :data_type: :integer
         :vm_memory:
           :values:
+            "1024": "1024"
             "2048": "2048"
             "4096": "4096"
-            "1024": "1024"
+            "8192": "8192"
+            "12288": "12288"
+            "16384": "16384"
+            "32768": "32768"
           :description: Memory (MB)
           :required: false
           :display: :edit

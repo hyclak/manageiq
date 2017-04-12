@@ -1,15 +1,36 @@
 FactoryGirl.define do
+  factory :miq_ae_domain_user_locked, :parent => :miq_ae_domain_disabled do
+    source { MiqAeDomain::USER_LOCKED_SOURCE }
+  end
+
   factory :miq_ae_domain_enabled, :parent => :miq_ae_domain do
+    enabled true
   end
 
   factory :miq_ae_domain_disabled, :parent => :miq_ae_domain do
     enabled false
   end
 
+  factory :miq_ae_system_domain, :parent => :miq_ae_domain do
+    enabled false
+    source { MiqAeDomain::SYSTEM_SOURCE }
+  end
+
+  factory :miq_ae_system_domain_enabled, :parent => :miq_ae_domain do
+    source { MiqAeDomain::SYSTEM_SOURCE }
+    enabled true
+  end
+
+  factory :miq_ae_git_domain, :parent => :miq_ae_domain do
+    source { MiqAeDomain::REMOTE_SOURCE }
+    git_repository { FactoryGirl.create(:git_repository, :url => 'https://www.example.com/abc') }
+  end
+
   factory :miq_ae_domain, :parent => :miq_ae_namespace, :class => "MiqAeDomain" do
     sequence(:name) { |n| "miq_ae_domain#{seq_padded_for_sorting(n)}" }
     tenant { Tenant.seed }
     enabled true
+    source { MiqAeDomain::USER_SOURCE }
     trait :with_methods do
       transient do
         ae_methods do

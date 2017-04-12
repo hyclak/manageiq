@@ -1,6 +1,16 @@
 module Metric::Helper
+  def self.class_for_interval_name(interval_name, rollup_class = nil)
+    interval_name == "realtime" ? Metric : (rollup_class || MetricRollup)
+  end
+
   def self.class_and_association_for_interval_name(interval_name)
     interval_name == "realtime" ? [Metric, :metrics] : [MetricRollup, :metric_rollups]
+  end
+
+  def self.find_for_interval_name(interval_name, time_profile_or_tz = nil, rollup_class = nil)
+    rel = Metric::Helper.class_for_interval_name(interval_name, rollup_class)
+    rel = rel.with_time_profile_or_tz(time_profile_or_tz) if interval_name == 'daily'
+    rel.where(:capture_interval_name => interval_name)
   end
 
   def self.nearest_realtime_timestamp(ts)
@@ -74,6 +84,19 @@ module Metric::Helper
     (start_time..end_time).step_value(1.day).collect! { |t| t.in_time_zone(tz).beginning_of_day.utc.iso8601 }
   end
 
+  # @option range :start_date start of the range (if not present, sets to end_date - days)
+  # @option range :end_date end of time range (default: now)
+  # @option range :days number of days for range (default: 20)
+  # @return Range<DateTime,DateTime>
+  def self.time_range_from_hash(range)
+    return range unless range.kind_of?(Hash)
+    end_time = (range[:end_date] || Time.now.utc).utc
+    days = range[:days] || 20
+    start_time = (range[:start_date] || (end_time - days.days)).utc
+
+    start_time..end_time
+  end
+
   def self.days_from_range_by_time_profile(start_time, end_time = nil)
     TimeProfile.rollup_daily_metrics.each_with_object({}) do |tp, h|
       days = days_from_range(start_time, end_time, tp.tz_or_default)
@@ -96,22 +119,12 @@ module Metric::Helper
     return st, et
   end
 
-  def self.range_to_condition(start_time, end_time)
-    return nil if start_time.nil?
-    return ["timestamp = ?", start_time] if start_time == end_time
-
-    cond = "timestamp >= ?"
-    parms = [start_time]
-    unless end_time.nil?
-      cond << " AND timestamp <= ?"
-      parms << end_time
-    end
-    parms.unshift(cond)
-    parms
-  end
-
   def self.remove_duplicate_timestamps(recs)
-    return recs if recs.empty? || recs.any? { |r| !r.kind_of?(Metric) || !r.kind_of?(MetricRollup) }
+    if recs.respond_to?(:klass) # active record relation
+      return recs unless recs.klass.kind_of?(Metric) || recs.klass.kind_of?(MetricRollup)
+    elsif recs.empty? || !recs.all? { |r| r.kind_of?(Metric) || r.kind_of?(MetricRollup) }
+      return recs 
+    end
 
     recs = recs.sort_by { |r| r.resource_type + r.resource_id.to_s + r.timestamp.iso8601 }
 
@@ -123,11 +136,11 @@ module Metric::Helper
         _log.warn("Multiple rows found for the same timestamp: [#{rec.timestamp}], ids: [#{rec.id}, #{last_rec.id}], resource and id: [#{rec.resource_type}:#{rec.resource_id}]")
 
         # Merge records with the same timestamp
-        last_rec.attributes.each { |a| last_rec[a] ||= rec[a] }
+        last_rec.attribute_names.each { |a| last_rec[a] ||= rec[a] }
       else
         ret << rec
+        last_rec = rec
       end
-      last_rec = rec
     end
   end
 
@@ -148,21 +161,41 @@ module Metric::Helper
     counts.values.max rescue 0
   end
 
-  def self.get_time_zone(options)
+  def self.get_time_zone(options = nil)
     return TimeProfile::DEFAULT_TZ if options.nil?
     return options[:time_profile].tz if options[:time_profile] && options[:time_profile].tz
     options[:tz] || TimeProfile::DEFAULT_TZ
   end
 
-  def self.get_time_range_from_offset(start_offset, end_offset = nil, options = {})
-    # Get yesterday at 23:00 in specified TZ. Then convert that to UTC. Then subtract offsets
-    tz = Metric::Helper.get_time_zone(options)
-    time_in_tz = Time.now.in_time_zone(tz)
-    now = time_in_tz.hour == 23 ? time_in_tz.utc : (time_in_tz.midnight - 1.hour).utc
+  # interval_name of daily:
+  #   Get yesterday at 23:00 in specified TZ. Then convert that to UTC. Then subtract offsets
+  # interval_name of hourly (and others)
+  #   Just your typical x.seconds.ago
+  #
+  # @param start_offset [Fixnum]
+  # @param end_offset [Fixnum|nil]
+  # @return [Range<Datetime,Datetime>] timestamp range for offsets
+  def self.time_range_from_offset(interval_name, start_offset, end_offset, tz = nil)
+    if interval_name == "daily"
+      tz ||= Metric::Helper.get_time_zone
+      time_in_tz = Time.now.in_time_zone(tz)
+      now = time_in_tz.hour == 23 ? time_in_tz.utc : (time_in_tz.midnight - 1.hour).utc
+    else
+      now = Time.now.utc
+    end
 
     start_time = now - start_offset.seconds
     end_time   = end_offset.nil? ? now : now - end_offset.seconds
 
-    return start_time, end_time
+    start_time..end_time
+  end
+
+  def self.get_time_interval(obj, timestamp)
+    timestamp = Time.parse(timestamp).utc if timestamp.kind_of?(String)
+
+    state = obj.vim_performance_state_for_ts(timestamp)
+    start_time = timestamp - state[:capture_interval]
+
+    start_time..timestamp
   end
 end

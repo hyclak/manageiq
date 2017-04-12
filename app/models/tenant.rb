@@ -5,7 +5,6 @@ class Tenant < ApplicationRecord
   HARDCODED_LOGIN_LOGO = "custom_login_logo.png"
   DEFAULT_URL = nil
 
-  include ReportableMixin
   include ActiveVmAggregationMixin
 
   acts_as_miq_taggable
@@ -32,18 +31,10 @@ class Tenant < ApplicationRecord
   has_many :miq_requests, :dependent => :destroy
   has_many :miq_request_tasks, :dependent => :destroy
   has_many :services, :dependent => :destroy
+  has_many :shares
 
   belongs_to :default_miq_group, :class_name => "MiqGroup", :dependent => :destroy
-
-  # FUTURE: /uploads/tenant/:id/logos/:basename.:extension # may want style
-  has_attached_file :logo,
-                    :url  => "/uploads/:basename.:extension",
-                    :path => ":rails_root/public/uploads/:basename.:extension"
-
-  has_attached_file :login_logo,
-                    :url         => "/uploads/:basename.:extension",
-                    :default_url => ":default_login_logo",
-                    :path        => ":rails_root/public/uploads/:basename.:extension"
+  belongs_to :source, :polymorphic => true
 
   validates :subdomain, :uniqueness => true, :allow_nil => true
   validates :domain,    :uniqueness => true, :allow_nil => true
@@ -52,10 +43,6 @@ class Tenant < ApplicationRecord
   validates :name, :presence => true, :unless => :use_config_for_attributes?
   validates :name, :uniqueness => {:scope => :ancestry, :message => "should be unique per parent"}
   validate :validate_default_tenant, :on => :update, :if => :default_miq_group_id_changed?
-
-  # FUTURE: allow more content_types
-  validates_attachment_content_type :logo, :content_type => ['image/png']
-  validates_attachment_content_type :login_logo, :content_type => ['image/png']
 
   scope :all_tenants,  -> { where(:divisible => true) }
   scope :all_projects, -> { where(:divisible => false) }
@@ -114,32 +101,6 @@ class Tenant < ApplicationRecord
 
   def login_text
     tenant_attribute(:login_text, :custom_login_text)
-  end
-
-  def logo_file_name
-    tenant_attribute(:logo_file_name, :custom_logo) do |custom_logo|
-      custom_logo && HARDCODED_LOGO
-    end
-  end
-
-  def logo_content_type
-    tenant_attribute(:logo_content_type, :custom_logo) do |_custom_logo|
-      # fails validation when using custom_logo && "image/png"
-      "image/png"
-    end
-  end
-
-  def login_logo_file_name
-    tenant_attribute(:login_logo_file_name, :custom_login_logo) do |custom_logo|
-      custom_logo && HARDCODED_LOGIN_LOGO
-    end
-  end
-
-  def login_logo_content_type
-    tenant_attribute(:login_logo_content_type, :custom_login_logo) do |_custom_logo|
-      # fails validation when using custom_logo && "image/png"
-      "image/png"
-    end
   end
 
   def get_quotas
@@ -216,14 +177,6 @@ class Tenant < ApplicationRecord
     !divisible?
   end
 
-  def logo?
-    !!logo_file_name
-  end
-
-  def login_logo?
-    !!login_logo_file_name
-  end
-
   def visible_domains
     MiqAeDomain.where(:tenant_id => ancestor_ids.append(id)).joins(:tenant).order('tenants.ancestry DESC NULLS LAST, priority DESC')
   end
@@ -233,11 +186,21 @@ class Tenant < ApplicationRecord
   end
 
   def editable_domains
-    ae_domains.where(:system => false).order('priority DESC')
+    ae_domains.where(:source => MiqAeDomain::USER_SOURCE).order('priority DESC')
+  end
+
+  def sequenceable_domains
+    ae_domains.where.not(:source => MiqAeDomain::SYSTEM_SOURCE).order('priority DESC')
   end
 
   def any_editable_domains?
-    ae_domains.where(:system => false).count > 0
+    ae_domains.where(:source => MiqAeDomain::USER_SOURCE).count > 0
+  end
+
+  def reset_domain_priority_by_ordered_ids(ids)
+    uneditable_domains = visible_domains - editable_domains
+    uneditable_domains.delete_if { |domain| domain.name == MiqAeDatastore::MANAGEIQ_DOMAIN }
+    MiqAeDomain.reset_priority_by_ordered_ids(uneditable_domains.collect(&:id).reverse + ids)
   end
 
   # The default tenant is the tenant to be used when
@@ -254,7 +217,7 @@ class Tenant < ApplicationRecord
   #
   # @return [Tenant] the root tenant
   def self.root_tenant
-    roots.first
+    in_my_region.roots.first
   end
 
   # NOTE: returns the root tenant
@@ -275,16 +238,44 @@ class Tenant < ApplicationRecord
   #     [["tenant/tenant2/project4", 4]]
   #   ]
   def self.tenant_and_project_names
-    tenants_and_projects = Tenant.select(:id, :ancestry, :divisible, :use_config_for_attributes, :name)
+    all_tenants_and_projects = Tenant.in_my_region.select(:id, :ancestry, :divisible, :use_config_for_attributes, :name)
+    tenants_by_id = all_tenants_and_projects.index_by(&:id)
+
+    tenants_and_projects = Rbac.filtered(Tenant.in_my_region.select(:id, :ancestry, :divisible, :use_config_for_attributes, :name))
                            .to_a.sort_by { |t| [t.ancestry || "", t.name] }
-    tenants_by_id = tenants_and_projects.index_by(&:id)
 
     tenants_and_projects.partition(&:divisible?).map do |tenants|
       tenants.map do |t|
         all_names = (t.ancestor_ids + [t.id]).map { |tid| tenants_by_id[tid] }.map(&:name)
-        [all_names.join("."), t.id]
+        [all_names.join("/"), t.id]
       end.sort_by(&:first)
     end
+  end
+
+  #   Tenant
+  #      Tenant A
+  #      Tenant B
+  #
+  # @return [Array(JSON({name => String, id => Numeric, parent => Numeric}))] all subtenants of a tenant
+  # e.g.:
+  #   [
+  #     {name=>"Tenant A",id=>2,parent=>1},
+  #     {name=>"Tenant B",id=>3,parent=>1}
+  #   ]
+  def build_tenant_tree
+    data_tenant = []
+    all_subtenants.each do |subtenant|
+      next unless subtenant.parent_name == name
+      data_tenant.push(:name => subtenant.name, :id => subtenant.id, :parent => id)
+      if subtenant.all_subtenants.count > 0
+        data_tenant.concat(subtenant.build_tenant_tree)
+      end
+    end
+    data_tenant
+  end
+
+  def allowed?
+    Rbac::Filterer.filtered_object(self).present?
   end
 
   private
@@ -295,7 +286,7 @@ class Tenant < ApplicationRecord
   # @return the attribute value
   def tenant_attribute(attr_name, setting_name)
     if use_config_for_attributes?
-      ret = get_vmdb_config.fetch_path(:server, setting_name)
+      ret = ::Settings.server[setting_name]
       block_given? ? yield(ret) : ret
     else
       self[attr_name]
@@ -307,10 +298,6 @@ class Tenant < ApplicationRecord
     self.domain = nil unless domain.present?
 
     self.name = nil unless name.present?
-  end
-
-  def get_vmdb_config
-    @vmdb_config ||= VMDB::Config.new("vmdb").config
   end
 
   # validates that there is only one tree
@@ -327,7 +314,8 @@ class Tenant < ApplicationRecord
   end
 
   def ensure_can_be_destroyed
-    raise "A tenant with groups associated cannot be deleted." if miq_groups.non_tenant_groups.exists?
+    raise _("A tenant with groups associated cannot be deleted.") if miq_groups.non_tenant_groups.exists?
+    raise _("A tenant created by tenant mapping cannot be deleted") if source
   end
 
   def validate_default_tenant

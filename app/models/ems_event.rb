@@ -21,15 +21,24 @@ class EmsEvent < EventStream
   end
 
   def self.task_final_events
-    VMDB::Config.new('event_handling').config[:task_final_events]
+    ::Settings.event_handling.task_final_events.to_hash
   end
 
   def self.event_groups
-    VMDB::Config.new('event_handling').config[:event_groups]
+    core_event_groups = ::Settings.event_handling.event_groups.to_hash
+    Settings.ems.each_with_object(core_event_groups) do |(_provider_type, provider_settings), event_groups|
+      provider_event_groups = provider_settings.fetch_path(:event_handling, :event_groups)
+      next unless provider_event_groups
+      DeepMerge.deep_merge!(
+        provider_event_groups.to_hash, event_groups,
+        :preserve_unmergeables => false,
+        :overwrite_arrays      => false
+      )
+    end
   end
 
   def self.bottleneck_event_groups
-    VMDB::Config.new('event_handling').config[:bottleneck_event_groups]
+    ::Settings.event_handling.bottleneck_event_groups.to_hash
   end
 
   def self.group_and_level(event_type)
@@ -60,41 +69,9 @@ class EmsEvent < EventStream
     )
   end
 
-  def self.add_vc(ems_id, event)
-    add(ems_id, ManageIQ::Providers::Vmware::InfraManager::EventParser.event_to_hash(event, ems_id))
-  end
-
-  def self.add_rhevm(ems_id, event)
-    add(ems_id, ManageIQ::Providers::Redhat::InfraManager::EventParser.event_to_hash(event, ems_id))
-  end
-
-  def self.add_openstack(ems_id, event)
-    add(ems_id, ManageIQ::Providers::Openstack::CloudManager::EventParser.event_to_hash(event, ems_id))
-  end
-
-  def self.add_openstack_infra(ems_id, event)
-    add(ems_id, ManageIQ::Providers::Openstack::InfraManager::EventParser.event_to_hash(event, ems_id))
-  end
-
-  def self.add_amazon(ems_id, event)
-    add(ems_id, ManageIQ::Providers::Amazon::CloudManager::EventParser.event_to_hash(event, ems_id))
-  end
-
-  def self.add_kubernetes(ems_id, event)
-    add(ems_id, ManageIQ::Providers::Kubernetes::ContainerManager::EventParser.event_to_hash(event, ems_id))
-  end
-
-  def self.add_azure(ems_id, event)
-    add(ems_id, ManageIQ::Providers::Azure::CloudManager::EventParser.event_to_hash(event, ems_id))
-  end
-
-  def self.add_google(ems_id, event)
-    add(ems_id, ManageIQ::Providers::Google::CloudManager::EventParser.event_to_hash(event, ems_id))
-  end
-
   def self.add(ems_id, event_hash)
     event_type = event_hash[:event_type]
-    raise MiqException::Error, "event_type must be set in event" if event_type.nil?
+    raise MiqException::Error, _("event_type must be set in event") if event_type.nil?
 
     event_hash[:ems_id] = ems_id
     process_vm_in_event!(event_hash)
@@ -104,13 +81,12 @@ class EmsEvent < EventStream
     process_availability_zone_in_event!(event_hash)
     process_cluster_in_event!(event_hash)
     process_container_entities_in_event!(event_hash)
+    process_middleware_entities_in_event!(event_hash)
 
     # Write the event
     new_event = create_event(event_hash)
-
     # Create a 'completed task' event if this is the last in a series of events
     create_completed_event(event_hash) if task_final_events.key?(event_type.to_sym)
-
     new_event
   end
 
@@ -140,7 +116,7 @@ class EmsEvent < EventStream
     if options[:id_key] == :vm_or_template_id && event[:vm_or_template_id].nil?
       # uid_ems is used for non-VC events, and should be nil for VC events.
       uid_ems = event.fetch_path(:full_data, :vm, :uid_ems)
-      vm      = VmOrTemplate.find_by_uid_ems(uid_ems) unless uid_ems.nil?
+      vm      = VmOrTemplate.find_by(:uid_ems => uid_ems) unless uid_ems.nil?
 
       unless vm.nil?
         event[:vm_or_template_id] = vm.id
@@ -158,6 +134,17 @@ class EmsEvent < EventStream
       process_object_in_event!(entity, event, :ems_ref_key => :ems_ref)
     end
     event.except!(:ems_ref)
+  end
+
+  def self.process_middleware_entities_in_event!(event, _options = {})
+    middleware_type = event[:middleware_type]
+    if middleware_type
+      klass = middleware_type.safe_constantize
+      unless klass.nil?
+        process_object_in_event!(klass, event, :ems_ref_key => :middleware_ref)
+      end
+    end
+    event.except!(:middleware_ref, :middleware_type)
   end
 
   def self.process_availability_zone_in_event!(event, options = {})
@@ -184,6 +171,17 @@ class EmsEvent < EventStream
   def self.first_chained_event(ems_id, chain_id)
     return nil if chain_id.nil?
     EmsEvent.where(:ems_id => ems_id, :chain_id => chain_id).order(:id).first
+  end
+
+  def parse_event_metadata
+    data = full_data || {}
+    [
+      event_type == "datawarehouse_alert" ? message : nil,
+      data[:severity],
+      data[:url],
+      data[:ems_ref],
+      data[:resolved],
+    ]
   end
 
   def first_chained_event
@@ -217,12 +215,18 @@ class EmsEvent < EventStream
 
     target_type = "src_vm_or_template"  if target_type == "src_vm"
     target_type = "dest_vm_or_template" if target_type == "dest_vm"
+    target_type = "middleware_server"   if event.event_type == "hawkular_alert"
+    target_type = "container_node"      if event.event_type == "datawarehouse_alert"
 
     event.send(target_type)
   end
 
   def tenant_identity
     (vm_or_template || ext_management_system).tenant_identity
+  end
+
+  def manager_refresh_targets
+    ext_management_system.class::EventTargetParser.new(self).parse
   end
 
   private
@@ -326,48 +330,5 @@ class EmsEvent < EventStream
 
   def ems_refresh_target
     ext_management_system
-  end
-
-  #
-  # Purging methods
-  #
-
-  def self.keep_ems_events
-    VMDB::Config.new("vmdb").config.fetch_path(:ems_events, :history, :keep_ems_events)
-  end
-
-  def self.purge_date
-    keep = keep_ems_events.to_i_with_method.seconds
-    keep = 6.months if keep == 0
-    keep.ago.utc
-  end
-
-  def self.purge_window_size
-    VMDB::Config.new("vmdb").config.fetch_path(:ems_events, :history, :purge_window_size) || 1000
-  end
-
-  def self.purge_timer
-    purge_queue(purge_date)
-  end
-
-  def self.purge_queue(ts)
-    MiqQueue.put_or_update(
-      :class_name  => name,
-      :method_name => "purge",
-      :role        => "event",
-      :queue_name  => "ems"
-    ) { |_msg, item| item.merge(:args => [ts]) }
-  end
-
-  def self.purge(older_than, window = nil, limit = nil)
-    _log.info("Purging #{limit || "all"} events older than [#{older_than}]...")
-
-    window ||= purge_window_size
-
-    total = where(arel_table[:timestamp].lteq(older_than)).delete_in_batches(window, limit) do |count, _total|
-      _log.info("Purging #{count} events.")
-    end
-
-    _log.info("Purging #{limit || "all"} events older than [#{older_than}]...Complete - Deleted #{total} records")
   end
 end

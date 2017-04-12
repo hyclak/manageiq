@@ -1,30 +1,28 @@
 module ManageIQ::Providers::Google::CloudManager::Provision::Cloning
   def do_clone_task_check(clone_task_ref)
-    source.with_provider_connection do |google|
-      instance = google.servers.all.detect { |s| s.id == clone_task_ref }
+    source.with_provider_connection(:service => 'compute') do |google|
+      instance = google.servers.get(dest_name, dest_availability_zone.ems_ref)
 
       return true if instance.ready?
       return false, instance.status_message
     end
   end
 
-  def create_disk
-    source.with_provider_connection do |google|
-      return google.disks.create(
-        :name         => dest_name,
-        :size_gb      => get_option(:boot_disk_size).to_i,
-        :zone_name    => dest_availability_zone.ems_ref,
-        :source_image => source.name)
-    end
-  end
-
   def prepare_for_clone_task
     clone_options = super
 
-    clone_options[:name] = dest_name
-    clone_options[:disks] = [create_disk.get_as_boot_disk(true, true)]
+    boot_disk = phase_context[:boot_disk]
+
+    clone_options[:name]         = dest_name
+    clone_options[:disks]        = [boot_disk]
     clone_options[:machine_type] = instance_type.ems_ref
-    clone_options[:zone_name] = dest_availability_zone.ems_ref
+    clone_options[:zone_name]    = dest_availability_zone.ems_ref
+    clone_options[:preemptible]  = get_option(:is_preemptible)
+    # fog-google specifies a default value that's incompatible with
+    # :preemptible; until this is fixed we need to be explicit about the host
+    # behavior on maintenance
+    # issue: https://github.com/fog/fog-google/issues/136
+    clone_options[:on_host_maintenance] = "TERMINATE" if clone_options[:preemptible]
 
     clone_options
   end
@@ -41,7 +39,7 @@ module ManageIQ::Providers::Google::CloudManager::Provision::Cloning
   end
 
   def start_clone(clone_options)
-    source.with_provider_connection do |google|
+    source.with_provider_connection(:service => 'compute') do |google|
       instance = google.servers.create(clone_options)
       return instance.id
     end

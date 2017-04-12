@@ -19,12 +19,9 @@ class MiqHostProvisionWorkflow < MiqRequestWorkflow
     false
   end
 
-  def create_request(values, requester, auto_approve = false)
-    super(values, requester, auto_approve) { update_selected_storage_names(values) }
-  end
-
-  def update_request(request, values, requester)
-    super(request, values, requester) { update_selected_storage_names(values) }
+  def make_request(request, values, requester = nil, auto_approve = false)
+    update_selected_storage_names(values)
+    super
   end
 
   def get_source_and_targets(_refresh = false)
@@ -85,7 +82,7 @@ class MiqHostProvisionWorkflow < MiqRequestWorkflow
   end
 
   def allowed_clusters(_options = {})
-    ems = ExtManagementSystem.find_by_id(get_value(@values[:placement_ems_name]))
+    ems = ExtManagementSystem.find_by(:id => get_value(@values[:placement_ems_name]))
     result = {}
     return result if ems.nil?
     ems.ems_clusters.each { |c| result[c.id] = "#{c.v_parent_datacenter} / #{c.name}" }
@@ -94,10 +91,11 @@ class MiqHostProvisionWorkflow < MiqRequestWorkflow
 
   def allowed_storages(_options = {})
     result = []
-    ems = ExtManagementSystem.find_by_id(get_value(@values[:placement_ems_name]))
+    ems = ExtManagementSystem.find_by(:id => get_value(@values[:placement_ems_name]))
     return result if ems.nil?
     ems.storages.each do |s|
       next unless s.store_type == "NFS"
+      s.ext_management_system = ems
       result << build_ci_hash_struct(s, [:name, :free_space, :total_space])
     end
     result
@@ -116,17 +114,21 @@ class MiqHostProvisionWorkflow < MiqRequestWorkflow
     mac_address  =     data[:mac_address].blank? ? nil : data[:mac_address].downcase
     ipmi_address =     data[:ipmi_address].blank? ? nil : data[:ipmi_address].downcase
 
-    raise "No host search criteria values were passed.  input data:<#{data.inspect}>" if name.nil? && mac_address.nil? && ipmi_address.nil?
+    if name.nil? && mac_address.nil? && ipmi_address.nil?
+      raise _("No host search criteria values were passed.  input data:<%{data}>") % {:data => data.inspect}
+    end
 
     _log.info "Host Passed  : <#{name}> <#{mac_address}> <#{ipmi_address}>"
     srcs = allowed_ws_hosts(:include_datacenter => true).find_all do |v|
       _log.info "Host Detected: <#{v.name.downcase}> <#{v.mac_address}> <#{v.ipmi_address}>"
       (name.nil? || name == v.name.downcase) && (mac_address.nil? || mac_address == v.mac_address.to_s.downcase) && (ipmi_address.nil? || ipmi_address == v.ipmi_address.to_s)
     end
-    raise "Multiple source template were found from input data:<#{data.inspect}>" if srcs.length > 1
+    if srcs.length > 1
+      raise _("Multiple source template were found from input data:<%{data}>") % {:data => data.inspect}
+    end
     src = srcs.first
 
-    raise "No target host was found from input data:<#{data.inspect}>" if src.nil?
+    raise _("No target host was found from input data:<%{data}>") % {:data => data.inspect} if src.nil?
     _log.info "Host Found: <#{src.name}> MAC:<#{src.mac_address}> IPMI:<#{src.ipmi_address}>"
     src
   end
@@ -195,7 +197,7 @@ class MiqHostProvisionWorkflow < MiqRequestWorkflow
     match_str = match_str.to_s.downcase
 
     send(allowed_method).detect do |item|
-      ci = item.kind_of?(Array) ? klass.find_by_id(item[0]) : item
+      ci = item.kind_of?(Array) ? klass.find_by(:id => item[0]) : item
       keys.any? do |key|
         value = ci.send(key).to_s.downcase
         # _log.warn "<#{allowed_method}> - comparing <#{value}> to <#{match_str}>"
@@ -239,9 +241,9 @@ class MiqHostProvisionWorkflow < MiqRequestWorkflow
     values[:ws_ems_custom_attributes] = p.ws_values(options.ems_custom_attributes, :parse_ws_string, :modify_key_name => false)
     values[:ws_miq_custom_attributes] = p.ws_values(options.miq_custom_attributes, :parse_ws_string, :modify_key_name => false)
 
-    p.validate_values(values)
-
-    p.create_request(values, nil, values[:auto_approve])
+    p.make_request(nil, values, nil, values[:auto_approve]).tap do |request|
+      p.raise_validate_errors if request == false
+    end
   rescue => err
     _log.error "<#{err}>"
     raise err

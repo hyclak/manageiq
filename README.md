@@ -2,16 +2,25 @@
 
 [![Build Status](https://travis-ci.org/ManageIQ/manageiq.svg)](https://travis-ci.org/ManageIQ/manageiq)
 [![Code Climate](https://codeclimate.com/github/ManageIQ/manageiq/badges/gpa.svg)](https://codeclimate.com/github/ManageIQ/manageiq)
+[![Codacy](https://api.codacy.com/project/badge/grade/9ffce48ccb924020ae8f9e698048e9a4)](https://www.codacy.com/app/ManageIQ/manageiq)
 [![Coverage Status](https://coveralls.io/repos/ManageIQ/manageiq/badge.svg?branch=master&service=github)](https://coveralls.io/github/ManageIQ/manageiq?branch=master)
 [![Dependency Status](https://gemnasium.com/ManageIQ/manageiq.svg)](https://gemnasium.com/ManageIQ/manageiq)
 [![Security](https://hakiri.io/github/ManageIQ/manageiq/master.svg)](https://hakiri.io/github/ManageIQ/manageiq/master)
 
 [![Chat](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/ManageIQ/manageiq?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 [![Translate](https://img.shields.io/badge/translate-zanata-blue.svg)](https://translate.zanata.org/zanata/project/view/manageiq)
+[![License](http://img.shields.io/badge/license-APACHE2-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0.html)
 
-ManageIQ is a Cloud Management Platform that delivers the insight, control, and
+
+[![Build history for master branch](https://buildstats.info/travisci/chart/ManageIQ/manageiq?branch=master&buildCount=50)](https://travis-ci.org/ManageIQ/manageiq/branches)
+
+## Discover, Optimize, and Control your Hybrid IT
+
+### Manage containers, virtual machines, networks, and storage from a single platform
+
+ManageIQ is an open-source Management Platform that delivers the insight, control, and
 automation that enterprises need to address the challenges of managing hybrid
-cloud environments.  It has the following feature sets:
+IT environments.  It has the following feature sets:
 
 * **Insight**: Discovery, Monitoring, Utilization, Performance, Reporting, Analytics, Chargeback, and Trending.
 * **Control**: Security, Compliance, Alerting, Policy-Based Resource and Configuration Management.
@@ -27,7 +36,7 @@ cloud environments.  It has the following feature sets:
 ## Learn more
 
 *  [**Read** developer guides](https://github.com/ManageiQ/guides)
-*  [**Chat** with contributors on irc.freenode.net \#manageiq](http://manageiq.org/community/irc/)
+*  [**Chat** with contributors on Gitter](https://gitter.im/ManageIQ/manageiq)
 *  [**File or view bug reports and feature requests** using Issues on Github](https://github.com/ManageIQ/manageiq/issues?state=open)
 *  [**Ask** questions of ManageIQ experts](http://talk.manageiq.org/)
 *  [**Discuss** ManageIQ with developers and power users](http://talk.manageiq.org/)

@@ -4,7 +4,6 @@ class MiqPolicy < ApplicationRecord
   acts_as_miq_taggable
   acts_as_miq_set_member
   include_concern 'ImportExport'
-  include ReportableMixin
 
   include UuidMixin
   include YAMLImportExportMixin
@@ -25,6 +24,7 @@ class MiqPolicy < ApplicationRecord
 
   validates_presence_of     :name, :description, :guid
   validates_uniqueness_of   :name, :description, :guid
+  validates :mode, :inclusion => { :in => %w(compliance control) }
 
   serialize :expression
 
@@ -87,7 +87,7 @@ class MiqPolicy < ApplicationRecord
   end
 
   def miq_event_definitions
-    miq_policy_contents.collect(&:miq_event_definition).uniq
+    miq_policy_contents.collect(&:miq_event_definition).compact.uniq
   end
   alias_method :events, :miq_event_definitions
 
@@ -102,11 +102,6 @@ class MiqPolicy < ApplicationRecord
       next unless pe.qualifier == on.to_s
       pe.get_action(on)
     end.compact
-  end
-
-  def action_result_for_event(action, event)
-    pe = miq_policy_contents.find_by(:miq_action => action, :miq_event_definition => event)
-    pe.qualifier == "success"
   end
 
   def delete_event(event)
@@ -163,8 +158,8 @@ class MiqPolicy < ApplicationRecord
     # TODO: If we need this validation on the object, create a real/virtual attribute so ActiveModel doesn't yell
     target.errors.add(:smart, result[:result])
 
-    action = invoke_actions(target, mode, profiles, succeeded, failed, inputs.merge(:event => erec))
-    result[:action] = action if action
+    actions = invoke_actions(target, mode, profiles, succeeded, failed, inputs.merge(:event => erec))
+    result[:actions] = actions if actions
     result
   end
 
@@ -184,6 +179,8 @@ class MiqPolicy < ApplicationRecord
     plist.each do|p|
       logger.info("MIQ(policy-enforce_policy): Resolving policy [#{p.description}]...")
       if p.conditions.empty?
+        always_condition = {"id" => nil, "description" => "always", "result" => "allow"}
+        result[:details].push(p.attributes.merge("result" => true, "conditions" => [always_condition]))
         succeeded.push(p)
         next
       end

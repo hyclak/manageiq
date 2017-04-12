@@ -1,6 +1,8 @@
 Vmdb::Application.configure do
   # Settings specified here will take precedence over those in config/application.rb
 
+  config.eager_load_paths = []
+
   # In the development environment your application's code is reloaded on
   # every request.  This slows down response time but is perfect for development
   # since you don't have to restart the web server when you make code changes.
@@ -11,7 +13,7 @@ Vmdb::Application.configure do
   config.whiny_nils = true
 
   # Show full error reports and disable caching
-  config.consider_all_requests_local       = true
+  config.consider_all_requests_local       = false
   config.action_controller.perform_caching = false
 
   # Don't care if the mailer can't send
@@ -34,11 +36,14 @@ Vmdb::Application.configure do
   # Expands the lines which load the assets
   config.assets.debug = true
 
+  config.assets.quiet = true
+
   # Include miq_debug in the list of assets here because it is only used in development
   config.assets.precompile << 'miq_debug.js'
-
-  # Raise exceptions in transactional callbacks
-  config.active_record.raise_in_transactional_callbacks = true
+  config.assets.precompile << 'miq_debug.css'
+  # Include totally (https://khan.github.io/tota11y/) here for dev-mode only to help working
+  # on accessibility issues.
+  config.assets.precompile << 'tota11y.js'
 
   # Customize any additional options below...
 

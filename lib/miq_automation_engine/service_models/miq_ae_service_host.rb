@@ -1,6 +1,11 @@
 module MiqAeMethodService
   class MiqAeServiceHost < MiqAeServiceModelBase
+    require_relative "mixins/miq_ae_service_custom_attribute_mixin"
+    include MiqAeServiceCustomAttributeMixin
+
     expose :storages,              :association => true
+    expose :read_only_storages
+    expose :writable_storages
     expose :vms,                   :association => true
     expose :ext_management_system, :association => true
     expose :hardware,              :association => true
@@ -19,6 +24,12 @@ module MiqAeMethodService
     expose :domain
     expose :files,                 :association => true
     expose :directories,           :association => true
+    expose :set_node_maintenance
+    expose :unset_node_maintenance
+    expose :external_get_node_maintenance
+    expose :compliances,           :association => true
+    expose :last_compliance,       :association => true
+    expose :host_aggregates,       :association => true
 
     METHODS_WITH_NO_ARGS = %w(scan)
     METHODS_WITH_NO_ARGS.each do |m|
@@ -49,7 +60,7 @@ module MiqAeMethodService
     def ems_custom_get(key)
       ar_method do
         c1 = @object.ems_custom_attributes.find_by(:name => key.to_s)
-        c1 ? c1.value : nil
+        c1.try(:value)
       end
     end
 
@@ -63,22 +74,6 @@ module MiqAeMethodService
         :args        => [attribute, value]
       ) if @object.is_vmware?
       true
-    end
-
-    def custom_keys
-      object_send(:miq_custom_keys)
-    end
-
-    def custom_get(key)
-      object_send(:miq_custom_get, key)
-    end
-
-    def custom_set(key, value)
-      ar_method do
-        @object.miq_custom_set(key, value)
-        @object.save
-      end
-      value
     end
 
     def ssh_exec(script)

@@ -8,10 +8,6 @@ module MiqServer::LogManagement
     has_many   :log_files, :dependent => :destroy, :as => :resource
   end
 
-  def sync_log_level
-    Vmdb::Loggers.apply_config(@vmdb_config.config[:log])
-  end
-
   def format_log_time(time)
     time.respond_to?(:strftime) ? time.strftime("%Y%m%d_%H%M%S") : "unknown"
   end
@@ -56,7 +52,7 @@ module MiqServer::LogManagement
         _log.info(msg)
 
         patterns = [pattern]
-        cfg_pattern = get_config("vmdb").config.fetch_path(:log, :collection, :archive, :pattern)
+        cfg_pattern = ::Settings.log.collection.archive.pattern
         patterns += cfg_pattern if cfg_pattern.kind_of?(Array)
 
         local_file = VMDB::Util.zip_logs("evm_server_daily.zip", patterns, "admin")
@@ -125,7 +121,7 @@ module MiqServer::LogManagement
     context_log_depot = log_depot(options[:context])
 
     # the current queue item and task must be errored out on exceptions so re-raise any caught errors
-    raise "Log depot settings not configured" unless context_log_depot
+    raise _("Log depot settings not configured") unless context_log_depot
     context_log_depot.update_attributes(:support_case => options[:support_case].presence)
 
     post_historical_logs(taskid, context_log_depot) unless options[:only_current]
@@ -133,13 +129,9 @@ module MiqServer::LogManagement
     task.update_status("Finished", "Ok", "Log files were successfully collected")
   end
 
-  def current_log_pattern_configuration
-    get_config("vmdb").config.fetch_path(:log, :collection, :current, :pattern) || []
-  end
-
   def current_log_patterns
     # use an array union to add pg log path patterns if not already there
-    current_log_pattern_configuration | pg_log_patterns
+    ::Settings.log.collection.current.pattern | pg_log_patterns
   end
 
   def pg_data_dir
@@ -160,6 +152,7 @@ module MiqServer::LogManagement
 
     delete_old_requested_logs
     logfile = LogFile.current_logfile
+    logfile.update_attributes(:miq_task_id => taskid)
     begin
       log_files << logfile
       save
@@ -168,8 +161,6 @@ module MiqServer::LogManagement
       msg = "Posting logs for: #{resource}"
       _log.info("#{log_prefix} #{msg}")
       task.update_status("Active", "Ok", msg)
-
-      base = base_zip_log_name + ".zip"
 
       msg = "Zipping and posting current logs and configs on #{resource}"
       _log.info("#{log_prefix} #{msg}")
@@ -191,7 +182,6 @@ module MiqServer::LogManagement
         :logging_ended_on   => log_end,
         :name               => name,
         :description        => desc,
-        :miq_task_id        => task.id
       )
 
       logfile.upload

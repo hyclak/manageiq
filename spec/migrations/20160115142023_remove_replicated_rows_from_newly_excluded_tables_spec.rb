@@ -7,7 +7,7 @@ describe RemoveReplicatedRowsFromNewlyExcludedTables do
 
   migration_context :up do
     before do
-      allow(ApplicationRecord).to receive(:my_region_number).and_return(99)
+      allow(ArRegion.anonymous_class_with_ar_region).to receive(:my_region_number).and_return(99)
     end
 
     it "removes the rows from the tables" do
@@ -32,6 +32,28 @@ describe RemoveReplicatedRowsFromNewlyExcludedTables do
       empty_settings = {
         :workers => {
           :worker_base => {
+            :replication_worker => {
+              :replication => {
+                :exclude_tables => []
+              }
+            }
+          }
+        }
+      }
+      config = conf_stub.create!(:typ => "vmdb", :settings => empty_settings)
+
+      migrate
+
+      config.reload
+      excludes = config.settings[:workers][:worker_base][:replication_worker][:replication][:exclude_tables]
+      expect(excludes).to include(event_def_stub.table_name)
+      expect(excludes).to include(scan_item_stub.table_name)
+    end
+
+    it "adds newly excluded tables with datatype of keys as string " do
+      empty_settings = {
+        "workers" => {
+          "worker_base" => {
             :replication_worker => {
               :replication => {
                 :exclude_tables => []

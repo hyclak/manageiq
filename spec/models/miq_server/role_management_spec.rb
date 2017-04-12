@@ -6,7 +6,6 @@ describe "Server Role Management" do
         automate,Automation Engine,0,false,region
         database_operations,Database Operations,0,false,region
         database_owner,Database Owner,1,false,database
-        database_synchronization,Database Synchronization,1,false,region
         ems_inventory,Management System Inventory,1,false,zone
         ems_metrics_collector,Capacity & Utilization Data Collector,0,false,zone
         ems_metrics_coordinator,Capacity & Utilization Coordinator,1,false,zone
@@ -20,6 +19,7 @@ describe "Server Role Management" do
         smartstate,SmartState Analysis,0,false,zone
         storage_inventory,Storage Inventory,1,false,zone
         user_interface,User Interface,0,false,region
+        websocket,Websocket,0,false,region
         web_services,Web Services,0,false,region
       CSV
       allow(ServerRole).to receive(:seed_data).and_return(@csv)

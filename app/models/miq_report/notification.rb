@@ -4,8 +4,8 @@ module MiqReport::Notification
     url = options[:email_url_prefix]
 
     user = User.find_by_userid(userid)
-    from = options[:email] && !options[:email][:from].blank? ? options[:email][:from] : VMDB::Config.new("vmdb").config[:smtp][:from]
-    to   = options[:email] ? options[:email][:to] : (user ? user.email : nil)
+    from = options[:email] && !options[:email][:from].blank? ? options[:email][:from] : ::Settings.smtp.from
+    to   = options[:email] ? options[:email][:to] : user.try(:email)
 
     msg = nil
     msg = "The system is not configured with a 'from' email address." if from.blank?
@@ -47,7 +47,7 @@ module MiqReport::Notification
     # When this happens, the addresses on the end spill over into the headers and cause the content and mime information to be ignored.
     #
     # Split recipient list into groups whose total length in bytes is around 100 bytes or the configured limit
-    cut_off = VMDB::Config.new("vmdb").config.fetch_path(:smtp, :recipient_address_byte_limit) || 100
+    cut_off = ::Settings.smtp.recipient_address_byte_limit
     sub_group = []
     grouped_tos = to.uniq.inject([]) do |g, t|
       sub_group << t
@@ -79,9 +79,10 @@ module MiqReport::Notification
 
   def notify_email_body(_url, _result, recipients)
     if self.table_has_records?
-      "Please find attached scheduled report \"#{name}\". This report was sent to: #{recipients.join(", ")}."
+      _("Please find attached scheduled report \"%{name}\". This report was sent to: %{recipients}.") %
+        {:name => name, :recipients => recipients.join(", ")}
     else
-      "No records found for scheduled report \"#{name}\""
+      _("No records found for scheduled report \"%{name}\"") % {:name => name}
     end
   end
 end

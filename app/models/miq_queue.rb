@@ -36,8 +36,13 @@ class MiqQueue < ApplicationRecord
   end
 
   def self.priority(which, dir = nil, by = 0)
-    raise ArgumentError, "which must be an Integer or one of #{PRIORITY_WHICH.join(", ")}" unless which.kind_of?(Integer) || PRIORITY_WHICH.include?(which)
-    raise ArgumentError, "dir must be one of #{PRIORITY_DIR.join(", ")}" unless dir.nil? || PRIORITY_DIR.include?(dir)
+    unless which.kind_of?(Integer) || PRIORITY_WHICH.include?(which)
+      raise ArgumentError,
+            _("which must be an Integer or one of %{priority}") % {:priority => PRIORITY_WHICH.join(", ")}
+    end
+    unless dir.nil? || PRIORITY_DIR.include?(dir)
+      raise ArgumentError, _("dir must be one of %{directory}") % {:directory => PRIORITY_DIR.join(", ")}
+    end
 
     which = const_get("#{which.to_s.upcase}_PRIORITY") unless which.kind_of?(Integer)
     priority = which.send(dir == :higher ? "-" : "+", by)
@@ -84,8 +89,6 @@ class MiqQueue < ApplicationRecord
   STATUS_EXPIRED = STATE_EXPIRED
   DEFAULT_QUEUE  = "generic"
 
-  @@delete_command_file = File.join(File.expand_path(Rails.root), "miq_queue_delete_cmd_file")
-
   def data
     msg_data && Marshal.load(msg_data)
   end
@@ -111,15 +114,17 @@ class MiqQueue < ApplicationRecord
     options[:task_id]      = $_miq_worker_current_msg.try(:task_id) unless options.key?(:task_id)
     options[:role]         = options[:role].to_s unless options[:role].nil?
 
-    # Let's deprecate supplying non-array args soon
     options[:args] = [options[:args]] if options[:args] && !options[:args].kind_of?(Array)
 
+    if !Rails.env.production? && options[:args] &&
+       (arg = options[:args].detect { |a| a.kind_of?(ActiveRecord::Base) && !a.new_record? })
+      raise ArgumentError, "MiqQueue.put(:class_name => #{options[:class_name]}, :method => #{options[:method_name]}) does not support args with #{arg.class.name} objects"
+    end
+
     msg = MiqQueue.create!(options)
-    _log.info("#{MiqQueue.format_full_log_msg(msg)}")
+    _log.info(MiqQueue.format_full_log_msg(msg))
     msg
   end
-
-  cache_with_timeout(:vmdb_config) { VMDB::Config.new("vmdb") }
 
   MIQ_QUEUE_GET = <<-EOL
     state = 'ready'
@@ -150,33 +155,24 @@ class MiqQueue < ApplicationRecord
       options[:priority] || MIN_PRIORITY,
     ]
 
-    prefetch_max_per_worker = vmdb_config.config[:server][:prefetch_max_per_worker] || 10
+    prefetch_max_per_worker = Settings.server.prefetch_max_per_worker
     msgs = MiqQueue.where(cond).order("priority, id").limit(prefetch_max_per_worker)
-    return nil if msgs.empty? # Nothing available in the queue
 
     result = nil
     msgs.each do |msg|
       begin
         _log.info("#{MiqQueue.format_short_log_msg(msg)} previously timed out, retrying...") if msg.state == STATE_TIMEOUT
-        w = MiqWorker.server_scope.find_by(:pid => Process.pid)
-        if w.nil?
-          msg.update_attributes!(:state => STATE_DEQUEUE, :handler => MiqServer.my_server)
-        else
-          msg.update_attributes!(:state => STATE_DEQUEUE, :handler => w)
-        end
-        result = msg
-        break
+        handler = MiqWorker.my_worker || MiqServer.my_server
+        msg.update_attributes!(:state => STATE_DEQUEUE, :handler => handler)
+        _log.info("#{MiqQueue.format_full_log_msg(msg)}, Dequeued in: [#{Time.now.utc - msg.created_on}] seconds")
+        return msg
       rescue ActiveRecord::StaleObjectError
         result = :stale
       rescue => err
-        raise "#{_log.prefix} \"#{err}\" attempting to get next message"
+        raise _("%{log_message} \"%{error}\" attempting to get next message") % {:log_message => _log.prefix, :error => err}
       end
     end
-    if result == :stale
-      _log.debug("All #{prefetch_max_per_worker} messages stale, returning...")
-    else
-      _log.info("#{MiqQueue.format_full_log_msg(result)}, Dequeued in: [#{Time.now - result.created_on}] seconds")
-    end
+    _log.debug("All #{prefetch_max_per_worker} messages stale, returning...") if result == :stale
     result
   end
 
@@ -276,7 +272,10 @@ class MiqQueue < ApplicationRecord
       rescue ActiveRecord::StaleObjectError
         _log.debug("#{MiqQueue.format_short_log_msg(msg)} stale, retrying...")
       rescue => err
-        raise RuntimeError, "#{_log.prefix} \"#{err}\" attempting merge next message", err.backtrace
+        raise RuntimeError,
+              _("%{log_message} \"%{error}\" attempting merge next message") % {:log_message => _log.prefix,
+                                                                                :error       => err},
+              err.backtrace
       end
     end
     msg
@@ -306,7 +305,7 @@ class MiqQueue < ApplicationRecord
     begin
       raise MiqException::MiqQueueExpired if expires_on && (Time.now.utc > expires_on)
 
-      raise "class_name cannot be nil" if class_name.nil?
+      raise _("class_name cannot be nil") if class_name.nil?
 
       obj = class_name.constantize
 
@@ -349,13 +348,11 @@ class MiqQueue < ApplicationRecord
         _log.error("#{MiqQueue.format_short_log_msg(self)}, #{message}")
         status = STATUS_TIMEOUT
       end
-    rescue SystemExit
-      raise
     rescue MiqException::MiqQueueExpired
       message = "Expired on [#{expires_on}]"
       _log.error("#{MiqQueue.format_short_log_msg(self)}, #{message}")
       status = STATUS_EXPIRED
-    rescue Exception => error
+    rescue StandardError, SyntaxError => error
       _log.error("#{MiqQueue.format_short_log_msg(self)}, Error: [#{error}]")
       _log.log_backtrace(error) unless error.kind_of?(MiqException::Error)
       status = STATUS_ERROR
@@ -378,7 +375,7 @@ class MiqQueue < ApplicationRecord
   rescue => err
     _log.error("#{MiqQueue.format_short_log_msg(self)}, #{err.message}")
   ensure
-    destroy
+    destroy_potentially_stale_record
   end
 
   def delivered_on
@@ -440,16 +437,6 @@ class MiqQueue < ApplicationRecord
   end
 
   def self.atStartup
-    if File.exist?(@@delete_command_file)
-      options = YAML.load(ERB.new(File.read(@@delete_command_file)).result)
-      if options[:required_role].nil? || MiqServer.my_server(true).has_active_role?(options[:required_role])
-        _log.info("Executing: [#{@@delete_command_file}], Options: [#{options.inspect}]")
-        deleted = where(options[:conditions]).delete_all
-        _log.info("Executing: [#{@@delete_command_file}] complete, #{deleted} rows deleted")
-      end
-      File.delete(@@delete_command_file)
-    end
-
     _log.info("Cleaning up queue messages...")
     MiqQueue.where(:state => STATE_DEQUEUE).each do |message|
       if message.handler.nil?
@@ -472,16 +459,6 @@ class MiqQueue < ApplicationRecord
 
   def self.format_short_log_msg(msg)
     "Message id: [#{msg.id}]"
-  end
-
-  # @return [Hash<String,Hash<Symbol,FixedNum>> wait times for the next and last items in the queue grouped by role
-  def self.wait_times_by_role
-    now = Time.now.utc
-    where(:state => STATE_READY)
-      .group(:role).pluck("role", "max(created_on)", "min(created_on)")
-      .each_with_object({}) do |(role, nxt, last), h|
-        h[role] = {:next => (now - nxt.to_datetime), :last => (now - last.to_datetime)}
-      end
   end
 
   def get_worker
@@ -516,5 +493,15 @@ class MiqQueue < ApplicationRecord
       options[key] = [nil, options[key]].uniq if options.key?(key)
     end
     options
+  end
+
+  def destroy_potentially_stale_record
+    destroy
+  rescue ActiveRecord::StaleObjectError
+    begin
+      reload.destroy
+    rescue ActiveRecord::RecordNotFound
+      # ignore
+    end
   end
 end # Class MiqQueue

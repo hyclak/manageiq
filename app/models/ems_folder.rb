@@ -3,7 +3,6 @@ class EmsFolder < ApplicationRecord
 
   belongs_to :ext_management_system, :foreign_key => "ems_id"
 
-  include ReportableMixin
   acts_as_miq_taggable
 
   include SerializedEmsRefObjMixin
@@ -12,28 +11,13 @@ class EmsFolder < ApplicationRecord
   include RelationshipMixin
   self.default_relationship_type = "ems_metadata"
 
-  include AggregationMixin
+  include RelationshipsAggregationMixin
   include MiqPolicyMixin
 
   virtual_has_many :vms_and_templates, :uses => :all_relationships
   virtual_has_many :vms,               :uses => :all_relationships
   virtual_has_many :miq_templates,     :uses => :all_relationships
   virtual_has_many :hosts,             :uses => :all_relationships
-
-  NON_DISPLAY_FOLDERS = %w(Datacenters vm host datastore).freeze
-
-  def hidden?(overrides = {})
-    ems = overrides[:ext_management_system] || ext_management_system
-    return false unless ems.kind_of?(ManageIQ::Providers::Vmware::InfraManager)
-
-    p = overrides[:parent] || parent if NON_DISPLAY_FOLDERS.include?(name)
-
-    case name
-    when "Datacenters"              then p.kind_of?(ExtManagementSystem)
-    when "vm", "host", "datastore"  then p.kind_of?(EmsFolder) && p.is_datacenter?
-    else                            false
-    end
-  end
 
   #
   # Provider Object methods
@@ -54,7 +38,7 @@ class EmsFolder < ApplicationRecord
 
   # Folder relationship methods
   def folders
-    children(:of_type => 'EmsFolder').sort_by { |c| c.name.downcase }
+    children(:of_type => 'EmsFolder')
   end
 
   alias_method :add_folder, :set_child
@@ -65,16 +49,16 @@ class EmsFolder < ApplicationRecord
   end
 
   def folders_only
-    folders.select { |f| !f.is_datacenter }
+    folders.select { |f| !f.kind_of?(Datacenter) }
   end
 
   def datacenters_only
-    folders.select(&:is_datacenter)
+    folders.select { |f| f.kind_of?(Datacenter) }
   end
 
   # Cluster relationship methods
   def clusters
-    children(:of_type => 'EmsCluster').sort_by { |c| c.name.downcase }
+    children(:of_type => 'EmsCluster')
   end
 
   alias_method :add_cluster, :set_child
@@ -87,7 +71,7 @@ class EmsFolder < ApplicationRecord
   # Host relationship methods
   #   all_hosts and all_host_ids included from AggregationMixin
   def hosts
-    children(:of_type => 'Host').sort_by { |c| c.name.downcase }
+    children(:of_type => 'Host')
   end
 
   alias_method :add_host, :set_child
@@ -100,7 +84,7 @@ class EmsFolder < ApplicationRecord
   # Vm relationship methods
   #   all_vms and all_vm_ids included from AggregationMixin
   def vms_and_templates
-    children(:of_type => 'VmOrTemplate').sort_by { |c| c.name.downcase }
+    children(:of_type => 'VmOrTemplate')
   end
 
   def miq_templates
@@ -119,7 +103,7 @@ class EmsFolder < ApplicationRecord
   end
 
   def storages
-    children(:of_type => 'Storage').sort_by { |c| c.name.downcase }
+    children(:of_type => 'Storage')
   end
 
   alias add_storage set_child
@@ -131,13 +115,13 @@ class EmsFolder < ApplicationRecord
 
   # Parent relationship methods
   def parent_datacenter
-    detect_ancestor(:of_type => "EmsFolder", &:is_datacenter)
+    detect_ancestor(:of_type => "EmsFolder") { |a| a.kind_of?(Datacenter) }
   end
 
   # TODO: refactor by vendor/hypervisor (currently, this assumes VMware)
   def register_host(host)
     host = Host.extract_objects(host)
-    raise "Host cannot be nil" if host.nil?
+    raise _("Host cannot be nil") if host.nil?
     userid, password = host.auth_user_pwd(:default)
     network_address  = host.address
 
@@ -177,7 +161,7 @@ class EmsFolder < ApplicationRecord
     options = args.extract_options!
     folders = path(:of_type => "EmsFolder")
     folders = folders[1..-1] if options[:exclude_root_folder]
-    folders = folders.reject { |f| NON_DISPLAY_FOLDERS.include?(f.name) } if options[:exclude_non_display_folders]
+    folders = folders.reject(&:hidden?) if options[:exclude_non_display_folders]
     folders
   end
 
@@ -202,9 +186,9 @@ class EmsFolder < ApplicationRecord
     options[:prefix] ||= ""
     subtree.each_with_object({}) do |(f, children), h|
       path = options[:prefix]
-      unless options[:exclude_non_display_folders] && NON_DISPLAY_FOLDERS.include?(f.name)
+      unless options[:exclude_non_display_folders] && f.hidden?
         path = path.blank? ? f.name : "#{path}/#{f.name}"
-        h[f.id] = path unless options[:exclude_datacenters] && f.is_datacenter?
+        h[f.id] = path unless options[:exclude_datacenters] && f.kind_of?(Datacenter)
       end
       h.merge!(child_folder_paths_recursive(children, options.merge(:prefix => path)))
     end

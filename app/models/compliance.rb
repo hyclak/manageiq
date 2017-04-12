@@ -2,8 +2,6 @@ class Compliance < ApplicationRecord
   belongs_to  :resource,  :polymorphic => true
   has_many    :compliance_details, :dependent => :destroy
 
-  include ReportableMixin
-
   def self.check_compliance_queue(targets, inputs = {})
     targets.to_miq_a.each do |target|
       MiqQueue.put(
@@ -34,11 +32,16 @@ class Compliance < ApplicationRecord
     if target.kind_of?(Array)
       klass, id = target
       klass = Object.const_get(klass)
-      target = klass.find_by_id(id)
-      raise "Unable to find object with class: [#{klass}], Id: [#{id}]" unless target
+      target = klass.find_by(:id => id)
+      unless target
+        raise _("Unable to find object with class: [%{class_name}], Id: [%{number}]") % {:class_name => klass,
+                                                                                         :number     => id}
+      end
     end
 
-    raise "Scan and Compliance check not supported for #{target.class.name} objects" unless target.kind_of?(Host)
+    unless target.kind_of?(Host)
+      raise _("Scan and Compliance check not supported for %{class_name} objects") % {:class_name => target.class.name}
+    end
 
     log_target = "#{target.class.name} name: [#{target.name}], id: [#{target.id}]"
     _log.info("Requesting scan of #{log_target}")
@@ -57,13 +60,18 @@ class Compliance < ApplicationRecord
     if target.kind_of?(Array)
       klass, id = target
       klass = Object.const_get(klass)
-      target = klass.find_by_id(id)
-      raise "Unable to find object with class: [#{klass}], Id: [#{id}]" unless target
+      target = klass.find_by(:id => id)
+      unless target
+        raise _("Unable to find object with class: [%{class_name}], Id: [%{number}]") % {:class_name => klass,
+                                                                                         :number     => id}
+      end
     end
     target_class = target.class.base_model.name.downcase
     target_class = "vm" if target_class.match("template")
 
-    raise "Compliance check not supported for #{target.class.name} objects" unless target.respond_to?(:compliances)
+    unless target.respond_to?(:compliances)
+      raise _("Compliance check not supported for %{class_name} objects") % {:class_name => target.class.name}
+    end
     check_event = "#{target_class}_compliance_check"
     _log.info("Checking compliance...")
     results = MiqPolicy.enforce_policy(target, check_event)

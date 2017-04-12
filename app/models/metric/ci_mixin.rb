@@ -21,12 +21,9 @@ module Metric::CiMixin
     end
   end
 
-  def has_perf_data?(interval_name = "hourly")
-    @has_perf_data ||= {}
-    unless @has_perf_data.key?(interval_name) # memoize boolean
-      @has_perf_data[interval_name] = associated_metrics(interval_name).exists?
-    end
-    @has_perf_data[interval_name]
+  def has_perf_data?
+    return @has_perf_data unless @has_perf_data.nil?
+    @has_perf_data = associated_metrics('hourly').exists?
   end
 
   def associated_metrics(interval_name)
@@ -60,7 +57,7 @@ module Metric::CiMixin
 
   def performances_maintains_value_for_duration?(options)
     _log.info("options: #{options.inspect}")
-    raise "Argument must be an options hash" unless options.kind_of?(Hash)
+    raise _("Argument must be an options hash") unless options.kind_of?(Hash)
     column = options[:column]
     value = options[:value].to_f
     duration = options[:duration]
@@ -81,7 +78,9 @@ module Metric::CiMixin
     raise ":value required" if value.nil?
     raise ":duration required" if duration.nil?
     # TODO: Check for valid operators
-    raise ":percentage expected integer from 0-100, received: #{percentage}" unless percentage.nil? || percentage.kind_of?(Integer) && percentage >= 0 && percentage <= 100
+    unless percentage.nil? || percentage.kind_of?(Integer) && percentage >= 0 && percentage <= 100
+      raise _(":percentage expected integer from 0-100, received: %{number}") % {:number => percentage}
+    end
 
     # Make sure any rails durations (1.day, 1.hour) is truly an int
     duration = duration.to_i

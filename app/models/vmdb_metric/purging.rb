@@ -5,7 +5,7 @@ module VmdbMetric::Purging
   module ClassMethods
     def purge_date(interval)
       type  = "keep_#{interval}_metrics".to_sym
-      value = VMDB::Config.new("vmdb").config.fetch_path(:database, :metrics_history, type)
+      value = ::Settings.database.metrics_history[type]
       value = value.to_i.days if value.kind_of?(Fixnum) # Default unit is days
       value = value.to_i_with_method.seconds.ago.utc unless value.nil?
       value
@@ -18,41 +18,45 @@ module VmdbMetric::Purging
 
     def purge_daily_timer(ts = nil)
       interval = "daily"
-      mode = :date  # Only support :date mode, not :remaining mode
-      ts ||= purge_date(interval) || 6.months.ago.utc
-      purge_timer(mode, ts, interval)
+      ts ||= purge_date(interval)
+      purge_timer(ts, interval)
     end
 
     def purge_hourly_timer(ts = nil)
       interval = "hourly"
-      mode = :date  # Only support :date mode, not :remaining mode
-      ts ||= purge_date(interval) || 6.months.ago.utc
-      purge_timer(mode, ts, interval)
+      ts ||= purge_date(interval)
+      purge_timer(ts, interval)
     end
 
-    def purge_timer(mode, value, interval)
-      MiqQueue.put_unless_exists(
-        :class_name    => name,
-        :method_name   => "purge",
-        :role          => "database_operations",
-        :queue_name    => "generic",
-        :state         => ["ready", "dequeue"],
-        :args_selector => ->(args) { args.kind_of?(Array) && args.last == interval }
-      ) do |_msg, find_options|
-        find_options.merge(:args => [mode, value, interval])
-      end
+    def purge_timer(value, interval)
+      MiqQueue.put(
+        :class_name  => name,
+        :method_name => "purge_#{interval}",
+        :args        => [value]
+      )
     end
 
     def purge_window_size
-      VMDB::Config.new("vmdb").config.fetch_path(:database, :metrics_history, :purge_window_size) || 10000
+      ::Settings.database.metrics_history.purge_window_size
     end
 
     def purge_count(mode, value, interval)
       send("purge_count_by_#{mode}", value, interval)
     end
 
-    def purge(mode, value, interval, window = nil, &block)
-      send("purge_by_#{mode}", value, interval, window, &block)
+    def purge_hourly(older_than, window = nil, &block)
+      purge_by_date(older_than, "hourly", window, &block)
+    end
+
+    def purge_daily(older_than, window = nil, &block)
+      purge_by_date(older_than, "daily", window, &block)
+    end
+
+    # deprecated, calling purge_by_date directly
+    # queue is calling purge_interval directly. (and mode is no longer used)
+    # keeping around in case messages are in the queue for upgrades
+    def purge(_mode, older_than, interval, window = nil, &block)
+      purge_by_date(older_than, interval, window, &block)
     end
 
     private

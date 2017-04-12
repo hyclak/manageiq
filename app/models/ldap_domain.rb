@@ -13,8 +13,6 @@ class LdapDomain < ApplicationRecord
   attr_accessor :ldap
 
   acts_as_miq_taggable
-
-  include ReportableMixin
   include AuthenticationMixin
 
   def connect(server = nil)
@@ -49,7 +47,7 @@ class LdapDomain < ApplicationRecord
   end
 
   def connected?
-    @ldap ? true : false
+    !!@ldap
   end
 
   def domain_prefix
@@ -66,7 +64,7 @@ class LdapDomain < ApplicationRecord
     rescue Exception => err
       raise MiqException::Error, err.message
     else
-      raise MiqException::Error, "Authentication failed" unless result
+      raise MiqException::Error, _("Authentication failed") unless result
     end
 
     result

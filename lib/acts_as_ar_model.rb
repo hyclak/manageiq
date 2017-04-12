@@ -5,10 +5,6 @@ class ActsAsArModel
     ActiveRecord::Base.connection
   end
 
-  def self.sortable?
-    false
-  end
-
   def connection
     self.class.connection
   end
@@ -146,53 +142,53 @@ class ActsAsArModel
   # Find routines
   #
 
-  def self.where(*args)
-    return aar_scope.where(*args) if self.respond_to?(:aar_scope)
-    raise NotImplementedError
+  # This method is called by QueryRelation upon executing the query.
+  #   Since it will receive non-legacy search options, we need to convert
+  #   them to handle the legacy find.
+  def self.search(mode, options = {})
+    find(mode, to_legacy_options(options))
   end
+  private_class_method :search
 
-  def self.find(*args)
-    return aar_scope.find(*args) if self.respond_to?(:aar_scope)
-    raise NotImplementedError
+  def self.to_legacy_options(options)
+    {
+      :conditions => options[:where],
+      :include    => options[:includes],
+      :limit      => options[:limit],
+      :order      => options[:order],
+      :offset     => options[:offset],
+      :select     => options[:select],
+      :group      => options[:group],
+    }.delete_blanks
   end
+  private_class_method :to_legacy_options
 
   def self.all(*args)
-    if !self.respond_to?(:aar_scope)
-      find(:all, *args)
-    elsif args.empty? || args.size == 1 && args.first.respond_to?(:empty?) && args.first.empty?
-      # avoid warnings
-      aar_scope
-    else
-      aar_scope.all(*args)
-    end
+    require 'query_relation'
+    QueryRelation.new(self, *args)
   end
 
   def self.first(*args)
-    return aar_scope.first(*args) if self.respond_to?(:aar_scope)
     find(:first, *args)
   end
 
   def self.last(*args)
-    return aar_scope.last(*args) if self.respond_to?(:aar_scope)
     find(:last, *args)
   end
 
   def self.count(*args)
-    return aar_scope.count(*args) if self.respond_to?(:aar_scope)
-    all(*args).size
+    all(*args).count
   end
 
   def self.find_by_id(*id)
-    return aar_scope.find_by_id(*id) if self.respond_to?(:aar_scope)
     options = id.extract_options!
-    options.merge!(:conditions => {:id => id.first})
+    options[:conditions] = {:id => id.first}
     first(options)
   end
 
   def self.find_all_by_id(*ids)
-    return aar_scope.find_all_by_id(*args) if self.respond_to?(:aar_scope)
     options = ids.extract_options!
-    options.merge!(:conditions => {:id => ids.flatten})
+    options[:conditions] = {:id => ids.flatten}
     all(options)
   end
 

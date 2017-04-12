@@ -1,5 +1,9 @@
 class Vm < VmOrTemplate
   default_scope { where(:template => false) }
+  has_one :container_deployment, :through => :container_deployment_node
+  has_one :container_deployment_node
+
+  extend InterRegionApiMethodRelay
 
   include_concern 'Operations'
 
@@ -24,7 +28,12 @@ class Vm < VmOrTemplate
   alias_method :corresponding_template_model, :corresponding_model
 
   def validate_remote_console_vmrc_support
-    raise(MiqException::RemoteConsoleNotSupportedError, "VMRC remote console is not supported on #{vendor}.")
+    raise(MiqException::RemoteConsoleNotSupportedError,
+          _("VMRC remote console is not supported on %{vendor}.") % {:vendor => vendor})
+  end
+
+  def add_to_service(service)
+    service.add_resource!(self)
   end
 
   def self.find_all_by_mac_address_and_hostname_and_ipaddress(mac_address, hostname, ipaddress)
@@ -63,12 +72,12 @@ class Vm < VmOrTemplate
     pl = {}
     check = validate_collect_running_processes
     unless check[:message].nil?
-      _log.warn "#{check[:message]}"
+      _log.warn check[:message].to_s
       return pl
     end
 
     begin
-      require 'miq-wmi'
+      require 'win32/miq-wmi'
       cred = my_zone_obj.auth_user_pwd(:windows_domain)
       ipaddresses.each do |ipaddr|
         break unless pl.blank?
@@ -77,7 +86,7 @@ class Vm < VmOrTemplate
           wmi = WMIHelper.connectServer(ipaddr, *cred)
           pl = MiqProcess.process_list_all(wmi) unless wmi.nil?
         rescue => wmi_err
-          _log.warn "#{wmi_err}"
+          _log.warn wmi_err.to_s
         end
         _log.info "Running processes for VM:[#{id}:#{name}]  Count:[#{pl.length}]"
       end
@@ -85,5 +94,17 @@ class Vm < VmOrTemplate
       _log.log_backtrace(err)
     end
     pl
+  end
+
+  def remote_console_url=(url, user_id)
+    SystemConsole.where(:vm_id => id).each(&:destroy)
+    console = SystemConsole.create!(
+      :vm_id      => id,
+      :user       => User.find_by(:userid => user_id),
+      :protocol   => 'url',
+      :url        => url,
+      :url_secret => SecureRandom.hex
+    )
+    console.id
   end
 end

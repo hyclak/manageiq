@@ -68,8 +68,8 @@ module OntapMetricsRollupMixin
       @baseCounterNames = counterNames & bca
     end
 
-    def find_all_by_interval_and_time_range(interval, start_time, end_time)
-      where(:rollup_type => interval, :statistic_time => start_time..end_time)
+    def with_interval_and_time_range(interval, timestamp)
+      where(:rollup_type => interval, :statistic_time => timestamp)
     end
   end # module ClassMethods
 
@@ -108,17 +108,23 @@ module OntapMetricsRollupMixin
   end
 
   def counter_unit(counterName)
-    raise "#{self.class.name}.counter_unit: counter #{counterName} not found" if (ci = counter_info[counterName]).nil?
+    if (ci = counter_info[counterName]).nil?
+      raise _("%{class_name}.counter_unit: counter %{counter_name} not found") % {:class_name   => self.class.name,
+                                                                                  :counter_name => counterName}
+    end
     ci['unit']
   end
 
   def counter_desc(counterName)
-    raise "#{self.class.name}.counter_desc: counter #{counterName} not found" if (ci = counter_info[counterName]).nil?
+    if (ci = counter_info[counterName]).nil?
+      raise _("%{class_name}.counter_desc: counter _{counter_name} not found") % {:class_name   => self.class.name,
+                                                                                  :counter_name => counterName}
+    end
     ci['desc']
   end
 
   def hourly_rollup(rollup_time, metric_list)
-    _log.info "#{rollup_time}"
+    _log.info rollup_time.to_s
     self.statistic_time = rollup_time
     self.rollup_type  = "hourly"
 
@@ -175,7 +181,7 @@ module OntapMetricsRollupMixin
   end
 
   def daily_rollup(rollup_time, time_profile, metric_list)
-    _log.info "#{rollup_time}"
+    _log.info rollup_time.to_s
     self.statistic_time = rollup_time
     self.time_profile = time_profile
     self.rollup_type  = "daily"
@@ -247,12 +253,12 @@ module OntapMetricsRollupMixin
     counterInfo[cnMin] = NetAppManageability::NAMHash.new do
       name  cnMin
       unit  ci.unit
-      desc  "Minimum value over rollup period - " + ci.desc
+      desc  _("Minimum value over rollup period - %{number}") % {:nummber => ci.desc}
     end
     counterInfo[cnMax] = NetAppManageability::NAMHash.new do
       name  cnMax
       unit  ci.unit
-      desc  "Maximum value over rollup period - " + ci.desc
+      desc  _("Maximum value over rollup period - %{number}") % {:number => ci.desc}
     end
   end
 

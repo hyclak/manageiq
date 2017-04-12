@@ -1,6 +1,6 @@
 describe "JobProxyDispatcherVmStorage2Hosts" do
-  require File.expand_path(File.join(File.dirname(__FILE__), 'job_proxy_dispatcher/job_proxy_dispatcher_helper'))
-  include JobProxyDispatcherHelper
+  include Spec::Support::JobProxyDispatcherHelper
+
   context "with two servers on same zone, vix disk enabled for all, " do
     before(:each) do
       @server1 = EvmSpecHelper.local_miq_server(:is_master => true)
@@ -10,7 +10,7 @@ describe "JobProxyDispatcherVmStorage2Hosts" do
 
     context "with hosts with a miq_proxy, vmware vms on storages" do
       before(:each) do
-        @hosts, @proxies, @storages, @vms = build_hosts_proxies_storages_vms
+        @hosts, @proxies, @storages, @vms = build_entities
         @vm = @vms.first
       end
 

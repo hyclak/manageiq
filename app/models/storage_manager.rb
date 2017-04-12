@@ -6,7 +6,6 @@ class StorageManager < ApplicationRecord
   include RelationshipMixin
 
   acts_as_miq_taggable
-  include ReportableMixin
 
   include MiqStorageDefs
 
@@ -126,7 +125,7 @@ class StorageManager < ApplicationRecord
       _log.info "zone = #{zoneId} - STORAGE_UPDATE_OK"
       agent.update_attribute(:last_update_status, STORAGE_UPDATE_OK)
     rescue Exception => err
-      _log.error "#{err}"
+      _log.error err.to_s
       $log.error err.backtrace.join("\n")
       _log.info "zone = #{zoneId} - STORAGE_UPDATE_FAILED"
       agent.update_attribute(:last_update_status, STORAGE_UPDATE_FAILED)
@@ -163,7 +162,7 @@ class StorageManager < ApplicationRecord
       _log.info "zone = #{zoneId} - STORAGE_UPDATE_OK"
       agent.update_attribute(:last_update_status, STORAGE_UPDATE_OK)
     rescue Exception => err
-      _log.error "#{err}"
+      _log.error err.to_s
       $log.error err.backtrace.join("\n")
       _log.info "zone = #{zoneId} - STORAGE_UPDATE_FAILED"
       agent.update_attribute(:last_update_status, STORAGE_UPDATE_FAILED)
@@ -212,7 +211,7 @@ class StorageManager < ApplicationRecord
       _log.info "zone = #{zoneId} - STORAGE_UPDATE_OK"
       agent.update_attribute(:last_update_status, STORAGE_UPDATE_OK)
     rescue Exception => err
-      _log.error "#{err}"
+      _log.error err.to_s
       $log.error err.backtrace.join("\n")
       _log.info "zone = #{zoneId} - STORAGE_UPDATE_FAILED"
       agent.update_attribute(:last_update_status, STORAGE_UPDATE_FAILED)
@@ -244,7 +243,7 @@ class StorageManager < ApplicationRecord
       _log.info "zone = #{zoneId} - STORAGE_UPDATE_OK"
       agent.update_attribute(:last_update_status, STORAGE_UPDATE_OK)
     rescue Exception => err
-      _log.error "#{err}"
+      _log.error err.to_s
       $log.error err.backtrace.join("\n")
       _log.info "zone = #{zoneId} - STORAGE_UPDATE_FAILED"
       agent.update_attribute(:last_update_status, STORAGE_UPDATE_FAILED)

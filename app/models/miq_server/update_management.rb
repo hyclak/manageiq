@@ -4,6 +4,8 @@ LinuxAdmin.logger = $log
 module MiqServer::UpdateManagement
   extend ActiveSupport::Concern
 
+  UPDATE_FILE = Rails.root.join("tmp/miq_update").freeze
+
   module ClassMethods
     def queue_update_registration_status(*ids)
       where(:id => ids.flatten).each(&:queue_update_registration_status)
@@ -143,7 +145,7 @@ module MiqServer::UpdateManagement
     _log.info("Checking for postgres updates...")
     check_postgres_updates
 
-    _log.info("Checking for CFME updates...")
+    _log.info("Checking for %{product} updates..." % {:product => I18n.t('product.name')})
     check_cfme_version_available
 
     _log.info("Checking for updates... Complete")
@@ -157,10 +159,10 @@ module MiqServer::UpdateManagement
 
     _log.info("Applying Updates, Services will restart when complete.")
 
-    # MiqDatabase.cfme_package_name will update only the CFME package tree.  (Won't disturb the database)
+    # MiqDatabase.cfme_package_name will update only the ManageIQ package tree.  (Won't disturb the database)
     # "" will update everything
     packages_to_update = EvmDatabase.local? ? [MiqDatabase.cfme_package_name] : []
-    LinuxAdmin::Yum.update(*packages_to_update)
+    File.write(UPDATE_FILE, packages_to_update.join(" "))
   end
 
   private

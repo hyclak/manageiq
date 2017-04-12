@@ -1,21 +1,20 @@
 class ConfiguredSystem < ApplicationRecord
   include NewWithTypeStiMixin
-  include ReportableMixin
-
   acts_as_miq_taggable
   belongs_to :configuration_location
-  belongs_to :configuration_manager, :class_name => 'ManageIQ::Providers::ConfigurationManager'
   belongs_to :configuration_organization
   belongs_to :configuration_profile
+  belongs_to :counterpart, :polymorphic => true
   belongs_to :customization_script_medium
   belongs_to :customization_script_ptable
   belongs_to :inventory_root_group, :class_name => "EmsFolder"
+  belongs_to :manager,              :class_name => "ExtManagementSystem"
   belongs_to :operating_system_flavor
   has_one    :computer_system, :as => :managed_entity, :dependent => :destroy
   has_and_belongs_to_many :configuration_tags
 
   alias_attribute :name,    :hostname
-  alias_method    :manager, :configuration_manager
+  alias_method    :configuration_manager, :manager
 
   delegate :name, :to => :configuration_profile,         :prefix => true, :allow_nil => true
   delegate :name, :to => :configuration_architecture,    :prefix => true, :allow_nil => true
@@ -62,12 +61,31 @@ class ConfiguredSystem < ApplicationRecord
     tag_hash[ConfigurationRealm]
   end
 
+  def counterparts
+    return [] unless counterpart
+    [counterpart] + counterpart.counterparts.where.not(:id => id)
+  end
+
   def tag_hash
     @tag_hash ||= configuration_tags.index_by(&:class)
+  end
+
+  def provisionable?
+    false
+  end
+
+  def self.provisionable?(ids)
+    cs = ConfiguredSystem.where(:id => ids)
+    return false if cs.blank?
+    cs.all?(&:provisionable?)
   end
 
   def self.common_configuration_profiles_for_selected_configured_systems(ids)
     hosts = includes(:configuration_location, :configuration_organization).where(:id => ids)
     hosts.collect(&:available_configuration_profiles).inject(:&).presence
+  end
+
+  def image_name
+    "configured_system"
   end
 end

@@ -17,7 +17,7 @@
 #       POST /api/services/:id
 #          { "action" : "<custom_action_button_name>" }
 #
-describe ApiController do
+describe "Custom Actions API" do
   let(:template1) { FactoryGirl.create(:service_template, :name => "template1") }
   let(:svc1) { FactoryGirl.create(:service, :name => "svc1", :service_template_id => template1.id) }
 
@@ -60,7 +60,7 @@ describe ApiController do
 
   def expect_result_to_have_custom_actions_hash
     expect_result_to_have_keys(%w(custom_actions))
-    custom_actions = response_hash["custom_actions"]
+    custom_actions = response.parsed_body["custom_actions"]
     expect_hash_to_have_only_keys(custom_actions, %w(buttons button_groups))
     expect(custom_actions["buttons"].size).to eq(1)
     expect(custom_actions["button_groups"].size).to eq(1)
@@ -69,12 +69,13 @@ describe ApiController do
 
   describe "Querying services with no custom actions" do
     it "returns core actions as authorized" do
-      api_basic_authorize action_identifier(:services, :edit)
+      api_basic_authorize(action_identifier(:services, :edit),
+                          action_identifier(:services, :read, :resource_actions, :get))
 
       run_get services_url(svc1.id)
 
       expect_result_to_have_keys(%w(id href actions))
-      expect(response_hash["actions"].collect { |a| a["name"] }).to match_array(%w(edit))
+      expect(response.parsed_body["actions"].collect { |a| a["name"] }).to match_array(%w(edit add_resource remove_resource remove_all_resources))
     end
   end
 
@@ -84,16 +85,18 @@ describe ApiController do
     end
 
     it "returns core actions as authorized including custom action buttons" do
-      api_basic_authorize action_identifier(:services, :edit)
+      api_basic_authorize(action_identifier(:services, :edit),
+                          action_identifier(:services, :read, :resource_actions, :get))
 
       run_get services_url(svc1.id)
 
       expect_result_to_have_keys(%w(id href actions))
-      expect(response_hash["actions"].collect { |a| a["name"] }).to match_array(%w(edit button1 button2 button3))
+      expect(response.parsed_body["actions"].collect { |a| a["name"] }).to match_array(%w(edit button1 button2 button3 add_resource remove_resource remove_all_resources))
     end
 
     it "supports the custom_actions attribute" do
-      api_basic_authorize action_identifier(:services, :edit)
+      api_basic_authorize(action_identifier(:services, :edit),
+                          action_identifier(:services, :read, :resource_actions, :get))
 
       run_get services_url(svc1.id), :attributes => "custom_actions"
 
@@ -102,12 +105,13 @@ describe ApiController do
     end
 
     it "supports the custom_action_buttons attribute" do
-      api_basic_authorize action_identifier(:services, :edit)
+      api_basic_authorize(action_identifier(:services, :edit),
+                          action_identifier(:services, :read, :resource_actions, :get))
 
       run_get services_url(svc1.id), :attributes => "custom_action_buttons"
 
       expect_result_to_have_keys(%w(id href custom_action_buttons))
-      expect(response_hash["custom_action_buttons"].size).to eq(3)
+      expect(response.parsed_body["custom_action_buttons"].size).to eq(3)
     end
   end
 
@@ -117,18 +121,19 @@ describe ApiController do
     end
 
     it "returns core actions as authorized excluding custom action buttons" do
-      api_basic_authorize action_identifier(:service_templates, :edit)
+      api_basic_authorize(action_identifier(:service_templates, :edit),
+                          action_identifier(:service_templates, :read, :resource_actions, :get))
 
       run_get service_templates_url(template1.id)
 
       expect_result_to_have_keys(%w(id href actions))
-      action_specs = response_hash["actions"]
+      action_specs = response.parsed_body["actions"]
       expect(action_specs.size).to eq(1)
       expect(action_specs.first["name"]).to eq("edit")
     end
 
     it "supports the custom_actions attribute" do
-      api_basic_authorize
+      api_basic_authorize action_identifier(:service_templates, :read, :resource_actions, :get)
 
       run_get service_templates_url(template1.id), :attributes => "custom_actions"
 
@@ -137,12 +142,12 @@ describe ApiController do
     end
 
     it "supports the custom_action_buttons attribute" do
-      api_basic_authorize
+      api_basic_authorize action_identifier(:service_templates, :read, :resource_actions, :get)
 
       run_get service_templates_url(template1.id), :attributes => "custom_action_buttons"
 
       expect_result_to_have_keys(%w(id href custom_action_buttons))
-      expect(response_hash["custom_action_buttons"].size).to eq(3)
+      expect(response.parsed_body["custom_action_buttons"].size).to eq(3)
     end
   end
 
@@ -171,7 +176,7 @@ describe ApiController do
 
   describe "Services with custom button dialogs" do
     it "queries for custom_actions returns expanded details for dialog buttons" do
-      api_basic_authorize
+      api_basic_authorize action_identifier(:services, :read, :resource_actions, :get)
 
       template2 = FactoryGirl.create(:service_template, :name => "template2")
       dialog2   = FactoryGirl.create(:dialog, :label => "dialog2")
@@ -182,15 +187,18 @@ describe ApiController do
 
       run_get services_url(svc2.id), :attributes => "custom_actions"
 
-      expect_result_to_have_keys(%w(custom_actions))
-      custom_actions = response_hash["custom_actions"]
-      expect_hash_to_have_only_keys(custom_actions, %w(buttons button_groups))
-      expect(custom_actions["buttons"].size).to eq(1)
-      button = response_hash["custom_actions"]["buttons"].first
-      expect_hash_to_have_keys(button, %w(id resource_action))
-      ra = button["resource_action"]
-      expect_hash_to_have_keys(ra, %w(id dialog_id))
-      expect_result_to_match_hash(ra, "id" => ra2.id, "dialog_id" => ra2.dialog_id)
+      expected = {
+        "custom_actions" => {
+          "button_groups" => anything,
+          "buttons"       => [
+            hash_including(
+              "id"              => anything,
+              "resource_action" => hash_including("id" => ra2.id, "dialog_id" => ra2.dialog_id)
+            )
+          ]
+        }
+      }
+      expect(response.parsed_body).to include(expected)
     end
   end
 end

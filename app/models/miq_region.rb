@@ -13,31 +13,21 @@ class MiqRegion < ApplicationRecord
   virtual_has_many :miq_servers,            :class_name => "MiqServer"
   virtual_has_many :active_miq_servers,     :class_name => "MiqServer"
 
-  virtual_has_many :vms_and_templates,      :uses => :all_relationships
-  virtual_has_many :miq_templates,          :uses => :all_relationships
-  virtual_has_many :vms,                    :uses => :all_relationships
+  virtual_has_many :vms_and_templates
+  virtual_has_many :miq_templates
+  virtual_has_many :vms
+
+  after_save :clear_my_region_cache
 
   acts_as_miq_taggable
-  include ReportableMixin
   include UuidMixin
   include NamingSequenceMixin
   include AggregationMixin
-  # Since we've overridden the implementation of methods from AggregationMixin,
-  # we must also override the :uses portion of the virtual columns.
-  override_aggregation_mixin_virtual_columns_uses(:all_hosts, :hosts)
-  override_aggregation_mixin_virtual_columns_uses(:all_vms_and_templates, :vms_and_templates)
+  include ConfigurationManagementMixin
 
   include MiqPolicyMixin
   include Metric::CiMixin
 
-  alias_method :all_vms_and_templates,  :vms_and_templates
-  alias_method :all_vm_or_template_ids, :vm_or_template_ids
-  alias_method :all_vms,                :vms
-  alias_method :all_vm_ids,             :vm_ids
-  alias_method :all_miq_templates,      :miq_templates
-  alias_method :all_miq_template_ids,   :miq_template_ids
-  alias_method :all_hosts,              :hosts
-  alias_method :all_host_ids,           :host_ids
   alias_method :all_storages,           :storages
 
   PERF_ROLLUP_CHILDREN = [:ext_management_systems, :storages]
@@ -68,6 +58,10 @@ class MiqRegion < ApplicationRecord
 
   def miq_servers
     MiqServer.in_region(region_number)
+  end
+
+  def servers_for_settings_reload
+    miq_servers.where(:status => "started")
   end
 
   def active_miq_servers
@@ -110,7 +104,9 @@ class MiqRegion < ApplicationRecord
     my_region_id = my_region_number
     db_region_id = MiqDatabase.first.try(:region_id)
     if db_region_id && db_region_id != my_region_id
-      raise Exception, "Region [#{my_region_id}] does not match the database's region [#{db_region_id}]"
+      raise Exception,
+            _("Region [%{region_id}] does not match the database's region [%{db_id}]") % {:region_id => my_region_id,
+                                                                                          :db_id     => db_region_id}
     end
 
     create_with(:description => "Region #{my_region_id}").find_or_create_by!(:region => my_region_id) do
@@ -119,19 +115,53 @@ class MiqRegion < ApplicationRecord
   end
 
   def self.destroy_region(conn, region, tables = nil)
-    tables ||= conn.tables.reject { |t| t =~ /^schema_migrations|^ar_internal_metadata|^rr/ }.sort
+    tables ||= (conn.tables - MiqPglogical::ALWAYS_EXCLUDED_TABLES).sort
     tables.each do |t|
       pk = conn.primary_key(t)
       if pk
         conditions = sanitize_conditions(region_to_conditions(region, pk))
       else
         id_cols = connection.columns(t).select { |c| c.name.ends_with?("_id") }
+        next if id_cols.empty?
         conditions = id_cols.collect { |c| "(#{sanitize_conditions(region_to_conditions(region, c.name))})" }.join(" OR ")
       end
 
       rows = conn.delete("DELETE FROM #{t} WHERE #{conditions}")
       _log.info "Cleared [#{rows}] rows from table [#{t}]"
     end
+  end
+
+  def self.remote_replication_type?
+    MiqPglogical.new.provider?
+  end
+
+  def self.global_replication_type?
+    MiqPglogical.new.subscriber?
+  end
+
+  def self.replication_enabled?
+    MiqPglogical.new.node?
+  end
+
+  def self.replication_type
+    if global_replication_type?
+      :global
+    elsif remote_replication_type?
+      :remote
+    else
+      :none
+    end
+  end
+
+  def self.replication_type=(desired_type)
+    current_type = replication_type
+    return desired_type if desired_type == current_type
+
+    MiqPglogical.new.destroy_provider   if current_type == :remote
+    PglogicalSubscription.delete_all    if current_type == :global
+    MiqPglogical.new.configure_provider if desired_type == :remote
+    # Do nothing to add a global
+    desired_type
   end
 
   def ems_clouds
@@ -148,6 +178,14 @@ class MiqRegion < ApplicationRecord
 
   def ems_middlewares
     ext_management_systems.select { |e| e.kind_of? ManageIQ::Providers::MiddlewareManager }
+  end
+
+  def ems_datawarehouses
+    ext_management_systems.select { |e| e.kind_of? ManageIQ::Providers::DatawarehouseManager }
+  end
+
+  def ems_configproviders
+    ext_management_systems.select { |e| e.kind_of? ManageIQ::Providers::ConfigurationManager }
   end
 
   def assigned_roles
@@ -186,8 +224,7 @@ class MiqRegion < ApplicationRecord
   end
 
   def remote_ws_address
-    contact_with = VMDB::Config.new("vmdb").config.fetch_path(:webservices, :contactwith)
-    contact_with == 'hostname' ? remote_ws_hostname : remote_ws_ipaddress
+    ::Settings.webservices.contactwith == 'hostname' ? remote_ws_hostname : remote_ws_ipaddress
   end
 
   def remote_ws_ipaddress
@@ -202,7 +239,20 @@ class MiqRegion < ApplicationRecord
 
   def remote_ws_url
     hostname = remote_ws_address
-    hostname.nil? ? nil : "https://#{hostname}"
+    hostname && URI::HTTPS.build(:host => hostname).to_s
+  end
+
+  def api_system_auth_token(userid)
+    token_hash = {
+      :server_guid => remote_ws_miq_server.guid,
+      :userid      => userid,
+      :timestamp   => Time.now.utc
+    }
+    MiqPassword.encrypt(token_hash.to_yaml)
+  end
+
+  def self.api_system_auth_token_for_region(region_id, user)
+    find_by_region(region_id).api_system_auth_token(user)
   end
 
   #
@@ -255,9 +305,13 @@ class MiqRegion < ApplicationRecord
   end
 
   def perf_capture_always=(options)
-    raise "options should be a Hash of type => enabled" unless options.kind_of?(Hash)
-    raise "options are invalid, all keys must be one of #{VALID_CAPTURE_ALWAYS_TYPES.inspect}" unless options.keys.all? { |k| VALID_CAPTURE_ALWAYS_TYPES.include?(k.to_sym) }
-    raise "options are invalid, all values must be one of [true, false]" unless options.values.all? { |v| [true, false].include?(v) }
+    raise _("options should be a Hash of type => enabled") unless options.kind_of?(Hash)
+    unless options.keys.all? { |k| VALID_CAPTURE_ALWAYS_TYPES.include?(k.to_sym) }
+      raise _("options are invalid, all keys must be one of %{type}") % {:type => VALID_CAPTURE_ALWAYS_TYPES.inspect}
+    end
+    unless options.values.all? { |v| [true, false].include?(v) }
+      raise _("options are invalid, all values must be one of [true, false]")
+    end
 
     options.each do |type, enable|
       ns = "/performance/#{type}"
@@ -273,5 +327,11 @@ class MiqRegion < ApplicationRecord
       options[type] = self.is_tagged_with?("capture_enabled", :ns => "/performance/#{type}")
     end
     @perf_capture_always = options.freeze
+  end
+
+  private
+
+  def clear_my_region_cache
+    MiqRegion.my_region_clear_cache
   end
 end

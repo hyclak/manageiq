@@ -1,6 +1,17 @@
 describe MiqServer do
   include_examples ".seed called multiple times"
 
+  it ".invoke_at_startups" do
+    MiqRegion.seed
+    described_class::RUN_AT_STARTUP.each do |klass|
+      next unless klass.respond_to?(:atStartup)
+      expect(klass.constantize).to receive(:atStartup)
+    end
+
+    expect(Vmdb.logger).to receive(:log_backtrace).never
+    described_class.invoke_at_startups
+  end
+
   context ".my_guid" do
     let(:guid_file) { Rails.root.join("GUID") }
 
@@ -120,13 +131,7 @@ describe MiqServer do
         end
 
         it "will queue up a message with high priority" do
-          expect(message.priority).to eq(MiqQueue::HIGH_PRIORITY)
-        end
-
-        it "will not requeue if one exists" do
-          expect(MiqQueue.where(queue_cond).count).to eq(1)
-          @miq_server.ntp_reload_queue
-          expect(MiqQueue.where(queue_cond).count).to eq(1)
+          expect(MiqQueue.where(queue_cond)).not_to be_nil
         end
       end
 
@@ -143,7 +148,6 @@ describe MiqServer do
     end
 
     context "#ntp_reload" do
-      let(:config)     { @miq_server.get_config("vmdb") }
       let(:server_ntp) { {:server => ["server.pool.com"]} }
       let(:zone_ntp)   { {:server => ["zone.pool.com"]} }
       let(:chrony)     { double }
@@ -155,8 +159,7 @@ describe MiqServer do
 
         it "syncs with server settings with zone and server configured" do
           @zone.update_attribute(:settings, :ntp => zone_ntp)
-          config.config = {:ntp => server_ntp}
-          config.save
+          stub_settings(:ntp => server_ntp)
 
           expect(LinuxAdmin::Chrony).to receive(:new).and_return(chrony)
           expect(chrony).to receive(:clear_servers)
@@ -166,8 +169,7 @@ describe MiqServer do
 
         it "syncs with zone settings if server not configured" do
           @zone.update_attribute(:settings, :ntp => zone_ntp)
-          config.config = {}
-          config.save
+          stub_settings({})
 
           expect(LinuxAdmin::Chrony).to receive(:new).and_return(chrony)
           expect(chrony).to receive(:clear_servers)
@@ -177,8 +179,7 @@ describe MiqServer do
 
         it "syncs with default zone settings if server and zone not configured" do
           @zone.update_attribute(:settings, {})
-          config.config = {}
-          config.save
+          stub_settings({})
 
           expect(LinuxAdmin::Chrony).to receive(:new).and_return(chrony)
           expect(chrony).to receive(:clear_servers)
@@ -339,12 +340,12 @@ describe MiqServer do
 
       context "#server_timezone" do
         it "utc with no system default" do
-          stub_server_configuration(:server => {:timezone => nil})
+          stub_settings(:server => {:timezone => nil})
           expect(@miq_server.server_timezone).to eq("UTC")
         end
 
         it "uses system default" do
-          stub_server_configuration(:server => {:timezone => "Eastern Time (US & Canada)"})
+          stub_settings(:server => {:timezone => "Eastern Time (US & Canada)"})
           expect(@miq_server.server_timezone).to eq("Eastern Time (US & Canada)")
         end
       end
@@ -359,7 +360,7 @@ describe MiqServer do
           ['ems_operations',         0]
         ].each { |r, max| @server_roles << FactoryGirl.create(:server_role, :name => r, :max_concurrent => max) }
 
-        @miq_server.role    = @server_roles.collect(&:name).join(',')
+        @miq_server.role = @server_roles.collect(&:name).join(',')
       end
 
       it "should have all server roles" do
@@ -385,6 +386,15 @@ describe MiqServer do
           expect(@miq_server.active_role_names.include?("event")).to be_truthy
         end
       end
+    end
+  end
+
+  it "detects already .running?" do
+    Tempfile.open("evmpid") do |file|
+      allow(MiqServer).to receive(:pidfile).and_return(file.path)
+      File.write(file.path, Process.pid)
+
+      expect(MiqServer.running?).to be_truthy
     end
   end
 

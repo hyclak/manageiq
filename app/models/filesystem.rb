@@ -1,5 +1,4 @@
-$LOAD_PATH << File.join(GEMS_PENDING_ROOT, "metadata/linux")
-require 'LinuxUtils'
+require 'metadata/linux/LinuxUtils'
 
 class Filesystem < ApplicationRecord
   belongs_to :resource, :polymorphic => true
@@ -11,8 +10,6 @@ class Filesystem < ApplicationRecord
   has_one :binary_blob, :as => :resource, :dependent => :destroy
 
   include FilterableMixin
-  include ReportableMixin
-
   virtual_column :contents,           :type => :string,  :uses => {:binary_blob => :binary_blob_parts}
   virtual_column :contents_available, :type => :boolean, :uses => :binary_blob
 

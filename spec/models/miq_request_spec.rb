@@ -1,4 +1,6 @@
 describe MiqRequest do
+  include MiqRequestMixin
+
   let(:fred)   { FactoryGirl.create(:user_with_group, :name => 'Fred Flintstone', :userid => 'fred',   :email => "fred@example.com") }
   let(:barney) { FactoryGirl.create(:user_with_group, :name => 'Barney Rubble',   :userid => 'barney', :email => "barney@example.com") }
 
@@ -55,6 +57,11 @@ describe MiqRequest do
 
         host_request.set_description(true)
       end
+    end
+
+    it ".find_source_id_from_values with :src_ids" do
+      src_id_hash = {:src_ids => [101, 102, 103]}
+      expect(described_class.send(:find_source_id_from_values, src_id_hash)).to eq(101)
     end
 
     it "#call_automate_event_queue" do
@@ -304,6 +311,90 @@ describe MiqRequest do
       request = FactoryGirl.create(:service_template_provision_request, :description => description, :requester => fred)
       request.post_create_request_tasks
       expect(request.description).to eq(description)
+    end
+  end
+
+  context '#workflow' do
+    let(:provision_request) do
+      FactoryGirl.create(:miq_provision_request,
+                         :requester => fred,
+                         :src_vm_id => template.id,
+                         :options => {:src_vm_id => template.id})
+    end
+    let(:ems)          { FactoryGirl.create(:ems_vmware) }
+    let(:template)     { FactoryGirl.create(:template_vmware, :ext_management_system => ems) }
+    let(:host) { double('Host', :id => 1, :name => 'my_host') }
+
+    it "calls password_helper when a block is passed in" do
+      expect_any_instance_of(ManageIQ::Providers::Vmware::InfraManager::ProvisionWorkflow).to receive(:password_helper).twice
+      provision_request.workflow({}, {:allowed_hosts => [host], :skip_dialog_load => true}) { |_x| 'test' }
+    end
+
+    it "returns the allowed tags" do
+      FactoryGirl.create(:miq_dialog,
+                         :name        => "miq_provision_dialogs",
+                         :dialog_type => MiqProvisionWorkflow)
+
+      FactoryGirl.create(:classification_department_with_tags)
+
+      tag = Classification.where(:description => 'Department', :parent_id => 0).includes(:tag).first
+      provision_request.add_tag(tag.name, tag.children.first.name)
+
+      expected = [a_hash_including(:children)]
+      expect(provision_request.v_allowed_tags).to match(expected)
+    end
+  end
+
+  context '#create_request_task' do
+    let(:ems)      { FactoryGirl.create(:ems_vmware_with_authentication) }
+    let(:template) { FactoryGirl.create(:template_vmware, :ext_management_system => ems) }
+    let(:request)  do
+      FactoryGirl.create(:miq_provision_request, :requester => fred, :options => @options, :source => template)
+    end
+
+    before do
+      allow(MiqRegion).to receive(:my_region).and_return(FactoryGirl.create(:miq_region))
+
+      @options = {
+        :src_vm_id     => template.id,
+        :number_of_vms => 3,
+      }
+    end
+
+    it '1 task' do
+      task = request.create_request_task(1)
+      expect(task.type).to  eq(template.ext_management_system.class.provision_class('_vmware').name)
+      expect(task.state).to eq('pending')
+      expect(request.request_state).to eq('pending')
+    end
+
+    it 'multiple tasks' do
+      task = nil
+      (1..2).each do |idx|
+        task = request.create_request_task(idx)
+        expect(task.state).to eq('pending')
+        request.miq_request_tasks << task
+      end
+
+      task.update_and_notify_parent(:state => 'queued', :message => 'State Machine Initializing')
+      task = request.create_request_task(3)
+
+      expect(task.state).to eq('pending')
+      expect(request.request_state).to eq('active')
+    end
+  end
+
+  context ".class_from_request_data" do
+    it "with a valid request_type" do
+      expect(described_class.class_from_request_data(:request_type => "template")).to eq(MiqProvisionRequest)
+    end
+
+    it "with a invalid request_type" do
+      expect { described_class.class_from_request_data(:request_type => "abc") }.to raise_error("Invalid request_type")
+    end
+
+    it "without a request_type" do
+      expect { described_class.class_from_request_data({}) }.to raise_error("Invalid request_type")
     end
   end
 end

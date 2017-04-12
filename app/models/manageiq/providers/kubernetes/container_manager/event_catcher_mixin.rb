@@ -1,12 +1,14 @@
 module ManageIQ::Providers::Kubernetes::ContainerManager::EventCatcherMixin
   extend ActiveSupport::Concern
+
+  # https://github.com/kubernetes/kubernetes/blob/master/pkg/kubelet/container/event.go
   # 'Created', 'Failed', 'Started', 'Killing', 'Stopped' and 'Unhealthy' are in fact container related events,
   # returned as part of a pod event.
   ENABLED_EVENTS = {
     'Node'                  => %w(NodeReady NodeNotReady Rebooted NodeSchedulable NodeNotSchedulable InvalidDiskCapacity
                                   FailedMount),
     'Pod'                   => %w(Scheduled FailedScheduling FailedValidation HostPortConflict DeadlineExceeded
-                                  FailedSync OutOfDisk NodeSelectorMismatching InsufficientFreeCPU
+                                  OutOfDisk NodeSelectorMismatching InsufficientFreeCPU
                                   InsufficientFreeMemory Created Failed Started Killing Stopped Unhealthy),
     'ReplicationController' => %w(SuccessfulCreate FailedCreate)
   }
@@ -45,7 +47,19 @@ module ManageIQ::Providers::Kubernetes::ContainerManager::EventCatcherMixin
     reset_event_monitor_handle
   end
 
-  def process_event(event)
+  def queue_event(event)
+    event_data = extract_event_data(event)
+    _log.info "#{log_prefix} Queuing event [#{event_data}]"
+    event_hash = ManageIQ::Providers::Kubernetes::ContainerManager::EventParser.event_to_hash(event_data, @cfg[:ems_id])
+    EmsEvent.add_queue('add', @cfg[:ems_id], event_hash)
+  end
+
+  def filtered?(event)
+    extract_event_data(event).nil?
+  end
+
+  # Returns hash, or nil if event should be discarded.
+  def extract_event_data(event)
     event_data = {
       :timestamp => event.object.lastTimestamp,
       :kind      => event.object.involvedObject.kind,
@@ -63,31 +77,36 @@ module ManageIQ::Providers::Kubernetes::ContainerManager::EventCatcherMixin
     supported_reasons = ENABLED_EVENTS[event_data[:kind]] || []
 
     unless supported_reasons.include?(event_data[:reason])
-      _log.debug "#{log_prefix} Discarding event [#{event_data}]"
       return
     end
 
-    event_data[:event_type] = "#{event_data[:kind].upcase}_" \
-                              "#{event_data[:reason].upcase}"
+    event_type_prefix = event_data[:kind].upcase
 
     # Handle event data for specific entities
     case event_data[:kind]
     when 'Node'
       event_data[:container_node_name] = event_data[:name]
+      # Workaround for missing/useless node UID (#9600, https://github.com/kubernetes/kubernetes/issues/29289)
+      if event_data[:uid].nil? || event_data[:uid] == event_data[:name]
+        node = ContainerNode.find_by(:ems_id => @ems.id, :name => event_data[:name])
+        event_data[:uid] = node.try!(:ems_ref)
+      end
     when 'Pod'
       /^spec.containers{(?<container_name>.*)}$/ =~ event_data[:fieldpath]
       unless container_name.nil?
-        event_data[:event_type] = "CONTAINER_#{event_data[:reason].upcase}"
+        event_type_prefix = "CONTAINER"
         event_data[:container_name] = container_name
       end
       event_data[:container_group_name] = event_data[:name]
       event_data[:container_namespace] = event_data[:namespace]
     when 'ReplicationController'
+      event_type_prefix = "REPLICATOR"
       event_data[:container_replicator_name] = event_data[:name]
       event_data[:container_namespace] = event_data[:namespace]
     end
 
-    _log.info "#{log_prefix} Queuing event [#{event_data}]"
-    EmsEvent.add_queue('add_kubernetes', @cfg[:ems_id], event_data)
+    event_data[:event_type] = "#{event_type_prefix}_#{event_data[:reason].upcase}"
+
+    event_data
   end
 end

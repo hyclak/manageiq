@@ -1,5 +1,6 @@
 class ResourcePool < ApplicationRecord
-  include ReportableMixin
+  include TenantIdentityMixin
+
   acts_as_miq_taggable
 
   belongs_to :ext_management_system, :foreign_key => "ems_id"
@@ -11,13 +12,13 @@ class ResourcePool < ApplicationRecord
   include RelationshipMixin
   self.default_relationship_type = "ems_metadata"
 
-  include AggregationMixin
-  # Since we've overridden the implementation of methods from AggregationMixin,
-  # we must also override the :uses portion of the virtual columns.
-  override_aggregation_mixin_virtual_columns_uses(:all_hosts, :all_relationships)
-
+  include RelationshipsAggregationMixin
   include MiqPolicyMixin
   include AsyncDeleteMixin
+
+  virtual_has_many :vms_and_templates, :uses => :all_relationships
+  virtual_has_many :vms,               :uses => :all_relationships
+  virtual_has_many :miq_templates,     :uses => :all_relationships
 
   virtual_column :v_parent_cluster,        :type => :string,  :uses => :all_relationships
   virtual_column :v_parent_host,           :type => :string,  :uses => :all_relationships
@@ -26,20 +27,8 @@ class ResourcePool < ApplicationRecord
   virtual_column :v_parent_folder,         :type => :string,  :uses => :all_relationships
   virtual_column :v_direct_miq_templates,  :type => :integer, :uses => :all_relationships
   virtual_column :v_direct_vms,            :type => :integer, :uses => :all_relationships
-  virtual_column :v_total_vms,             :type => :integer, :uses => :all_relationships
-  virtual_column :v_total_miq_templates,   :type => :integer, :uses => :all_relationships
-
-  virtual_has_many :vms_and_templates, :uses => :all_relationships
-  virtual_has_many :vms,               :uses => :all_relationships
-  virtual_has_many :miq_templates,     :uses => :all_relationships
-
-  def tenant_identity
-    if ext_management_system
-      ext_management_system.tenant_identity
-    else
-      User.super_admin.tap { |u| u.current_group = Tenant.root_tenant.default_miq_group }
-    end
-  end
+  virtual_total  :v_total_vms,             :all_vms,          :uses => :all_relationships
+  virtual_total  :v_total_miq_templates,   :all_miq_templates, :uses => :all_relationships
 
   def hidden?
     is_default?
@@ -51,7 +40,7 @@ class ResourcePool < ApplicationRecord
 
   # Resource Pool relationship methods
   def resource_pools
-    children(:of_type => 'ResourcePool').sort_by { |c| c.name.downcase }
+    children(:of_type => 'ResourcePool')
   end
 
   alias_method :add_resource_pool, :set_child
@@ -68,7 +57,7 @@ class ResourcePool < ApplicationRecord
 
   # VM relationship methods
   def vms_and_templates
-    children(:of_type => 'VmOrTemplate').sort_by { |c| c.name.downcase }
+    children(:of_type => 'VmOrTemplate')
   end
   alias_method :direct_vms_and_templates, :vms_and_templates
 
@@ -114,14 +103,6 @@ class ResourcePool < ApplicationRecord
     descendant_count(:of_type => 'VmOrTemplate')
   end
 
-  def total_miq_templates
-    all_miq_templates.size
-  end
-
-  def total_vms
-    all_vms.size
-  end
-
   alias_method :add_vm, :set_child
   alias_method :remove_vm, :remove_child
 
@@ -131,7 +112,7 @@ class ResourcePool < ApplicationRecord
 
   # All RPs under this RP and all child RPs
   def all_resource_pools
-    descendants(:of_type => 'ResourcePool').sort_by { |r| r.name.downcase }
+    descendants(:of_type => 'ResourcePool')
   end
 
   # Parent relationship methods
@@ -154,17 +135,20 @@ class ResourcePool < ApplicationRecord
   end
 
   def parent_datacenter
-    detect_ancestor(:of_type => "EmsFolder", &:is_datacenter)
+    detect_ancestor(:of_type => "EmsFolder") { |a| a.kind_of?(Datacenter) }
   end
 
   def parent_folder
-    detect_ancestor(:of_type => "EmsFolder") { |a| !a.is_datacenter && !["host", "vm"].include?(a.name) } # TODO: Fix this to use EmsFolder#hidden?
+    detect_ancestor(:of_type => "EmsFolder") { |a| !a.kind_of?(Datacenter) && !%w(host vm).include?(a.name) } # TODO: Fix this to use EmsFolder#hidden?
   end
 
   # Overridden from AggregationMixin to provide hosts related to this RP
   def all_hosts
-    p = parent_cluster_or_host
-    p.kind_of?(Host) ? [p] : p.all_hosts
+    if p = parent_cluster_or_host
+      p.kind_of?(Host) ? [p] : p.all_hosts
+    else
+      []
+    end
   end
 
   def all_host_ids
@@ -200,8 +184,8 @@ class ResourcePool < ApplicationRecord
   alias_method :v_direct_vms,           :total_direct_vms
   alias_method :v_direct_miq_templates, :total_direct_miq_templates
 
-  alias_method :v_total_vms,           :total_vms
-  alias_method :v_total_miq_templates, :total_miq_templates
+  alias total_vms v_total_vms
+  alias total_miq_templates v_total_miq_templates
 
   # TODO: Move this into a more "global" module for anything in the ems_metadata tree.
   def absolute_path_objs(*args)

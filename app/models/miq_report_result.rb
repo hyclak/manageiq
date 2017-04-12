@@ -10,8 +10,9 @@ class MiqReportResult < ApplicationRecord
 
   serialize :report
 
-  virtual_column :miq_group_description, :type => :string, :uses => :miq_group
-  virtual_column :status,                :type => :string, :uses => :miq_task
+  virtual_delegate :description, :to => :miq_group, :prefix => true, :allow_nil => true
+  virtual_delegate :state_or_status, :to => "miq_task", :allow_nil => true
+  virtual_attribute :status, :string, :uses => :state_or_status
   virtual_column :status_message,        :type => :string, :uses => :miq_task
 
   virtual_has_one :result_set,           :class_name => "Hash"
@@ -24,8 +25,6 @@ class MiqReportResult < ApplicationRecord
     end
   end
 
-  include ReportableMixin
-
   delegate :table, :to => :report_results, :allow_nil => true
 
   def result_set
@@ -33,39 +32,11 @@ class MiqReportResult < ApplicationRecord
   end
 
   def status
-    return "Unknown" if miq_task.nil?
-
-    case miq_task.state
-    when MiqTask::STATE_INITIALIZED
-      return "Initialized"
-    when MiqTask::STATE_QUEUED
-      return "Queued"
-    when MiqTask::STATE_ACTIVE
-      return "Running"
-    when MiqTask::STATE_FINISHED
-      case miq_task.status
-      when MiqTask::STATUS_OK
-        return "Finished"
-      when MiqTask::STATUS_WARNING
-        return "Finished with Warnings"
-      when MiqTask::STATUS_ERROR
-        return "Error"
-      when MiqTask::STATUS_TIMEOUT
-        return "Timed Out"
-      else
-        raise "Unknown status of: #{miq_task.status.inspect}"
-      end
-    else
-      raise "Unknown state of: #{miq_task.state.inspect}"
-    end
+    MiqTask.human_status(state_or_status)
   end
 
   def status_message
-    miq_task.nil? ? "Report results are no longer available" : miq_task.message
-  end
-
-  def miq_group_description
-    miq_group.try(:description)
+    miq_task.nil? ? _("Report results are no longer available") : miq_task.message
   end
 
   def report_results
@@ -88,6 +59,8 @@ class MiqReportResult < ApplicationRecord
     miq_report_result_details.build(results)
   end
 
+  # @option options :per_page number of items per page
+  # @option options :page page number (defaults to page 1)
   def html_rows(options = {})
     per_page = options.delete(:per_page)
     page     = options.delete(:page) || 1
@@ -97,7 +70,7 @@ class MiqReportResult < ApplicationRecord
     end
     update_attribute(:last_accessed_on, Time.now.utc)
     purge_for_user
-    html_details.apply_legacy_finder_options(options.merge(:order => "id asc")).collect(&:data)
+    html_details.order("id asc").offset(options[:offset]).limit(options[:limit]).collect(&:data)
   end
 
   def save_for_user(userid)
@@ -152,7 +125,7 @@ class MiqReportResult < ApplicationRecord
     parts = userid.to_s.split("|")
     return parts[0] if (parts.last == 'adhoc')
     return parts[1] if (parts.last == 'schedule')
-    raise "Cannot parse userid #{userid.inspect}"
+    raise _("Cannot parse userid %{user_id}") % {:user_id => userid.inspect}
   end
 
   def self.purge_for_user(options = {})
@@ -176,22 +149,21 @@ class MiqReportResult < ApplicationRecord
 
     html_string << report_build_html_table(report_results, html_rows.join)  # Build the html report table using all html rows
 
-    PdfGenerator.pdf_from_string(html_string, 'pdf_report')
+    PdfGenerator.pdf_from_string(html_string, "pdf_report.css")
   end
 
   # Generate the header html section for pdfs
   def generate_pdf_header(options = {})
     page_size = options[:page_size] || "a4"
-    title     = options[:title] || "<No Title>"
+    title     = options[:title] || _("<No Title>")
     run_date  = options[:run_date] || "<N/A>"
 
     hdr  = "<head><style>"
     hdr << "@page{size: #{page_size} landscape}"
     hdr << "@page{margin: 40pt 30pt 40pt 30pt}"
     hdr << "@page{@top{content: '#{title}';color:blue}}"
-    hdr << "@page{@bottom-left{content: url('#{ActionController::Base.helpers.image_path('layout/reportbanner_small1.png')}')}}"
-    hdr << "@page{@bottom-center{font-size: 75%;content: 'Report date: #{run_date}'}}"
-    hdr << "@page{@bottom-right{font-size: 75%;content: 'Page ' counter(page) ' of ' counter(pages)}}"
+    hdr << "@page{@bottom-center{font-size: 75%;content: '" + _("Report date: %{report_date}") % {:report_date => run_date} + "'}}"
+    hdr << "@page{@bottom-right{font-size: 75%;content: '" + _("Page %{page_number} of %{total_pages}") % {:page_number => " ' counter(page) '", :total_pages => " ' counter(pages)}}"}
     hdr << "</style></head>"
   end
 
@@ -202,14 +174,16 @@ class MiqReportResult < ApplicationRecord
     #   :session_id => <session_id>
     # }
 
-    raise "Result type #{result_type} not supported" unless [:csv, :txt, :pdf].include?(result_type.to_sym)
-    raise "A valid userid is required" if options[:userid].nil?
+    unless [:csv, :txt, :pdf].include?(result_type.to_sym)
+      raise _("Result type %{result_type} not supported") % {:result_type => result_type}
+    end
+    raise _("A valid userid is required") if options[:userid].nil?
 
     _log.info("Adding generate report result [#{result_type}] task to the message queue...")
     task = MiqTask.new(:name => "Generate Report result [#{result_type}]: '#{report.name}'", :userid => options[:userid])
     task.update_status("Queued", "Ok", "Task has been queued")
 
-    sync = VMDB::Config.new("vmdb").config[:product][:report_sync]
+    sync = ::Settings.product.report_sync
 
     MiqQueue.put(
       :queue_name  => "generic",
@@ -237,11 +211,11 @@ class MiqReportResult < ApplicationRecord
   end
 
   def _async_generate_result(taskid, result_type, options = {})
-    task = MiqTask.find_by_id(taskid)
+    task = MiqTask.find_by(:id => taskid)
     task.update_status("Active", "Ok", "Generating report result [#{result_type}]") if task
 
     user = options[:user] || User.find_by_userid(options[:userid])
-    raise "Unable to find user with userid 'options[:userid]'" if user.nil?
+    raise _("Unable to find user with userid 'options[:userid]'") if user.nil?
 
     rpt = report_results
     begin
@@ -264,7 +238,7 @@ class MiqReportResult < ApplicationRecord
         when :pdf then to_pdf
         when :txt then rpt.to_text
         else
-          raise "Result type #{result_type} not supported"
+          raise _("Result type %{result_type} not supported") % {:result_type => result_type}
         end
       end
 
@@ -346,6 +320,19 @@ class MiqReportResult < ApplicationRecord
   def self.with_current_user_groups
     current_user = User.current_user
     current_user.admin_user? ? all : where(:miq_group_id => current_user.miq_group_ids)
+  end
+
+  def self.with_chargeback
+    includes(:miq_report).where(:miq_reports => {:db => Chargeback.subclasses})
+  end
+
+  def self.with_saved_chargeback_reports(report_id = nil)
+    with_report(report_id).auto_generated.with_current_user_groups.with_chargeback.order('LOWER(miq_reports.name)')
+  end
+
+  def self.select_distinct_results
+    select("DISTINCT ON(LOWER(miq_reports.name), miq_report_results.miq_report_id) LOWER(miq_reports.name), \
+            miq_report_results.miq_report_id")
   end
 
   private

@@ -112,8 +112,8 @@ class MiqSmisAgent < StorageManager
 
   def verify_credentials(auth_type = nil)
     # Verification of creds for other SMA types is handled though mixinx.
-    raise "Credential validation requires the SMIS Agent type be set." if agent_type.blank?
-    raise "no credentials defined" if self.missing_credentials?(auth_type)
+    raise _("Credential validation requires the SMIS Agent type be set.") if agent_type.blank?
+    raise _("no credentials defined") if missing_credentials?(auth_type)
 
     begin
       connect
@@ -125,12 +125,12 @@ class MiqSmisAgent < StorageManager
       # this seems to be due to some strange interaction between WBEM and Rails.
       # This is only a problem in the verify failure case.
       #
-      _log.warn("#{$!.inspect}")
+      _log.warn($!.inspect)
       raise $!.message
     rescue Exception
-      _log.warn("#{$!.inspect}")
-      # $log.info $!.backtrace.join("\n")
-      raise "Unexpected response returned from #{ui_lookup(:table => "ext_management_systems")}, see log for details"
+      _log.warn($!.inspect)
+      raise _("Unexpected response returned from %{table}, see log for details") %
+              {:table => ui_lookup(:table => "ext_management_systems")}
     else
       true
     end
@@ -158,7 +158,7 @@ class MiqSmisAgent < StorageManager
         agent.connect
         agent.update_stats
       rescue Exception => err
-        _log.warn "#{err}"
+        _log.warn err.to_s
         $log.warn err.backtrace.join("\n")
         next
       ensure
@@ -174,7 +174,7 @@ class MiqSmisAgent < StorageManager
       begin
         spRn = @conn.GetInstance(me.obj_name, :LocalNamespacePath => me.namespace, :PropertyList => ['HealthState', 'OperationalStatus'])
       rescue Exception => err
-        _log.error "#{err}"
+        _log.error err.to_s
         _log.error "obj_name: #{me.obj_name}"
         next
       end
@@ -205,7 +205,7 @@ class MiqSmisAgent < StorageManager
         agent.connect
         agent.update_status
       rescue Exception => err
-        _log.warn "#{err}"
+        _log.warn err.to_s
         $log.warn err.backtrace.join("\n")
         next
       ensure
@@ -234,13 +234,19 @@ class MiqSmisAgent < StorageManager
 
   def request_smis_update
     rw = MiqSmisRefreshWorker.find_current_in_zone(zone_id).first
-    raise "#{name}.request_smis_update: no active SmisRefreshWorker found for zone #{zone_id}" if rw.nil?
+    if rw.nil?
+      raise _("%{name}.request_smis_update: no active SmisRefreshWorker found for zone %{zone}") % {:name => name,
+                                                                                                    :zone => zone_id}
+    end
     rw.send_message_to_worker_monitor("request_smis_update")
   end
 
   def request_status_update
     rw = MiqSmisRefreshWorker.find_current_in_zone(zone_id).first
-    raise "#{name}.request_status_update: no active SmisRefreshWorker found for zone #{zone_id}" if rw.nil?
+    if rw.nil?
+      raise _("%{name}.request_status_update: no active SmisRefreshWorker found for zone %{zone}") % {:name => name,
+                                                                                                      :zone => zone_id}
+    end
     rw.send_message_to_worker_monitor("request_status_update")
   end
 

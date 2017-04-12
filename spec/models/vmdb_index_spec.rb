@@ -100,13 +100,19 @@ describe VmdbIndex do
       @evm_index.rollup_metrics(interval_name, rollup_date)
 
       rollup_record = @evm_index.vmdb_metrics.where(:capture_interval_name => 'daily').first
-      # rollup_record = Metrics::Finders.find_all_by_range(@index, Time.gm(2012, 8, 14, 00, 00, 01), Time.gm(2012, 8, 14, 23, 59, 59), interval_name)
 
       expect(rollup_record).not_to be_nil
       expect(rollup_record.rows).to eq(227)
       expect(rollup_record.size).to eq(2270)
       expect(rollup_record.wasted_bytes).to   be_within(0.01).of(33.83)
       expect(rollup_record.percent_bloat).to  be_within(0.01).of(22.54)
+    end
+
+    it "fetches latest metric record" do
+      expect(@evm_index.latest_hourly_metric.rows).to eq(500)
+      expect(@evm_index.latest_hourly_metric.size).to eq(5000)
+      expect(@evm_index.latest_hourly_metric.wasted_bytes).to eq(90)
+      expect(@evm_index.latest_hourly_metric.percent_bloat).to eq(50.7)
     end
   end
 end

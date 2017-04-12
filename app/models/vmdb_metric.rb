@@ -2,10 +2,9 @@ class VmdbMetric < ApplicationRecord
   belongs_to :resource, :polymorphic => true
 
   include_concern 'Purging'
-  include ReportableMixin
 
   def self.rollup_metrics(resource, _interval_name, rollup_date)
-    # tp = TimeProfile.find_by_description("UTC")
+    # tp = TimeProfile.find_by(:description => "UTC")
 
     rows          = 0
     size          = 0

@@ -1,19 +1,20 @@
 class CloudNetwork < ApplicationRecord
   include NewWithTypeStiMixin
-  include ReportableMixin
+  include SupportsFeatureMixin
+  include CloudTenancyMixin
 
-  belongs_to :ext_management_system, :foreign_key => :ems_id, :class_name => "ManageIQ::Providers::CloudManager"
+  acts_as_miq_taggable
+
+  belongs_to :ext_management_system, :foreign_key => :ems_id, :class_name => "ManageIQ::Providers::NetworkManager"
   belongs_to :cloud_tenant
   belongs_to :orchestration_stack
 
-  has_many   :cloud_subnets, :dependent => :destroy
-  has_many   :network_ports, :through => :cloud_subnets
-  has_many   :floating_ips,  :dependent => :destroy
-
-  # TODO(lsmola) Defaulting CloudNetwork for Private network behaviour, otherwise I am unable to model
-  # vm.public_networks. Not specifying it here causes missing method, ans specifying CloudNetwork::Private
-  # causes filtering networks by Private, while I want to filter Public.
-  include CloudNetworkPrivateMixin
+  has_many :cloud_subnets, :dependent => :destroy
+  has_many :network_routers, -> { distinct }, :through => :cloud_subnets
+  has_many :public_networks, -> { distinct }, :through => :cloud_subnets
+  has_many :network_ports, :through => :cloud_subnets
+  has_many :floating_ips,  :dependent => :destroy
+  has_many :vms, :through => :network_ports, :source => :device, :source_type => 'VmOrTemplate'
 
   # TODO(lsmola) figure out what this means, like security groups used by VMs in the network? It's not being
   # refreshed, so we can probably delete this association
@@ -24,16 +25,24 @@ class CloudNetwork < ApplicationRecord
 
   virtual_column :maximum_transmission_unit, :type => :string
   virtual_column :port_security_enabled,     :type => :string
+  virtual_column :qos_policy_id,             :type => :string
 
   # Define all getters and setters for extra_attributes related virtual columns
-  %i(maximum_transmission_unit port_security_enabled).each do |action|
-	  define_method("#{action.to_s}=") do |value|
+  %i(maximum_transmission_unit port_security_enabled qos_policy_id).each do |action|
+	  define_method("#{action}=") do |value|
       extra_attributes_save(action, value)
     end
 
-    define_method("#{action.to_s}") do
+    define_method(action) do
       extra_attributes_load(action)
     end
+  end
+
+  virtual_total :total_vms, :vms, :uses => :vms
+
+  def self.class_by_ems(ext_management_system, _external = false)
+    # TODO: A factory on ExtManagementSystem to return class for each provider
+    ext_management_system && ext_management_system.class::CloudNetwork
   end
 
   private

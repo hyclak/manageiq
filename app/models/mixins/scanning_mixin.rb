@@ -1,8 +1,7 @@
 # TODO: Nothing appears to be using xml_utils in this file???
 # Perhaps, it's being required here because lower level code requires xml_utils to be loaded
 # but wrongly doesn't require it itself.
-$LOAD_PATH << File.join(GEMS_PENDING_ROOT, "util/xml")
-require 'xml_utils'
+require 'xml/xml_utils'
 
 require 'blackbox/VmBlackBox'
 require 'metadata/MIQExtract/MIQExtract'
@@ -25,7 +24,7 @@ module ScanningMixin
     # Called from Queue
     def save_metadata(target_id, data_array)
       xml_file, data_type = Marshal.load(data_array)
-      target = base_class.find_by_id(target_id)
+      target = base_class.find_by(:id => target_id)
       xml_file = MIQEncode.decode(xml_file) if data_type.include?('b64,zlib')
       begin
         doc = MiqXml.load(xml_file)
@@ -43,8 +42,8 @@ module ScanningMixin
                 rescue
                   "vmscan"
                 end
-        job = Job.find_by_guid(taskid)
-        raise "Unable to process data for job with id <#{taskid}>.  Job not found." if job.nil?
+        job = Job.find_by(:guid => taskid)
+        raise _("Unable to process data for job with id <%{number}>. Job not found.") % {:number => taskid} if job.nil?
         begin
           job.signal(:data, xml_file)
         rescue => err
@@ -104,7 +103,6 @@ module ScanningMixin
       MiqEvent.add_elements(self, xml_node)
     end
     # Update the last sync time if we did something
-    # self.last_sync_on = Time.new.utc  if updated == true
     self.last_sync_on = Time.at(xml_node.root.attributes["created_on"].to_i).utc if updated == true && xml_node.root.attributes["created_on"]
     save
     hardware.save if self.respond_to?(:hardware) && !hardware.nil?
@@ -119,7 +117,7 @@ module ScanningMixin
     )
   end
 
-  # Call the miqhost webservice to do the SyncMetadata operation
+  # Do the SyncMetadata operation through the server smart proxy
   def sync_metadata(category, options = {})
     _log.debug "category=[#{category}] [#{category.class}]"
     options = {
@@ -141,7 +139,7 @@ module ScanningMixin
     _log.log_backtrace(err)
   end
 
-  # Call the miqhost webservice to do the ScanMetadata operation
+  # Do the ScanMetadata operation through the server smart proxy
   def scan_metadata(category, options = {})
     _log.info "category=[#{category}] [#{category.class}]"
     options = {
@@ -212,7 +210,7 @@ module ScanningMixin
     ost.xml_class = XmlHash::Document
 
     _log.debug "Scanning - Initializing scan"
-    update_agent_state(ost, "Scanning", "Initializing scan")
+    update_agent_message(ost, "Initializing scan")
     bb, last_err = nil
     xml_summary = ost.xml_class.createDoc(:summary)
     xml_node = xml_node_scan = xml_summary.root.add_element("scanmetadata")
@@ -248,10 +246,10 @@ module ScanningMixin
       _log.debug "categories = [ #{categories.join(', ')} ]"
 
       categories.each do |c|
-        update_agent_state(ost, "Scanning", "Scanning #{c}")
+        update_agent_message(ost, "Scanning #{c}")
         _log.info "Scanning [#{c}] information.  TaskId:[#{ost.taskid}]  VM:[#{name}]"
         st = Time.now
-        xml = extractor.extract(c) { |scan_data| update_agent_state(ost, "Scanning", scan_data[:msg]) }
+        xml = extractor.extract(c) { |scan_data| update_agent_message(ost, scan_data[:msg]) }
         categories_processed += 1
         _log.info "Scanning [#{c}] information ran for [#{Time.now - st}] seconds.  TaskId:[#{ost.taskid}]  VM:[#{name}]"
         if xml
@@ -279,7 +277,7 @@ module ScanningMixin
       last_err = scanErr
     ensure
       bb.close if bb
-      update_agent_state(ost, "Scanning", "Scanning completed.")
+      update_agent_message(ost, "Scanning completed.")
 
       # If we are sent a TaskId transfer a end of job summary xml.
       _log.info "Starting: Sending scan summary to server.  TaskId:[#{ost.taskid}]  VM:[#{name}]"
@@ -307,7 +305,7 @@ module ScanningMixin
     _log.info "from #{self.class.name}"
     xml_summary = nil
     begin
-      raise "No synchronize category specified" if ost.category.nil?
+      raise _("No synchronize category specified") if ost.category.nil?
       categories = ost.category.split(",")
       ost.scanTime = Time.now.utc
       ost.compress = true       # Request that data returned from the blackbox is compressed
@@ -329,7 +327,7 @@ module ScanningMixin
       )
       bb = Manageiq::BlackBox.new(guid, ost)
 
-      update_agent_state(ost, "Synchronize", "Synchronization in progress")
+      update_agent_message(ost, "Synchronization in progress")
       categories.each do |c|
         c.delete!("\"")
         c.strip!
@@ -357,7 +355,7 @@ module ScanningMixin
         end
       end
     rescue => syncErr
-      _log.error "#{syncErr}"
+      _log.error syncErr.to_s
       _log.debug { syncErr.backtrace.join("\n") }
     ensure
       if bb
@@ -370,16 +368,15 @@ module ScanningMixin
       save_metadata_op(xml_summary.miqEncode, "b64,zlib,xml", ost.taskid)
       _log.info "Completed: Sending target summary to server.  TaskId:[#{ost.taskid}]  target:[#{name}]"
 
-      update_agent_state(ost, "Synchronize", "Synchronization complete")
+      update_agent_message(ost, "Synchronization complete")
 
       raise syncErr if syncErr
     end
     ost.value = "OK\n"
   end
 
-  def update_agent_state(ost, state, message)
-    ost.agent_state = state
+  def update_agent_message(ost, message)
     ost.agent_message = message
-    agent_job_state_op(ost.taskid, ost.agent_state, ost.agent_message) if ost.taskid && ost.taskid.empty? == false
+    agent_job_message_op(ost.taskid, ost.agent_message) if ost.taskid && ost.taskid.empty? == false
   end
 end

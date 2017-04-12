@@ -6,7 +6,6 @@ describe "Server Monitor" do
         automate,Automation Engine,0,false,region
         database_operations,Database Operations,0,false,region
         database_owner,Database Owner,1,false,database
-        database_synchronization,Database Synchronization,1,false,region
         ems_inventory,Management System Inventory,1,false,zone
         ems_metrics_collector,Capacity & Utilization Data Collector,0,false,zone
         ems_metrics_coordinator,Capacity & Utilization Coordinator,1,false,zone
@@ -20,6 +19,7 @@ describe "Server Monitor" do
         smartstate,SmartState Analysis,0,false,zone
         storage_inventory,Storage Inventory,1,false,zone
         user_interface,User Interface,0,false,region
+        websocket,Websocket,0,false,region
         web_services,Web Services,0,false,region
       CSV
       allow(ServerRole).to receive(:seed_data).and_return(@csv)
@@ -27,7 +27,7 @@ describe "Server Monitor" do
       ServerRole.seed
 
       # Do this manually, to avoid caching at the class level
-      allow(ServerRole).to receive(:database_owner).and_return(ServerRole.find_by_name('database_owner'))
+      allow(ServerRole).to receive(:database_owner).and_return(ServerRole.find_by(:name => 'database_owner'))
 
       @server_roles = ServerRole.all
     end
@@ -47,7 +47,7 @@ describe "Server Monitor" do
         @miq_server.monitor_servers
 
         @miq_server.deactivate_all_roles
-        @miq_server.role    = 'event, ems_operations, scheduler, reporting'
+        @miq_server.role = 'event, ems_operations, scheduler, reporting'
       end
 
       it "should have no roles active after start" do
@@ -181,14 +181,14 @@ describe "Server Monitor" do
         end
 
         it "should activate newly assigned limited region role" do
-          @miq_server.role = 'event, ems_operations, scheduler, reporting, database_synchronization'
+          @miq_server.role = 'event, ems_operations, scheduler, reporting, notifier'
           @miq_server.monitor_server_roles
           expect(@miq_server.active_role_names.length).to eq(5)
           expect(@miq_server.active_role_names.include?("ems_operations")).to be_truthy
           expect(@miq_server.active_role_names.include?("event")).to be_truthy
           expect(@miq_server.active_role_names.include?("scheduler")).to be_truthy
           expect(@miq_server.active_role_names.include?("reporting")).to be_truthy
-          expect(@miq_server.active_role_names.include?("database_synchronization")).to be_truthy
+          expect(@miq_server.active_role_names.include?("notifier")).to be_truthy
         end
 
         it "should deactivate removed unlimited zone role" do
@@ -351,14 +351,14 @@ describe "Server Monitor" do
       before(:each) do
         @miq_server1 = EvmSpecHelper.local_miq_server
         @miq_server1.deactivate_all_roles
-        @miq_server1.role         = 'event, ems_operations, scheduler, reporting'
+        @miq_server1.role = 'event, ems_operations, scheduler, reporting'
         @roles1 = [['ems_operations', 1], ['event', 2], ['scheduler', 2], ['reporting', 1]]
         @roles1.each { |role, priority| @miq_server1.assign_role(role, priority) }
         @miq_server1.activate_roles("ems_operations", 'reporting')
 
         @miq_server2 = FactoryGirl.create(:miq_server, :is_master => true, :zone => @miq_server1.zone)
         @miq_server2.deactivate_all_roles
-        @miq_server2.role         = 'event, ems_operations, scheduler, reporting'
+        @miq_server2.role = 'event, ems_operations, scheduler, reporting'
         @roles2 = [['ems_operations', 1], ['event', 1], ['scheduler', 1], ['reporting', 1]]
         @roles2.each { |role, priority| @miq_server2.assign_role(role, priority) }
         @miq_server2.activate_roles("event", "ems_operations", 'scheduler', 'reporting')
@@ -458,6 +458,55 @@ describe "Server Monitor" do
         @miq_server1.monitor_server_roles if @miq_server1.is_master?
         @miq_server2.reload
         @miq_server3.reload
+      end
+
+      it "should support multiple failover transitions from stopped master" do
+        # server1 is first to start, becomes master
+        @miq_server1.monitor_servers
+
+        # Initialize the bookkeeping around current and last master
+        @miq_server2.monitor_servers
+        @miq_server3.monitor_servers
+
+        # server1 is master
+        expect(@miq_server1.reload.is_master).to be_truthy
+        expect(@miq_server2.reload.is_master).to be_falsey
+        expect(@miq_server3.reload.is_master).to be_falsey
+
+        # server 1 shuts down
+        @miq_server1.update(:status => "stopped")
+
+        # server 3 becomes master, server 2 hasn't monitored servers yet
+        @miq_server3.monitor_servers
+        expect(@miq_server1.reload.is_master).to be_falsey
+        expect(@miq_server2.reload.is_master).to be_falsey
+        expect(@miq_server3.reload.is_master).to be_truthy
+
+        # server 3 shuts down
+        @miq_server3.update(:status => "stopped")
+
+        # server 2 finally gets to monitor_servers, takes over
+        @miq_server2.monitor_servers
+        expect(@miq_server1.reload.is_master).to be_falsey
+        expect(@miq_server2.reload.is_master).to be_truthy
+        expect(@miq_server3.reload.is_master).to be_falsey
+      end
+
+      it "should failover from stopped master on startup" do
+        # server 1 is first to start, becomes master
+        @miq_server1.monitor_servers
+
+        # server 1 shuts down
+        @miq_server1.update(:status => "stopped")
+
+        # server 3 boots and hasn't run monitor_servers yet
+        expect(@miq_server1.reload.is_master).to be_truthy
+        expect(@miq_server3.reload.is_master).to be_falsey
+
+        # server 3 runs monitor_servers and becomes master
+        @miq_server3.monitor_servers
+        expect(@miq_server1.reload.is_master).to be_falsey
+        expect(@miq_server3.reload.is_master).to be_truthy
       end
 
       it "should have all roles active after sync between them" do
@@ -623,17 +672,17 @@ describe "Server Monitor" do
       before(:each) do
         @miq_server1 = EvmSpecHelper.local_miq_server(:name => "Server 1")
         @miq_server1.deactivate_all_roles
-        @miq_server1.role         = 'event, ems_operations, ems_inventory'
+        @miq_server1.role = 'event, ems_operations, ems_inventory'
         @miq_server1.activate_roles("ems_operations", "ems_inventory")
 
         @miq_server2 = FactoryGirl.create(:miq_server, :is_master => true, :zone => @miq_server1.zone, :name => "Server 2")
         @miq_server2.deactivate_all_roles
-        @miq_server2.role         = 'event, ems_metrics_coordinator, ems_operations'
+        @miq_server2.role = 'event, ems_metrics_coordinator, ems_operations'
         @miq_server2.activate_roles("event", "ems_metrics_coordinator", 'ems_operations')
 
         @miq_server3 = FactoryGirl.create(:miq_server, :zone => @miq_server2.zone, :name => "Server 3")
         @miq_server3.deactivate_all_roles
-        @miq_server3.role         = 'ems_metrics_coordinator, ems_inventory, ems_operations'
+        @miq_server3.role = 'ems_metrics_coordinator, ems_inventory, ems_operations'
         @miq_server3.activate_roles("ems_operations")
 
         @miq_server1.monitor_servers

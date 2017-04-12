@@ -4,10 +4,7 @@ module ManageIQ::Providers
   module Google
     class CloudManager::RefreshParser < ManageIQ::Providers::CloudManager::RefreshParser
       include Vmdb::Logging
-
-      def self.ems_inv_to_hashes(ems, options = nil)
-        new(ems, options).ems_inv_to_hashes
-      end
+      include ManageIQ::Providers::Google::RefreshHelperMethods
 
       def initialize(ems, options = nil)
         @ems               = ems
@@ -16,6 +13,9 @@ module ManageIQ::Providers
         @data              = {}
         @data_index        = {}
         @project_key_pairs = Set.new
+
+        # Mapping from disk url to source image id.
+        @disk_to_source_image_id = {}
       end
 
       def ems_inv_to_hashes
@@ -24,12 +24,13 @@ module ManageIQ::Providers
         _log.info("#{log_header}...")
         get_zones
         get_flavors
-        get_cloud_networks
-        get_security_groups
-        get_disks
+        get_volumes
+        get_snapshots
         get_images
-        get_instances
+        get_instances # Must occur after get_volumes is called
         _log.info("#{log_header}...Complete")
+
+        link_volumes_to_base_snapshots
 
         @data
       end
@@ -48,29 +49,21 @@ module ManageIQ::Providers
         process_collection(flavors, :flavors) { |flavor| parse_flavor(flavor) }
       end
 
-      def get_cloud_networks
-        networks = @connection.networks.all
-        process_collection(networks, :cloud_networks) { |network| parse_cloud_network(network) }
-      end
-
-      def get_security_groups
-        networks = @data[:cloud_networks]
-        firewalls = @connection.firewalls.all
-
-        process_collection(networks, :security_groups) do |network|
-          sg_firewalls = firewalls.select { |fw| parse_uid_from_url(fw.network) == network[:name] }
-          parse_security_group(network, sg_firewalls)
-        end
-      end
-
-      def get_disks
+      def get_volumes
         disks = @connection.disks.all
-        process_collection(disks, :disks) { |disk| parse_disk(disk) }
+        process_collection(disks, :cloud_volumes) { |volume| parse_volume(volume) }
+      end
+
+      def get_snapshots
+        snapshots = @connection.snapshots.all
+        process_collection(snapshots, :cloud_volume_snapshots) { |snapshot| parse_snapshot(snapshot) }
+        # Also pass the snapshots as templates
+        process_collection(snapshots, :vms) { |snapshot| parse_storage_as_template(snapshot) }
       end
 
       def get_images
         images = @connection.images.all
-        process_collection(images, :vms) { |image| parse_image(image) }
+        process_collection(images, :vms) { |image| parse_storage_as_template(image) }
       end
 
       def get_key_pairs(instances)
@@ -101,18 +94,6 @@ module ManageIQ::Providers
         process_collection(instances, :vms) { |instance| parse_instance(instance) }
       end
 
-      def process_collection(collection, key)
-        @data[key] ||= []
-
-        collection.each do |item|
-          uid, new_result = yield(item)
-          next if uid.nil?
-
-          @data[key] << new_result
-          @data_index.store_path(key, uid, new_result)
-        end
-      end
-
       def parse_zone(zone)
         name = uid = zone.name
         type = ManageIQ::Providers::Google::CloudManager::AvailabilityZone.name
@@ -137,114 +118,79 @@ module ManageIQ::Providers
           :description => flavor.description,
           :enabled     => !flavor.deprecated,
           :cpus        => flavor.guest_cpus,
-          :cpu_cores   => 1,
           :memory      => flavor.memory_mb * 1.megabyte,
         }
 
         return uid, new_result
       end
 
-      def parse_cloud_network(network)
-        uid = network.id
+      def parse_volume(volume)
+        zone_id = parse_uid_from_url(volume.zone)
 
         new_result = {
-          :ems_ref => uid,
-          :name    => network.name,
-          :cidr    => network.ipv4_range,
-          :status  => "active",
-          :enabled => true,
+          :ems_ref           => volume.id,
+          :name              => volume.name,
+          :status            => volume.status,
+          :creation_time     => volume.creation_timestamp,
+          :volume_type       => parse_uid_from_url(volume.type),
+          :description       => volume.description,
+          :size              => volume.size_gb.to_i.gigabyte,
+          :availability_zone => @data_index.fetch_path(:availability_zones, zone_id),
+          # Note that this is just the name, not the hash - this must be
+          # rewritten before returning the data to ems
+          :base_snapshot     => volume.source_snapshot,
         }
 
-        return uid, new_result
+        # Take note of the source_image_id so we can expose it in parse_instance
+        @disk_to_source_image_id[volume.self_link] = volume.source_image_id
+
+        return volume.self_link, new_result
       end
 
-      def self.security_group_type
-        ManageIQ::Providers::Google::CloudManager::SecurityGroup.name
-      end
-
-      def parse_security_group(network, firewalls)
-        uid            = network[:name]
-        firewall_rules = firewalls.collect { |fw| parse_firewall_rules(fw) }.flatten
-
+      def parse_snapshot(snapshot)
         new_result = {
-          :type           => self.class.security_group_type,
-          :ems_ref        => uid,
-          :name           => uid,
-          :cloud_network  => network,
-          :firewall_rules => firewall_rules,
+          :ems_ref       => snapshot.id,
+          :type          => "ManageIQ::Providers::Google::CloudManager::CloudVolumeSnapshot",
+          :name          => snapshot.name,
+          :status        => snapshot.status,
+          :creation_time => snapshot.creation_timestamp,
+          :description   => snapshot.description,
+          :size          => snapshot.disk_size_gb.to_i.gigabytes,
+          :volume        => @data_index.fetch_path(:cloud_volumes, snapshot.source_disk)
         }
 
-        return uid, new_result
+        return snapshot.self_link, new_result
       end
 
-      def parse_firewall_rules(fw)
-        ret = []
-
-        name            = fw.name
-        source_ip_range = fw.source_ranges.first
-
-        fw.allowed.each do |fw_allowed|
-          protocol      = fw_allowed["IPProtocol"].upcase
-          allowed_ports = fw_allowed["ports"].to_a.first
-
-          unless allowed_ports.nil?
-            from_port, to_port = allowed_ports.split("-", 2)
-          else
-            # The ICMP protocol doesn't have ports so set to -1
-            from_port = to_port = -1
-          end
-
-          new_result = {
-            :name            => name,
-            :direction       => "inbound",
-            :host_protocol   => protocol,
-            :port            => from_port,
-            :end_port        => to_port,
-            :source_ip_range => source_ip_range
-          }
-
-          ret << new_result
-        end
-
-        ret
-      end
-
-      def parse_disk(disk)
-        new_result = {
-          :name         => disk.name,
-          :description  => disk.description,
-          :size         => disk.size_gb.to_i * 1.gigabyte,
-          :location     => disk.zone,
-          :parent_image => disk.source_image_id,
-        }
-
-        return disk.self_link, new_result
-      end
-
-      def parse_image(image)
-        uid    = image.id
-        name   = image.name
+      def parse_storage_as_template(storage)
+        uid    = storage.id
+        name   = storage.name
         name ||= uid
         type   = ManageIQ::Providers::Google::CloudManager::Template.name
+
+        deprecated = (storage.kind == "compute#image") ? !storage.deprecated.nil? : false
 
         new_result = {
           :type               => type,
           :uid_ems            => uid,
           :ems_ref            => uid,
+          :location           => storage.self_link,
           :name               => name,
           :vendor             => "google",
           :raw_power_state    => "never",
-          :operating_system   => process_os(image),
+          :operating_system   => process_os(storage),
           :template           => true,
           :publicly_available => true,
+          :deprecated         => deprecated,
         }
 
         return uid, new_result
       end
 
-      def process_os(image)
+      def process_os(storage)
+        product_name = (storage.kind == 'compute#image' ? OperatingSystem.normalize_os_name(storage.name) : 'unknown')
         {
-          :product_name => OperatingSystem.normalize_os_name(image.name)
+          :product_name => product_name
         }
       end
 
@@ -269,14 +215,15 @@ module ManageIQ::Providers
         flavor_uid       = parse_uid_from_url(instance.machine_type)
         flavor           = @data_index.fetch_path(:flavors, flavor_uid)
 
+        # If the flavor isn't found in our index, check if it is a custom flavor
+        # that we have to get directly
+        flavor           = query_and_add_flavor(flavor_uid) if flavor.nil?
+
         zone_uid         = parse_uid_from_url(instance.zone)
         zone             = @data_index.fetch_path(:availability_zones, zone_uid)
 
         parent_image_uid = parse_instance_parent_image(instance)
         parent_image     = @data_index.fetch_path(:vms, parent_image_uid)
-
-        cloud_network    = parse_instance_cloud_network(instance)
-        security_groups  = parse_instance_security_groups(instance)
 
         operating_system = parent_image[:operating_system] unless parent_image.nil?
 
@@ -294,54 +241,44 @@ module ManageIQ::Providers
           :parent_vm         => parent_image,
           :operating_system  => operating_system,
           :key_pairs         => [],
-          :cloud_network     => cloud_network,
-          :security_groups   => security_groups,
           :hardware          => {
-            :cpu_sockets          => flavor[:cpus],
-            :cpu_total_cores      => flavor[:cpu_cores],
-            :cpu_cores_per_socket => 1,
-            :memory_mb            => flavor[:memory] / 1.megabyte,
-            :disks                => [],
-            :networks             => [],
-          }
+            :cpu_total_cores => flavor[:cpus],
+            :memory_mb       => flavor[:memory] / 1.megabyte,
+            :disks           => [], # populated below
+          },
+          :advanced_settings => [
+            {
+              :name         => "preemptible?",
+              :display_name => N_("Is VM Preemptible"),
+              :description  => N_("Whether or not the VM is 'preemptible'. See"\
+                               " https://cloud.google.com/compute/docs/instances/preemptible for more details."),
+              :value        => instance.scheduling["preemptible"].to_s,
+              :read_only    => true
+            }
+          ]
         }
 
         populate_hardware_hash_with_disks(new_result[:hardware][:disks], instance)
         populate_key_pairs_with_ssh_keys(new_result[:key_pairs], instance)
-        populate_hardware_hash_with_networks(new_result[:hardware][:networks], instance)
 
         return uid, new_result
       end
 
       def populate_hardware_hash_with_disks(hardware_disks_array, instance)
-        instance.disks.each do |disk|
+        instance.disks.each do |attached_disk|
           # lookup the full disk information from the data_index by source link
-          d = @data_index.fetch_path(:disks, disk["source"])
+          d = @data_index.fetch_path(:cloud_volumes, attached_disk["source"])
+
           next if d.nil?
 
           disk_size     = d[:size]
-          disk_name     = disk["deviceName"]
-          disk_location = disk["index"]
+          disk_name     = attached_disk["deviceName"]
+          disk_location = attached_disk["index"]
 
-          add_instance_disk(hardware_disks_array, disk_size, disk_name, disk_location)
-        end
-      end
-
-      def populate_hardware_hash_with_networks(hardware_networks_array, instance)
-        instance.network_interfaces.each do |nic|
-          network_uid = parse_uid_from_url(nic["network"])
-
-          hardware_networks_array << {
-            :description => "#{network_uid} private",
-            :ipaddress   => nic["networkIP"]
-          }
-
-          nic["accessConfigs"].to_a.each do |nic_access|
-            hardware_networks_array << {
-              :description => "#{network_uid} #{nic_access["name"]}",
-              :ipaddress   => nic_access["natIP"]
-            }
-          end
+          disk = add_instance_disk(hardware_disks_array, disk_size, disk_name, disk_location)
+          # Link the disk and the instance together
+          disk[:backing]      = d
+          disk[:backing_type] = 'CloudVolume'
         end
       end
 
@@ -349,34 +286,12 @@ module ManageIQ::Providers
         super(disks, size, location, name, "google")
       end
 
-      def parse_instance_networks(instance)
-        instance.network_interfaces.to_a.collect do |nic|
-          parse_uid_from_url(nic["network"])
-        end
-      end
-
-      def parse_instance_cloud_network(instance)
-        network_name = parse_instance_networks(instance).first
-
-        @data[:cloud_networks].to_a.detect do |net|
-          net[:name] == network_name
-        end
-      end
-
-      def parse_instance_security_groups(instance)
-        parse_instance_networks(instance).collect do |network_name|
-          @data_index.fetch_path(:security_groups, network_name)
-        end
-      end
-
       def parse_instance_parent_image(instance)
         parent_image_uid = nil
 
         instance.disks.each do |disk|
-          d = @data_index.fetch_path(:disks, disk["source"])
-          next if d.nil? || d[:parent_image].nil?
-
-          parent_image_uid = d[:parent_image]
+          parent_image_uid = @disk_to_source_image_id[disk["source"]]
+          next if parent_image_uid.nil?
           break
         end
 
@@ -426,12 +341,19 @@ module ManageIQ::Providers
         ssh_keys
       end
 
-      def parse_uid_from_url(url)
-        # A lot of attributes in gce are full URLs with the
-        # uid being the last component.  This helper method
-        # returns the last component of the url
-        uid = url.split('/')[-1]
-        uid
+      def link_volumes_to_base_snapshots
+        @data_index.fetch_path(:cloud_volumes).each do |_, volume|
+          base_snapshot = volume[:base_snapshot]
+          next if base_snapshot.nil?
+
+          volume[:base_snapshot] = @data_index.fetch_path(:cloud_volume_snapshots, base_snapshot)
+        end
+      end
+
+      def query_and_add_flavor(flavor_uid)
+        flavor = @connection.flavors.get(flavor_uid)
+        process_collection(flavor.to_miq_a, :flavors) { |f| parse_flavor(f) }
+        @data_index.fetch_path(:flavors, flavor_uid)
       end
     end
   end

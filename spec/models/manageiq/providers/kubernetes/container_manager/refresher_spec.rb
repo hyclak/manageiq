@@ -19,9 +19,18 @@ describe ManageIQ::Providers::Kubernetes::ContainerManager::Refresher do
     expect(described_class.ems_type).to eq(:kubernetes)
   end
 
+  # Smoke test the use of ContainerLabelTagMapping during refresh.
+  before :each do
+    @name_category = FactoryGirl.create(:classification, :name => 'name', :description => 'Name')
+    @label_tag_mapping = FactoryGirl.create(
+      :container_label_tag_mapping,
+      :label_name => 'name', :tag => @name_category.tag
+    )
+  end
+
   it "will perform a full refresh on k8s" do
-    2.times do # Run twice to verify that a second run with existing data does not change anything
-      VCR.use_cassette("#{described_class.name.underscore}") do # , :record => :new_episodes) do
+    3.times do # Run three times to verify that second & third runs with existing data do not change anything
+      VCR.use_cassette(described_class.name.underscore) do # , :record => :new_episodes) do
         EmsRefresh.refresh(@ems)
       end
       @ems.reload
@@ -32,6 +41,7 @@ describe ManageIQ::Providers::Kubernetes::ContainerManager::Refresher do
       assert_authentication
       assert_table_counts
       assert_specific_container
+      assert_specific_container_definition
       assert_specific_container_group
       assert_specific_container_node
       assert_specific_container_service
@@ -41,6 +51,7 @@ describe ManageIQ::Providers::Kubernetes::ContainerManager::Refresher do
       assert_specific_container_limit
       assert_specific_container_image_and_registry
       assert_specific_container_component_status
+      assert_specific_persistent_volume
     end
   end
 
@@ -59,6 +70,7 @@ describe ManageIQ::Providers::Kubernetes::ContainerManager::Refresher do
     expect(ContainerImage.count).to eq(3)
     expect(ContainerImageRegistry.count).to eq(1)
     expect(ContainerComponentStatus.count).to eq(3)
+    expect(PersistentVolume.count).to eq(1)
   end
 
   def assert_ems
@@ -77,7 +89,7 @@ describe ManageIQ::Providers::Kubernetes::ContainerManager::Refresher do
   end
 
   def assert_specific_container
-    @container = Container.find_by_name("heapster")
+    @container = Container.find_by(:name => "heapster")
     expect(@container).to have_attributes(
       # :ems_ref     => "a7566742-e73f-11e4-b613-001a4a5f4a02_heapster_kubernetes/heapster:v0.9",
       :name          => "heapster",
@@ -100,7 +112,7 @@ describe ManageIQ::Providers::Kubernetes::ContainerManager::Refresher do
     expect(@container.container_definition.command).to eq("/heapster --source\\=kubernetes:https://kubernetes "\
                                                       "--sink\\=influxdb:http://monitoring-influxdb:80")
 
-    @container2 = Container.find_by_name("influxdb")
+    @container2 = Container.find_by(:name => "influxdb")
     expect(@container2).to have_attributes(
       # :ems_ref       => "a7649eaa-e73f-11e4-b613-001a4a5f4a02_influxdb_kubernetes/heapster_influxdb:v0.3",
       :name          => "influxdb",
@@ -124,8 +136,12 @@ describe ManageIQ::Providers::Kubernetes::ContainerManager::Refresher do
     )
   end
 
+  def assert_specific_container_definition
+    expect(ContainerDefinition.find_by(:name => "heapster").ext_management_system).to eq(@ems)
+  end
+
   def assert_specific_container_group
-    @containergroup = ContainerGroup.find_by_name("monitoring-heapster-controller-4j5zu")
+    @containergroup = ContainerGroup.find_by(:name => "monitoring-heapster-controller-4j5zu")
     expect(@containergroup).to have_attributes(
       # :ems_ref        => "49984e80-e1b7-11e4-b7dc-001a4a5f4a02",
       :name           => "monitoring-heapster-controller-4j5zu",
@@ -133,7 +149,12 @@ describe ManageIQ::Providers::Kubernetes::ContainerManager::Refresher do
       :dns_policy     => "ClusterFirst",
       :phase          => "Running",
     )
-    expect(@containergroup.labels.count).to eq(1)
+    expect(@containergroup.labels).to contain_exactly(
+      label_with_name_value("name", "heapster")
+    )
+    expect(@containergroup.tags).to contain_exactly(
+      tag_in_category_with_description(@name_category, "heapster")
+    )
 
     # Check the relation to container node
     expect(@containergroup.container_node).not_to be_nil
@@ -154,6 +175,9 @@ describe ManageIQ::Providers::Kubernetes::ContainerManager::Refresher do
     # Check relations to replicator, labels and provider
     expect(@containergroup.container_replicator).to eq(
       ContainerReplicator.find_by(:name => "monitoring-heapster-controller")
+    )
+    expect(@containergroup.container_replicator.labels).to contain_exactly(
+      label_with_name_value("name", "heapster")
     )
     expect(@containergroup.ext_management_system).to eq(@ems)
 
@@ -184,7 +208,9 @@ describe ManageIQ::Providers::Kubernetes::ContainerManager::Refresher do
       :status => "True"
     )
 
-    expect(@containernode.labels.count).to eq(1)
+    expect(@containernode.labels).to contain_exactly(
+      label_with_name_value("kubernetes.io/hostname", "10.35.0.169")
+    )
 
     expect(@containernode.computer_system.operating_system).to have_attributes(
       :distribution   => "Fedora 20 (Heisenbug)",
@@ -214,14 +240,17 @@ describe ManageIQ::Providers::Kubernetes::ContainerManager::Refresher do
   end
 
   def assert_specific_container_service
-    @containersrv = ContainerService.find_by_name("kubernetes")
+    @containersrv = ContainerService.find_by(:name => "kubernetes")
     expect(@containersrv).to have_attributes(
       # :ems_ref          => "a36a2858-e73f-11e4-b613-001a4a5f4a02",
       :name             => "kubernetes",
       :session_affinity => "None",
       :portal_ip        => "10.0.0.1",
     )
-    expect(@containersrv.labels.count).to eq(2)
+    expect(@containersrv.labels).to contain_exactly(
+      label_with_name_value("provider", "kubernetes"),
+      label_with_name_value("component", "apiserver")
+    )
     expect(@containersrv.selector_parts.count).to eq(0)
 
     @confs = @containersrv.container_service_port_configs
@@ -236,7 +265,7 @@ describe ManageIQ::Providers::Kubernetes::ContainerManager::Refresher do
     )
 
     # Check group relation
-    @groups = ContainerService.find_by_name("monitoring-influxdb-ui").container_groups
+    @groups = ContainerService.find_by(:name => "monitoring-influxdb-ui").container_groups
     expect(@groups.count).to eq(1)
     @group = @groups.first
     expect(@group).to have_attributes(
@@ -257,7 +286,12 @@ describe ManageIQ::Providers::Kubernetes::ContainerManager::Refresher do
       :replicas         => 1,
       :current_replicas => 1
     )
-    expect(@replicator.labels.count).to eq(1)
+    expect(@replicator.labels).to contain_exactly(
+      label_with_name_value("name", "influxGrafana")
+    )
+    expect(@replicator.tags).to contain_exactly(
+      tag_in_category_with_description(@name_category, "influxGrafana")
+    )
     expect(@replicator.selector_parts.count).to eq(1)
 
     @group = ContainerGroup.where(:name => "monitoring-influx-grafana-controller-22icy").first
@@ -272,7 +306,7 @@ describe ManageIQ::Providers::Kubernetes::ContainerManager::Refresher do
   end
 
   def assert_specific_container_project
-    @container_pr = ContainerProject.find_by_name("default")
+    @container_pr = ContainerProject.find_by(:name => "default")
     expect(@container_pr).to have_attributes(
       :name         => "default",
       :display_name => nil
@@ -286,7 +320,7 @@ describe ManageIQ::Providers::Kubernetes::ContainerManager::Refresher do
   end
 
   def assert_specific_container_quota
-    container_quota = ContainerQuota.find_by_name("quota")
+    container_quota = ContainerQuota.find_by(:name => "quota")
     container_quota.ems_created_on.kind_of?(ActiveSupport::TimeWithZone)
     expect(container_quota.container_quota_items.count).to eq(8)
     cpu_quota = container_quota.container_quota_items.select { |x| x[:resource] == 'cpu' }[0]
@@ -299,7 +333,7 @@ describe ManageIQ::Providers::Kubernetes::ContainerManager::Refresher do
   end
 
   def assert_specific_container_limit
-    container_limit = ContainerLimit.find_by_name("limits")
+    container_limit = ContainerLimit.find_by(:name => "limits")
     container_limit.ems_created_on.kind_of?(ActiveSupport::TimeWithZone)
     expect(container_limit.container_limit_items.count).to eq(2)
     expect(container_limit.container_project.name).to eq("default")
@@ -334,10 +368,33 @@ describe ManageIQ::Providers::Kubernetes::ContainerManager::Refresher do
   end
 
   def assert_specific_container_component_status
-    @component_status = ContainerComponentStatus.find_by_name("etcd-0")
+    @component_status = ContainerComponentStatus.find_by(:name => "etcd-0")
     expect(@component_status).to have_attributes(
       :condition => "Healthy",
       :status    => "True"
     )
+  end
+
+  def assert_specific_persistent_volume
+    @persistent_volume = PersistentVolume.find_by(:name => "pv0001")
+    expect(@persistent_volume).to have_attributes(
+      :type         => "PersistentVolume",
+      :common_path  => "/tmp/data01",
+      :status_phase => "Available",
+      :parent_type  => "ExtManagementSystem"
+    )
+    expect(@ems.persistent_volumes.count).to eq(1)
+    expect(@persistent_volume.parent.class).to eq(ManageIQ::Providers::Kubernetes::ContainerManager)
+  end
+
+  def label_with_name_value(name, value)
+    an_object_having_attributes(
+      :section => 'labels', :source => 'kubernetes',
+      :name => name, :value => value
+    )
+  end
+
+  def tag_in_category_with_description(category, description)
+    satisfy { |tag| tag.category == category && tag.classification.description == description }
   end
 end

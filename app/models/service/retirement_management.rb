@@ -10,10 +10,12 @@ module Service::RetirementManagement
   end
 
   def before_retirement
-    services.each(&:retire_now)
+    children.each(&:retire_now)
   end
 
   def retire_service_resources
+    direct_service_children.each(&:retire_service_resources)
+
     service_resources.each do |sr|
       if sr.resource.respond_to?(:retire_now)
         $log.info("Retiring service resource for service: #{name} resource ID: #{sr.id}")

@@ -6,8 +6,7 @@ class MiqWidget::ReportContent < MiqWidget::ContentGeneration
 
     original_col_order = report.col_order
     report.col_order   = widget_options[:col_order] if widget_options[:col_order]
-
-    row_count   = widget_options[:row_count] || 10
+    row_count   = widget_options[:row_count] || MiqWidget::DEFAULT_ROW_COUNT
 
     headers     = report.col_order.inject([]) { |a, c| a << report.headers[original_col_order.index(c)] }
     col_formats = report.col_order.inject([]) { |a, c| a << report.col_formats[original_col_order.index(c)] }
@@ -20,7 +19,7 @@ class MiqWidget::ReportContent < MiqWidget::ContentGeneration
     tz ||= user_or_group.get_timezone if user_or_group.respond_to?(:get_timezone)
 
     body = user_or_group.with_a_timezone(tz) do
-      if report.rpt_options.fetch_path(:summary, :hide_detail_rows) || false
+      if report.rpt_options.fetch_path(:summary, :hide_detail_rows)
         report.rpt_options[:group_limit] = row_count
         report.build_html_rows.join
       else
@@ -32,7 +31,7 @@ class MiqWidget::ReportContent < MiqWidget::ContentGeneration
     rows = "<table class='table table-striped table-bordered table-hover'><thead><tr>"
     headers.each { |h| rows << "<th>#{h}</th>" }
     rows << "</tr></thead><tbody>"
-    rows << (body.blank? ? "<tr><td colspan='5'>No records found</td></tr>" : body)
+    rows << (body.blank? ? "<tr><td colspan='5'>" + _("No records found") + "</td></tr>" : body)
     rows << "</tbody></table>"
   end
 end

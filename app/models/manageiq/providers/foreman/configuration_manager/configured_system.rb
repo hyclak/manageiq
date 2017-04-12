@@ -21,12 +21,16 @@ class ManageIQ::Providers::Foreman::ConfigurationManager::ConfiguredSystem < ::C
   end
 
   def ext_management_system
-    configuration_manager
+    manager
+  end
+
+  def provisionable?
+    true
   end
 
   private
 
   def connection_source(options = {})
-    options[:connection_source] || configuration_manager
+    options[:connection_source] || manager
   end
 end

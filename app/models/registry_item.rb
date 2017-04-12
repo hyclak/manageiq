@@ -3,7 +3,6 @@ class RegistryItem < ApplicationRecord
   belongs_to :miq_set    # ScanItemSet
   belongs_to :scan_item
 
-  include ReportableMixin
   include FilterableMixin
 
   def self.add_elements(miq_set, scan_item, vm, xmlNode)
@@ -14,10 +13,10 @@ class RegistryItem < ApplicationRecord
     return if hashes.nil?
 
     new_reg = []
-    deletes = vm.registry_items.select("id, name").collect { |i| [i.id, i.name] }
+    deletes = vm.registry_items.pluck(:id, :name)
 
     hashes.each do |nh|
-      found = vm.registry_items.find_by_name(nh[:name])
+      found = vm.registry_items.find_by(:name => nh[:name])
       if found.nil?
         new_reg << nh
       else

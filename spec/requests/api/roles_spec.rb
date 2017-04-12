@@ -15,10 +15,10 @@
 # - Delete a role by action               /api/roles/:id                        action "delete"
 # - Delete multiple roles                 /api/roles                            action "delete"
 #
-describe ApiController do
+describe "Roles API" do
   let(:feature_identifiers) do
     %w(vm_explorer ems_infra_tag my_settings_time_profiles
-       miq_request_view miq_report_run storage_manager_show_list)
+       miq_request_view miq_report_run storage_manager_show_list rbac_role_show)
   end
   let(:expected_attributes) { %w(id name read_only settings) }
   let(:sample_role1) do
@@ -60,15 +60,15 @@ describe ApiController do
   end
 
   def test_features_query(role, role_url, klass, attr = :id)
-    api_basic_authorize
+    api_basic_authorize action_identifier(:roles, :read, :resource_actions, :get)
 
     run_get role_url, :expand => "features"
-    expect_request_success
+    expect(response).to have_http_status(:ok)
 
-    expect(response_hash).to have_key("name")
-    expect(response_hash["name"]).to eq(role.name)
-    expect(response_hash).to have_key("features")
-    expect(response_hash["features"].size).to eq(fetch_value(role.miq_product_features.count))
+    expect(response.parsed_body).to have_key("name")
+    expect(response.parsed_body["name"]).to eq(role.name)
+    expect(response.parsed_body).to have_key("features")
+    expect(response.parsed_body["features"].size).to eq(role.miq_product_features.count)
 
     expect_result_resources_to_include_data("features", attr.to_s => klass.pluck(attr))
   end
@@ -88,7 +88,7 @@ describe ApiController do
 
       run_post(roles_url, sample_role1)
 
-      expect_request_forbidden
+      expect(response).to have_http_status(:forbidden)
     end
 
     it "rejects role creation with id specified" do
@@ -104,10 +104,10 @@ describe ApiController do
 
       run_post(roles_url, sample_role1)
 
-      expect_request_success
+      expect(response).to have_http_status(:ok)
       expect_result_resources_to_include_keys("results", expected_attributes)
 
-      role_id = response_hash["results"].first["id"]
+      role_id = response.parsed_body["results"].first["id"]
 
       run_get "#{roles_url}/#{role_id}/", :expand => "features"
 
@@ -124,10 +124,10 @@ describe ApiController do
 
       run_post(roles_url, gen_request(:create, sample_role1))
 
-      expect_request_success
+      expect(response).to have_http_status(:ok)
       expect_result_resources_to_include_keys("results", expected_attributes)
 
-      role_id = response_hash["results"].first["id"]
+      role_id = response.parsed_body["results"].first["id"]
       expect(MiqUserRole.exists?(role_id)).to be_truthy
       role = MiqUserRole.find(role_id)
       sample_role1['features'].each do |feature|
@@ -140,10 +140,10 @@ describe ApiController do
 
       run_post(roles_url, gen_request(:create, [sample_role1, sample_role2]))
 
-      expect_request_success
+      expect(response).to have_http_status(:ok)
       expect_result_resources_to_include_keys("results", expected_attributes)
 
-      results = response_hash["results"]
+      results = response.parsed_body["results"]
       r1_id = results.first["id"]
       r2_id = results.second["id"]
       expect(MiqUserRole.exists?(r1_id)).to be_truthy
@@ -167,7 +167,7 @@ describe ApiController do
       api_basic_authorize
       run_post(roles_url, gen_request(:edit, "name" => "role name", "href" => roles_url(role.id)))
 
-      expect_request_forbidden
+      expect(response).to have_http_status(:forbidden)
     end
 
     it "rejects role edits for invalid resources" do
@@ -175,7 +175,7 @@ describe ApiController do
 
       run_post(roles_url(999_999), gen_request(:edit, "name" => "updated role name"))
 
-      expect_resource_not_found
+      expect(response).to have_http_status(:not_found)
     end
 
     it "supports single role edit" do
@@ -221,7 +221,7 @@ describe ApiController do
       url = "#{roles_url}/#{role.id}/features"
       run_post(url, gen_request(:assign, new_feature))
 
-      expect_request_success
+      expect(response).to have_http_status(:ok)
       expect_result_resources_to_include_keys("results", %w(id name read_only))
 
       # Refresh the role object
@@ -241,7 +241,7 @@ describe ApiController do
       url = "#{roles_url}/#{role.id}/features"
       run_post(url, gen_request(:assign, features_list))
 
-      expect_request_success
+      expect(response).to have_http_status(:ok)
       expect_result_resources_to_include_keys("results", %w(id name read_only))
 
       # Refresh the role object
@@ -264,7 +264,7 @@ describe ApiController do
       url = "#{roles_url}/#{role.id}/features"
       run_post(url, gen_request(:unassign, removed_feature))
 
-      expect_request_success
+      expect(response).to have_http_status(:ok)
       # Confirm that we've only removed ems_infra_tag
       expect_result_resources_to_include_keys("results", %w(id name read_only))
 
@@ -272,8 +272,12 @@ describe ApiController do
       role = MiqUserRole.find(role.id)
 
       @product_features.each do |feature|
-        expect(role.allows?(feature)).to be_truthy unless feature[:identifier].eql?('ems_infra_tag')
-        expect(role.allows?(feature)).to be_falsey if feature[:identifier].eql?('ems_infra_tag')
+        unless feature[:identifier].eql?('ems_infra_tag')
+          expect(role.allows?(:identifier => feature.identifier)).to be_truthy
+        end
+        if feature[:identifier].eql?('ems_infra_tag')
+          expect(role.allows?(:identifier => feature.identifier)).to be_falsey
+        end
       end
     end
 
@@ -284,7 +288,7 @@ describe ApiController do
       url = "#{roles_url}/#{role.id}/features"
       run_post(url, gen_request(:unassign, features_list))
 
-      expect_request_success
+      expect(response).to have_http_status(:ok)
       expect_result_resources_to_include_keys("results", %w(id name read_only))
 
       # Refresh the role object
@@ -292,11 +296,14 @@ describe ApiController do
 
       # Confirm requested features removed first, and others remain
       @product_features.each do |feature|
-        expect(role.allows?(feature)).to be_truthy unless features_list['features'].find do |removed_feature|
+        removed = features_list['features'].find do |removed_feature|
           removed_feature[:identifier] == feature[:identifier]
         end
-        expect(role.allows?(feature)).to be_falsey if features_list['features'].find do |removed_feature|
-          removed_feature[:identifier] == feature[:identifier]
+
+        if removed
+          expect(role.allows?(:identifier => feature.identifier)).to be_falsey
+        else
+          expect(role.allows?(:identifier => feature.identifier)).to be_truthy
         end
       end
     end
@@ -308,7 +315,7 @@ describe ApiController do
 
       run_post(roles_url, gen_request(:delete, "name" => "role name", "href" => roles_url(100)))
 
-      expect_request_forbidden
+      expect(response).to have_http_status(:forbidden)
     end
 
     it "rejects role deletion without appropriate role" do
@@ -316,7 +323,7 @@ describe ApiController do
 
       run_delete(roles_url(100))
 
-      expect_request_forbidden
+      expect(response).to have_http_status(:forbidden)
     end
 
     it "rejects role deletes for invalid roles" do
@@ -324,7 +331,7 @@ describe ApiController do
 
       run_delete(roles_url(999_999))
 
-      expect_resource_not_found
+      expect(response).to have_http_status(:not_found)
     end
 
     it "supports single role delete" do
@@ -334,7 +341,7 @@ describe ApiController do
 
       run_delete(roles_url(role.id))
 
-      expect_request_success_with_no_content
+      expect(response).to have_http_status(:no_content)
       expect(MiqUserRole.exists?(role.id)).to be_falsey
     end
 
@@ -345,7 +352,7 @@ describe ApiController do
 
       run_post(roles_url(role.id), gen_request(:delete))
 
-      expect_request_success
+      expect(response).to have_http_status(:ok)
       expect(MiqUserRole.exists?(role.id)).to be_falsey
     end
 
@@ -359,7 +366,7 @@ describe ApiController do
                                       [{"href" => roles_url(r1.id)},
                                        {"href" => roles_url(r2.id)}]))
 
-      expect_request_success
+      expect(response).to have_http_status(:ok)
       expect(MiqUserRole.exists?(r1.id)).to be_falsey
       expect(MiqUserRole.exists?(r2.id)).to be_falsey
     end

@@ -17,10 +17,6 @@ class MiqEnterprise < ApplicationRecord
   acts_as_miq_taggable
 
   include AggregationMixin
-  # Since we've overridden the implementation of methods from AggregationMixin,
-  # we must also override the :uses portion of the virtual columns.
-  override_aggregation_mixin_virtual_columns_uses(:all_hosts, :hosts)
-  override_aggregation_mixin_virtual_columns_uses(:all_vms_and_templates, :vms_and_templates)
 
   include MiqPolicyMixin
   include Metric::CiMixin
@@ -31,13 +27,7 @@ class MiqEnterprise < ApplicationRecord
     end
   end
 
-  def self.my_enterprise
-    # Cache the enterprise instance, but clear the association
-    #   cache to support keeping the associations fresh
-    @my_enterprise ||= in_my_region.first
-    @my_enterprise.send(:clear_association_cache) unless @my_enterprise.nil?
-    @my_enterprise
-  end
+  cache_with_timeout(:my_enterprise) { in_my_region.first }
 
   def self.is_enterprise?
     # TODO: Need to implement a way to determine whether we're running on an "enterprise" server or a "regional" server.
@@ -83,14 +73,6 @@ class MiqEnterprise < ApplicationRecord
     PolicyEvent.all
   end
 
-  alias_method :all_vms_and_templates,  :vms_and_templates
-  alias_method :all_vm_or_template_ids, :vm_or_template_ids
-  alias_method :all_vms,                :vms
-  alias_method :all_vm_ids,             :vm_ids
-  alias_method :all_miq_templates,      :miq_templates
-  alias_method :all_miq_template_ids,   :miq_template_ids
-  alias_method :all_hosts,              :hosts
-  alias_method :all_host_ids,           :host_ids
   alias_method :all_storages,           :storages
 
   def get_reserve(field)
@@ -115,8 +97,9 @@ class MiqEnterprise < ApplicationRecord
     # No rollup parents
   end
 
-  def perf_capture_enabled
+  def perf_capture_enabled?
     @perf_capture_enabled ||= ext_management_systems.any?(&:perf_capture_enabled?)
   end
-  alias_method :perf_capture_enabled?, :perf_capture_enabled
+  alias_method :perf_capture_enabled, :perf_capture_enabled?
+  Vmdb::Deprecation.deprecate_methods(self, :perf_capture_enabled => :perf_capture_enabled?)
 end # class MiqEnterprise

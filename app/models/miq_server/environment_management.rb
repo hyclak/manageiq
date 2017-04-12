@@ -48,7 +48,7 @@ module MiqServer::EnvironmentManagement
         if MiqEnvironment::Command.is_appliance?
           eth0 = LinuxAdmin::NetworkInterface.new("eth0")
 
-          ipaddr      = eth0.address
+          ipaddr      = eth0.address || eth0.address6
           hostname    = LinuxAdmin::Hosts.new.hostname
           mac_address = eth0.mac_address
         else
@@ -71,13 +71,13 @@ module MiqServer::EnvironmentManagement
       _log.info "Database Adapter: [#{ActiveRecord::Base.connection.adapter_name}], detailed version: [#{ActiveRecord::Base.connection.detailed_database_version}]" if ActiveRecord::Base.connection.respond_to?(:detailed_database_version)
     end
 
-    def start_memcached(cfg = VMDB::Config.new('vmdb'))
+    def start_memcached
       # TODO: Need to periodically check the memcached instance to see if it's up, and bounce it and notify the UiWorkers to re-connect
-      return unless cfg.config.fetch_path(:server, :session_store).to_s == 'cache'
+      return unless ::Settings.server.session_store.to_s == 'cache'
       return unless MiqEnvironment::Command.supports_memcached?
       require "#{Rails.root}/lib/miq_memcached" unless Object.const_defined?(:MiqMemcached)
-      svr, port = cfg.config.fetch_path(:session, :memcache_server).to_s.split(":")
-      opts = cfg.config.fetch_path(:session, :memcache_server_opts).to_s
+      _svr, port = ::Settings.session.memcache_server.to_s.split(":")
+      opts = ::Settings.session.memcache_server_opts.to_s
       MiqMemcached::Control.restart!(:port => port, :options => opts)
       _log.info("Status: #{MiqMemcached::Control.status[1]}")
     end
@@ -85,9 +85,19 @@ module MiqServer::EnvironmentManagement
     def prep_apache_proxying
       return unless MiqEnvironment::Command.supports_apache?
 
-      MiqApache::Control.kill_all
       MiqUiWorker.install_apache_proxy_config
       MiqWebServiceWorker.install_apache_proxy_config
+      MiqWebsocketWorker.install_apache_proxy_config
+
+      # Because adding balancer members does a validation of the configuration
+      # files and these files try to load the redirect files among others,
+      # we need to add the balancers members after all configuration files have
+      # been written by install_apache_proxy_config.
+      MiqUiWorker.add_apache_balancer_members
+      MiqWebServiceWorker.add_apache_balancer_members
+      MiqWebsocketWorker.add_apache_balancer_members
+
+      MiqApache::Control.restart
     end
   end
 
@@ -116,8 +126,7 @@ module MiqServer::EnvironmentManagement
   end
 
   def disk_usage_threshold
-    @vmdb_config = VMDB::Config.new("vmdb")
-    @vmdb_config.config.fetch_path(:server, :events, :disk_usage_gt_percent) || 80
+    ::Settings.server.events.disk_usage_gt_percent
   end
 
   def check_disk_usage(disks)
@@ -134,7 +143,7 @@ module MiqServer::EnvironmentManagement
                          when '/var/log/audit'   then 'evm_server_var_log_audit_disk_high_usage'
                          when '/var/www/miq_tmp' then 'evm_server_miq_tmp_disk_high_usage'
                          when '/tmp'             then 'evm_server_tmp_disk_high_usage'
-                         when %r{pgsql/data}     then 'evm_server_db_disk_high_usage'
+                         when %r{lib/pgsql}      then 'evm_server_db_disk_high_usage'
                          end
 
       next unless disk_usage_event

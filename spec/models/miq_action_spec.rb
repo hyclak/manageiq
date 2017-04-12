@@ -1,4 +1,16 @@
 describe MiqAction do
+  describe "#invoke_or_queue" do
+    before(:each) do
+      @action = MiqAction.new
+    end
+
+    it "executes synchronous actions" do
+      target = double("action")
+      allow(target).to receive(:target_method)
+      @action.instance_eval { invoke_or_queue(true, "__caller__", "role", nil, target, 'target_method', []) }
+    end
+  end
+
   context "#action_custom_automation" do
     before(:each) do
       tenant = FactoryGirl.create(:tenant)
@@ -6,7 +18,7 @@ describe MiqAction do
       @user = FactoryGirl.create(:user, :userid => "test", :miq_groups => [group])
       @vm   = FactoryGirl.create(:vm_vmware, :evm_owner => @user, :miq_group => group)
       FactoryGirl.create(:miq_action, :name => "custom_automation")
-      @action = MiqAction.find_by_name("custom_automation")
+      @action = MiqAction.find_by(:name => "custom_automation")
       expect(@action).not_to be_nil
       @action.options = {:ae_request => "test_custom_automation"}
       @args = {
@@ -40,30 +52,48 @@ describe MiqAction do
       expect(MiqQueue).to receive(:put).with(q_options).once
       @action.action_custom_automation(@action, @vm, :synchronous => false)
     end
+
+    it "passes source event to automate if set" do
+      ems_event = FactoryGirl.create(:ems_event, :event_type => "CloneVM_Task")
+      args = {:attrs => {:request => "test_custom_automation", "EventStream::event_stream" => ems_event.id}}
+      expect(MiqAeEngine).to receive(:deliver).with(hash_including(args)).once
+
+      @action.action_custom_automation(@action, @vm, :synchronous => true, :source_event => ems_event)
+    end
   end
 
-  it "#action_evm_event" do
-    ems = FactoryGirl.create(:ems_vmware)
-    host = FactoryGirl.create(:host_vmware)
-    vm = FactoryGirl.create(:vm_vmware, :host => host, :ext_management_system => ems)
-    action = FactoryGirl.create(:miq_action)
-    expect_any_instance_of(EmsEvent).to receive(:handle_event).never
-    res = action.action_evm_event(action, vm, :policy => MiqPolicy.new)
+  context "#action_evm_event" do
+    it "for Vm" do
+      ems = FactoryGirl.create(:ems_vmware)
+      host = FactoryGirl.create(:host_vmware)
+      vm = FactoryGirl.create(:vm_vmware, :host => host, :ext_management_system => ems)
+      action = FactoryGirl.create(:miq_action)
+      res = action.action_evm_event(action, vm, :policy => FactoryGirl.create(:miq_policy))
 
-    expect(res).to be_kind_of EmsEvent
-    expect(res.host_id).to eq(host.id)
-    expect(res.ems_id).to eq(ems.id)
+      expect(res).to be_kind_of(MiqEvent)
+      expect(res.target).to eq(vm)
+    end
+
+    it "for Datastore" do
+      storage = FactoryGirl.create(:storage)
+      action  = FactoryGirl.create(:miq_action)
+      result  = action.action_evm_event(action, storage, :policy => FactoryGirl.create(:miq_policy))
+
+      expect(result).to be_kind_of(MiqEvent)
+      expect(result.target).to eq(storage)
+    end
   end
 
   context "#raise_automation_event" do
     before(:each) do
       @vm   = FactoryGirl.create(:vm_vmware)
+      allow(@vm).to receive(:my_zone).and_return("vm_zone")
       FactoryGirl.create(:miq_event_definition, :name => "raise_automation_event")
       FactoryGirl.create(:miq_event_definition, :name => "vm_start")
       FactoryGirl.create(:miq_action, :name => "raise_automation_event")
-      @action = MiqAction.find_by_name("raise_automation_event")
+      @action = MiqAction.find_by(:name => "raise_automation_event")
       expect(@action).not_to be_nil
-      @event = MiqEventDefinition.find_by_name("vm_start")
+      @event = MiqEventDefinition.find_by(:name => "vm_start")
       expect(@event).not_to be_nil
       @aevent = {
         :vm     => @vm,
@@ -86,15 +116,13 @@ describe MiqAction do
     end
 
     it "asynchronous" do
-      vm_zone = "vm_zone"
-      allow(@vm).to receive(:my_zone).and_return(vm_zone)
       expect(MiqAeEvent).to receive(:raise_synthetic_event).never
       q_options = {
         :class_name  => "MiqAeEvent",
         :method_name => "raise_synthetic_event",
         :args        => [@vm, @event.name, @aevent],
         :priority    => MiqQueue::HIGH_PRIORITY,
-        :zone        => vm_zone,
+        :zone        => "vm_zone",
         :role        => "automate"
       }
       expect(MiqQueue).to receive(:put).with(q_options).once
@@ -105,7 +133,7 @@ describe MiqAction do
   context "#action_ems_refresh" do
     before(:each) do
       FactoryGirl.create(:miq_action, :name => "ems_refresh")
-      @action = MiqAction.find_by_name("ems_refresh")
+      @action = MiqAction.find_by(:name => "ems_refresh")
       expect(@action).not_to be_nil
       @zone1 = FactoryGirl.create(:small_environment)
       @vm = @zone1.vms.first
@@ -127,6 +155,7 @@ describe MiqAction do
   context "#action_vm_retire" do
     before do
       @vm     = FactoryGirl.create(:vm_vmware)
+      allow(@vm).to receive(:my_zone).and_return("vm_zone")
       @event  = FactoryGirl.create(:miq_event_definition, :name => "assigned_company_tag")
       @action = FactoryGirl.create(:miq_action, :name => "vm_retire")
     end
@@ -161,6 +190,29 @@ describe MiqAction do
         expect(msg.args).to eq([[@vm], :date => date])
         expect(msg.zone).to eq(zone)
       end
+    end
+  end
+
+  context "#action_container_image_analyze" do
+    let(:container_image) { FactoryGirl.create(:container_image) }
+    let(:container_image_registry) { FactoryGirl.create(:container_image_registry) }
+    let(:event) { FactoryGirl.create(:miq_event_definition, :name => "whatever") }
+    let(:event_loop) { FactoryGirl.create(:miq_event_definition, :name => "request_containerimage_scan") }
+    let(:action) { FactoryGirl.create(:miq_action, :name => "container_image_analyze") }
+
+    it "scans container images" do
+      expect(container_image).to receive(:scan).once
+      action.action_container_image_analyze(action, container_image, :event => event)
+    end
+
+    it "avoids non container images" do
+      expect(container_image_registry).to receive(:scan).exactly(0).times
+      action.action_container_image_analyze(action, container_image_registry, :event => event)
+    end
+
+    it "avoids an event loop" do
+      expect(container_image_registry).to receive(:scan).exactly(0).times
+      action.action_container_image_analyze(action, container_image_registry, :event => event_loop)
     end
   end
 
@@ -313,6 +365,94 @@ describe MiqAction do
       expect(a.round_to_nearest_4mb(15)).to eq 16
       expect(a.round_to_nearest_4mb(16)).to eq 16
       expect(a.round_to_nearest_4mb(17)).to eq 20
+    end
+  end
+
+  context 'validate action email should have correct type' do
+    it 'should generate a MiqAction invoking action_email' do
+      action = MiqAction.new
+      inputs = {
+        :policy      => nil,
+        :synchronous => false
+      }
+      q_options = {
+        :class_name  => "MiqAction",
+        :method_name => "queue_email",
+        :args        => [{:to => nil, :from => "cfadmin@cfserver.com"}],
+        :role        => "notifier",
+        :priority    => 20,
+        :zone        => nil
+      }
+      expect(MiqQueue).to receive(:put).with(q_options).once
+      action.action_email(action, nil, inputs)
+    end
+  end
+
+  context 'run_ansible_playbook' do
+    let(:tenant) { FactoryGirl.create(:tenant) }
+    let(:group)  { FactoryGirl.create(:miq_group, :tenant => tenant) }
+    let(:user) { FactoryGirl.create(:user, :userid => "test", :miq_groups => [group]) }
+    let(:vm)   { FactoryGirl.create(:vm_vmware, :evm_owner => user, :miq_group => group, :hardware => hardware) }
+    let(:action) { FactoryGirl.create(:miq_action, :name => "run_ansible_playbook", :options => action_options) }
+    let(:stap) { FactoryGirl.create(:service_template_ansible_playbook) }
+    let(:ip1) { "1.1.1.94" }
+    let(:ip2) { "1.1.1.96" }
+    let(:event_name) { "Fred" }
+
+    let(:miq_event_def) do
+      FactoryGirl.create(:miq_event_definition, :name => event_name)
+    end
+    let(:hardware) do
+      FactoryGirl.create(:hardware).tap do |h|
+        h.ipaddresses << ip1
+        h.ipaddresses << ip2
+      end
+    end
+
+    let(:request_options) do
+      { :manageiq_extra_vars => { "event_target" => vm.href_slug, "event_name" => event_name },
+        :initiator           => 'control' }
+    end
+
+    shared_examples_for "#workflow check" do
+      it "run playbook" do
+        miq_request = instance_double(MiqRequest)
+        allow(vm).to receive(:tenant_identity).and_return(user)
+        expect(ServiceTemplate).to receive(:find).with(stap.id).and_return(stap)
+        expect(stap).to receive(:provision_request).with(user, dialog_options, request_options).and_return(miq_request)
+
+        action.action_run_ansible_playbook(action, vm, :event => miq_event_def)
+      end
+    end
+
+    context "use event target" do
+      let(:action_options) do
+        { :service_template_id => stap.id,
+          :use_event_target    => true }
+      end
+      let(:dialog_options) { {:hosts => ip1 } }
+
+      it_behaves_like "#workflow check"
+    end
+
+    context "use localhost" do
+      let(:action_options) do
+        { :service_template_id => stap.id,
+          :use_localhost       => true }
+      end
+      let(:dialog_options) { {:hosts => 'localhost' } }
+
+      it_behaves_like "#workflow check"
+    end
+
+    context "use hosts" do
+      let(:action_options) do
+        { :service_template_id => stap.id,
+          :hosts               => "ip1, ip2" }
+      end
+      let(:dialog_options) { {:hosts => 'ip1, ip2' } }
+
+      it_behaves_like "#workflow check"
     end
   end
 end

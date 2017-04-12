@@ -6,13 +6,12 @@ class Hardware < ApplicationRecord
   belongs_to  :computer_system
 
   has_many    :networks, :dependent => :destroy
+  has_many    :firmwares, :as => :resource, :dependent => :destroy
 
   has_many    :disks, -> { order :location }, :dependent => :destroy
   has_many    :hard_disks, -> { where("device_type != 'floppy' AND device_type NOT LIKE '%cdrom%'").order(:location) }, :class_name => "Disk", :foreign_key => :hardware_id
   has_many    :floppies, -> { where("device_type = 'floppy'").order(:location) }, :class_name => "Disk", :foreign_key => :hardware_id
   has_many    :cdroms, -> { where("device_type LIKE '%cdrom%'").order(:location) }, :class_name => "Disk", :foreign_key => :hardware_id
-
-  has_many    :hard_disk_storages, -> { distinct }, :through => :hard_disks, :source => :storage
 
   has_many    :partitions, :dependent => :destroy
   has_many    :volumes, :dependent => :destroy
@@ -26,16 +25,12 @@ class Hardware < ApplicationRecord
   virtual_column :hostnames,     :type => :string_set, :uses => :networks
   virtual_column :mac_addresses, :type => :string_set, :uses => :nics
 
-  include ReportableMixin
-
-  include DeprecationMixin
-  deprecate_attribute :cores_per_socket, :cpu_cores_per_socket
-  deprecate_attribute :logical_cpus, :cpu_total_cores
-  deprecate_attribute :numvcpus, :cpu_sockets
-  deprecate_attribute :memory_cpu, :memory_mb
+  virtual_aggregate :used_disk_storage,      :disks, :sum, :used_disk_storage
+  virtual_aggregate :allocated_disk_storage, :disks, :sum, :size
+  virtual_attribute :ram_size_in_bytes, :integer, :arel => ->(t) { t.grouping(t[:memory_mb] * 1.megabyte) }
 
   def ipaddresses
-    @ipaddresses ||= networks.collect(&:ipaddress).compact.uniq
+    @ipaddresses ||= networks.collect(&:ipaddress).compact.uniq + networks.collect(&:ipv6address).compact.uniq
   end
 
   def hostnames
@@ -44,6 +39,10 @@ class Hardware < ApplicationRecord
 
   def mac_addresses
     @mac_addresses ||= nics.collect(&:address).compact.uniq
+  end
+
+  def ram_size_in_bytes
+    memory_mb.to_i * 1.megabyte
   end
 
   @@dh = {"type" => "device_name", "devicetype" => "device_type", "id" => "location", "present" => "present",
@@ -63,14 +62,20 @@ class Hardware < ApplicationRecord
                    .select(:id, :device_type, :location, :address)
                    .collect { |rec| [rec.id, [rec.device_type, rec.location, rec.address]] }
 
-    deletes[:disk] = parent.hardware.disks.select(:id, :device_type, :location)
+    if parent.vendor == "redhat"
+      deletes[:disk] = parent.hardware.disks.select(:id, :device_type, :location)
+                     .collect { |rec| [rec.id, [rec.device_type, "0:#{rec.location}"]] }
+    else
+      deletes[:disk] = parent.hardware.disks.select(:id, :device_type, :location)
                      .collect { |rec| [rec.id, [rec.device_type, rec.location]] }
+    end
+
 
     xmlNode.root.each_recursive do |e|
       begin
         parent.hardware.send("m_#{e.name}", parent, e, deletes) if parent.hardware.respond_to?("m_#{e.name}")
       rescue => err
-        _log.warn "#{err}"
+        _log.warn err.to_s
       end
     end
 
@@ -84,8 +89,88 @@ class Hardware < ApplicationRecord
   end
 
   def aggregate_cpu_speed
-    return nil if cpu_total_cores.blank? || cpu_speed.blank?
-    (cpu_total_cores * cpu_speed)
+    if has_attribute?("aggregate_cpu_speed")
+      self["aggregate_cpu_speed"]
+    elsif try(:cpu_total_cores) && try(:cpu_speed)
+      cpu_total_cores * cpu_speed
+    end
+  end
+
+  virtual_attribute :aggregate_cpu_speed, :integer, :arel => (lambda do |t|
+    t.grouping(t[:cpu_total_cores] * t[:cpu_speed])
+  end)
+
+  def v_pct_free_disk_space
+    return nil if disk_free_space.nil? || disk_capacity.nil? || disk_capacity.zero?
+    (disk_free_space.to_f / disk_capacity * 100).round(2)
+  end
+  # resulting sql: "(cast(disk_free_space as float) / (disk_capacity * 100))"
+  virtual_attribute :v_pct_free_disk_space, :float, :arel => (lambda do |t|
+    t.grouping(Arel::Nodes::Division.new(
+      Arel::Nodes::NamedFunction.new("CAST", [t[:disk_free_space].as("float")]),
+      t[:disk_capacity]) * 100)
+  end)
+
+  def v_pct_used_disk_space
+    percent_free = v_pct_free_disk_space
+    100 - percent_free if percent_free
+  end
+  # resulting sql: "(cast(disk_free_space as float) / (disk_capacity * -100) + 100)"
+  # to work with arel better, put the 100 at the end
+  virtual_attribute :v_pct_used_disk_space, :float, :arel => (lambda do |t|
+    t.grouping(Arel::Nodes::Division.new(
+      Arel::Nodes::NamedFunction.new("CAST", [t[:disk_free_space].as("float")]),
+      t[:disk_capacity]) * -100 + 100)
+  end)
+
+  def provisioned_storage
+    if has_attribute?("provisioned_storage")
+      self["provisioned_storage"]
+    else
+      allocated_disk_storage.to_i + ram_size_in_bytes
+    end
+  end
+
+  # added casts because we were overflowing integers
+  # resulting sql:
+  # (
+  #   (COALESCE(
+  #     ((SELECT SUM("disks"."size")
+  #       FROM "disks"
+  #       WHERE "hardwares"."id" = "disks"."hardware_id")),
+  #     0
+  #   )) + (COALESCE(
+  #     (CAST("hardwares"."memory_mb" AS bigint)),
+  #     0
+  #   )) * 1048576
+  # )
+  virtual_attribute :provisioned_storage, :integer, :arel => (lambda do |t|
+    t.grouping(
+      t.grouping(Arel::Nodes::NamedFunction.new('COALESCE', [arel_attribute(:allocated_disk_storage), 0])) +
+      t.grouping(Arel::Nodes::NamedFunction.new(
+                   'COALESCE', [t.grouping(Arel::Nodes::NamedFunction.new('CAST', [t[:memory_mb].as("bigint")])), 0]
+      )) * 1.megabyte
+    )
+  end)
+
+  def connect_lans(lans)
+    return if lans.blank?
+    nics.each do |n|
+      # TODO: Use a different field here
+      #   model is temporarily being used here to transfer the name of the
+      #   lan to which this nic is connected.  If model ends up being an
+      #   otherwise used field, this will need to change
+      n.lan = lans.find { |l| l.name == n.model }
+      n.model = nil
+      n.save
+    end
+  end
+
+  def disconnect_lans
+    nics.each do |n|
+      n.lan = nil
+      n.save
+    end
   end
 
   def m_controller(_parent, xmlNode, deletes)

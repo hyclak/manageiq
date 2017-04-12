@@ -1,6 +1,8 @@
 Vmdb::Application.configure do
   # Settings specified here will take precedence over those in config/application.rb
 
+  config.eager_load_paths = []
+
   # The test environment is used exclusively to run your application's
   # test suite.  You never need to work with it otherwise.  Remember that
   # your test database is "scratch space" for the test suite and is wiped
@@ -13,14 +15,19 @@ Vmdb::Application.configure do
   ActiveSupport::Deprecation.behavior = :silence
 
   # Configure static asset server for tests with Cache-Control for performance
-  config.serve_static_files = true
+  config.public_file_server.enabled = true
   config.static_cache_control = "public, max-age=3600"
+
+  # Avoid potential warnings and race conditions
+  config.assets.configure do |env|
+    env.cache = ActiveSupport::Cache.lookup_store(:memory_store)
+  end
 
   # Log error messages when you accidentally call methods on nil
   config.whiny_nils = true
 
   # Show full error reports and disable caching
-  config.consider_all_requests_local       = true
+  config.consider_all_requests_local       = false
   config.action_controller.perform_caching = false
 
   # Raise exceptions instead of rendering exception templates
@@ -43,9 +50,6 @@ Vmdb::Application.configure do
   # should just be raised intact
   config.middleware.delete ::ActionDispatch::ShowExceptions
   config.middleware.delete ::ActionDispatch::DebugExceptions
-
-  # Raise exceptions in transactional callbacks
-  config.active_record.raise_in_transactional_callbacks = true
 
   # Customize any additional options below...
 

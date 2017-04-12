@@ -1,3 +1,5 @@
+require 'resolv'
+
 class MiqServer < ApplicationRecord
   include_concern 'WorkerManagement'
   include_concern 'ServerMonitor'
@@ -15,7 +17,6 @@ class MiqServer < ApplicationRecord
   include UuidMixin
   include MiqPolicyMixin
   acts_as_miq_taggable
-  include ReportableMixin
   include RelationshipMixin
 
   belongs_to              :vm, :inverse_of => :miq_server
@@ -31,7 +32,7 @@ class MiqServer < ApplicationRecord
 
   virtual_column :zone_description, :type => :string
 
-  RUN_AT_STARTUP  = %w( MiqRegion MiqWorker MiqQueue MiqReportResult VmdbTable )
+  RUN_AT_STARTUP  = %w( MiqRegion MiqWorker MiqQueue MiqReportResult )
 
   STATUS_STARTING       = 'starting'.freeze
   STATUS_STARTED        = 'started'.freeze
@@ -52,23 +53,16 @@ class MiqServer < ApplicationRecord
   end
 
   def self.atStartup
-    configuration  = VMDB::Config.new("vmdb")
-    starting_roles = configuration.config.fetch_path(:server, :role)
-
-    monitor_class_names.each { |class_name| class_name.constantize.validate_config_settings(configuration) }
-
-    EmsInfra.merge_config_settings(configuration)
+    starting_roles = ::Settings.server.role
 
     # Change the database role to database_operations
-    roles = configuration.config.fetch_path(:server, :role)
+    roles = starting_roles.dup
     if roles.gsub!(/\bdatabase\b/, 'database_operations')
-      configuration.config.store_path(:server, :role, roles)
+      MiqServer.my_server.set_config(:server => {:role => roles})
     end
 
-    roles = configuration.config.fetch_path(:server, :role)
-    configuration.save
-
     # Roles Changed!
+    roles = ::Settings.server.role
     if roles != starting_roles
       # tell the server to pick up the role change
       server = MiqServer.my_server
@@ -76,29 +70,19 @@ class MiqServer < ApplicationRecord
       server.sync_active_roles
       server.set_active_role_flags
     end
-
-    _log.info("Invoking startup methods")
-    begin
-      RUN_AT_STARTUP.each do |klass|
-        klass = Object.const_get(klass) if klass.class == String
-        if klass.respond_to?("atStartup")
-          _log.info("Invoking startup method for #{klass}")
-          begin
-            klass.atStartup
-          rescue => err
-            _log.log_backtrace(err)
-          end
-        end
-      end
-    rescue => err
-      _log.log_backtrace(err)
-    end
+    invoke_at_startups
   end
 
-  def self.update_server_config(cfg, key, value)
-    if cfg.get(:server, key) != value
-      cfg.set(:server, key, value)
-      cfg.save
+  def self.invoke_at_startups
+    _log.info("Invoking startup methods")
+    RUN_AT_STARTUP.each do |klass|
+      _log.info("Invoking startup method for #{klass}")
+      begin
+        klass = klass.constantize
+        klass.atStartup
+      rescue => err
+        _log.log_backtrace(err)
+      end
     end
   end
 
@@ -126,25 +110,16 @@ class MiqServer < ApplicationRecord
 
   def self.running?
     p = PidFile.new(pidfile)
-    p.running?(/evm_server\.rb/) ? p.pid : false
+    p.running? ? p.pid : false
   end
 
   def start
-    begin
-      MiqEvent.raise_evm_event(self, "evm_server_start")
-    rescue MiqException::PolicyPreventAction => err
-      _log.warn "#{err}"
-      # TODO: Need to decide what to do here. Should the cluster be stopped?
-      return
-    rescue Exception => err
-      _log.error "#{err}"
-    end
+    MiqEvent.raise_evm_event(self, "evm_server_start")
 
     msg = "Server starting in #{self.class.startup_mode} mode."
-    _log.info("#{msg}")
+    _log.info(msg)
     puts "** #{msg}"
 
-    @vmdb_config = VMDB::Config.new("vmdb")
     starting_server_record
 
     #############################################################
@@ -195,6 +170,7 @@ class MiqServer < ApplicationRecord
       _log.info("Creating Default MiqServer with guid=[#{my_guid}], zone=[#{Zone.default_zone.name}]")
       create!(:guid => my_guid, :zone => Zone.default_zone)
       my_server_clear_cache
+      ::Settings.reload! # Reload the Settings now that we have a server record
       _log.info("Creating Default MiqServer... Complete")
     end
     my_server
@@ -206,79 +182,89 @@ class MiqServer < ApplicationRecord
     EvmDatabase.seed_primordial
 
     setup_data_directory
-    cfg = activate_configuration
+    check_migrations_up_to_date
+    Vmdb::Settings.activate
 
-    svr = my_server(true)
-    svr_hash = {}
+    server = my_server(true)
+    server_hash = {}
+    config_hash = {}
 
     ipaddr, hostname, mac_address = get_network_information
 
-    if ipaddr =~ /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/
-      svr_hash[:ipaddress] = ipaddr
-      update_server_config(cfg, :host, ipaddr)
+    if ipaddr =~ Regexp.union(Resolv::IPv4::Regex, Resolv::IPv6::Regex).freeze
+      server_hash[:ipaddress] = config_hash[:host] = ipaddr
     end
 
     unless hostname.blank?
-      svr_hash[:hostname] = hostname
-      update_server_config(cfg, :hostname, hostname)
+      hostname = nil if hostname =~ /.*localhost.*/
+      server_hash[:hostname] = config_hash[:hostname] = hostname
     end
 
     unless mac_address.blank?
-      svr_hash[:mac_address] = mac_address
+      server_hash[:mac_address] = mac_address
+    end
+
+    if config_hash.any?
+      Vmdb::Settings.save!(server, :server => config_hash)
+      ::Settings.reload!
     end
 
     # Determine the corresponding Vm
-    if svr.vm_id.nil?
+    if server.vm_id.nil?
       vms = Vm.find_all_by_mac_address_and_hostname_and_ipaddress(mac_address, hostname, ipaddr)
       if vms.length > 1
         _log.warn "Found multiple Vms that may represent this MiqServer: #{vms.collect(&:id).sort.inspect}"
       elsif vms.length == 1
-        svr_hash[:vm_id] = vms.first.id
+        server_hash[:vm_id] = vms.first.id
       end
     end
 
-    unless svr.new_record?
+    unless server.new_record?
       [
         # Reset the DRb URI
         :drb_uri, :last_heartbeat,
         # Reset stats
         :memory_usage, :memory_size, :percent_memory, :percent_cpu, :cpu_time
-      ].each { |k| svr_hash[k] = nil }
+      ].each { |k| server_hash[k] = nil }
     end
 
-    svr.update_attributes(svr_hash)
-    my_server_clear_cache
+    server.update_attributes(server_hash)
 
-    _log.info("Server IP Address: #{svr.ipaddress}")    unless svr.ipaddress.blank?
-    _log.info("Server Hostname: #{svr.hostname}")       unless svr.hostname.blank?
-    _log.info("Server MAC Address: #{svr.mac_address}") unless svr.mac_address.blank?
+    _log.info("Server IP Address: #{server.ipaddress}")    unless server.ipaddress.blank?
+    _log.info("Server Hostname: #{server.hostname}")       unless server.hostname.blank?
+    _log.info("Server MAC Address: #{server.mac_address}") unless server.mac_address.blank?
     _log.info "Server GUID: #{my_guid}"
     _log.info "Server Zone: #{my_zone}"
     _log.info "Server Role: #{my_role}"
     region = MiqRegion.my_region
     _log.info "Server Region number: #{region.region}, name: #{region.name}" unless region.nil?
-    _log.info "Database Latency: #{db_ping} ms"
+    _log.info "Database Latency: #{EvmDatabase.ping(connection)} ms"
 
     Vmdb::Appliance.log_config_on_startup
 
-    svr.ntp_reload(svr.server_ntp_settings)
-    # Update the config settings in the db table for MiqServer
-    svr.config_updated(OpenStruct.new(:name => cfg.get(:server, :name)))
+    server.ntp_reload
 
     EvmDatabase.seed_last
 
-    start_memcached(cfg)
+    start_memcached
     prep_apache_proxying
-    svr.start
-    svr.monitor_loop
+    server.start
+    server.monitor_loop
+  end
+
+  def self.check_migrations_up_to_date
+    up_to_date, *message = SchemaMigration.up_to_date?
+    level = up_to_date ? :info : :warn
+    message.to_miq_a.each { |msg| _log.send(level, msg) }
+    up_to_date
   end
 
   def validate_is_deleteable
     unless self.is_deleteable?
       msg = @error_message
       @error_message = nil
-      _log.error("#{msg}")
-      raise msg
+      _log.error(msg)
+      raise _(msg)
     end
   end
 
@@ -302,43 +288,43 @@ class MiqServer < ApplicationRecord
   end
 
   def monitor_poll
-    ((@vmdb_config && @vmdb_config.config[:server][:monitor_poll]) || 5.seconds).to_i_with_method
+    ::Settings.server.monitor_poll.to_i_with_method
   end
 
   def stop_poll
-    ((@vmdb_config && @vmdb_config.config[:server][:stop_poll]) || 10.seconds).to_i_with_method
+    ::Settings.server.stop_poll.to_i_with_method
   end
 
   def heartbeat_frequency
-    ((@vmdb_config && @vmdb_config.config[:server][:heartbeat_frequency]) || 30.seconds).to_i_with_method
+    ::Settings.server.heartbeat_frequency.to_i_with_method
   end
 
   def server_dequeue_frequency
-    ((@vmdb_config && @vmdb_config.config[:server][:server_dequeue_frequency]) || 5.seconds).to_i_with_method
+    ::Settings.server.server_dequeue_frequency.to_i_with_method
   end
 
   def server_monitor_frequency
-    ((@vmdb_config && @vmdb_config.config[:server][:server_monitor_frequency]) || 60.seconds).to_i_with_method
+    ::Settings.server.server_monitor_frequency.to_i_with_method
   end
 
   def server_log_frequency
-    ((@vmdb_config && @vmdb_config.config[:server][:server_log_frequency]) || 5.minutes).to_i_with_method
+    ::Settings.server.server_log_frequency.to_i_with_method
   end
 
   def server_log_timings_threshold
-    ((@vmdb_config && @vmdb_config.config[:server][:server_log_timings_threshold]) || 1.second).to_i_with_method
+    ::Settings.server.server_log_timings_threshold.to_i_with_method
   end
 
   def worker_dequeue_frequency
-    ((@vmdb_config && @vmdb_config.config[:server][:worker_dequeue_frequency]) || 3.seconds).to_i_with_method
+    ::Settings.server.worker_dequeue_frequency.to_i_with_method
   end
 
   def worker_messaging_frequency
-    ((@vmdb_config && @vmdb_config.config[:server][:worker_messaging_frequency]) || 5.seconds).to_i_with_method
+    ::Settings.server.worker_messaging_frequency.to_i_with_method
   end
 
   def worker_monitor_frequency
-    ((@vmdb_config && @vmdb_config.config[:server][:worker_monitor_frequency]) || 15.seconds).to_i_with_method
+    ::Settings.server.worker_monitor_frequency.to_i_with_method
   end
 
   def threshold_exceeded?(name, now = Time.now.utc)
@@ -362,9 +348,11 @@ class MiqServer < ApplicationRecord
     Benchmark.realtime_block(:worker_monitor)          { monitor_workers }                  if threshold_exceeded?(:worker_monitor_frequency, now)
     Benchmark.realtime_block(:worker_dequeue)          { populate_queue_messages }          if threshold_exceeded?(:worker_dequeue_frequency, now)
   rescue SystemExit
+    # TODO: We're rescuing Exception below. WHY? :bomb:
+    # A SystemExit would be caught below, so we need to explicitly rescue/raise.
     raise
   rescue Exception => err
-    _log.error("#{err.message}")
+    _log.error(err.message)
     _log.log_backtrace(err)
 
     begin
@@ -390,8 +378,6 @@ class MiqServer < ApplicationRecord
 
     shutdown_and_exit_queue
     wait_for_stopped if sync
-  rescue Exception => err
-    _log.error "#{err}"
   end
 
   def wait_for_stopped
@@ -416,10 +402,6 @@ class MiqServer < ApplicationRecord
     _log.info("initiated for #{format_full_log_msg}")
     update_attributes(:stopped_on => Time.now.utc, :status => "killed", :is_master => false)
     (pid == Process.pid) ? shutdown_and_exit : Process.kill(9, pid)
-  rescue SystemExit
-    raise
-  rescue Exception => err
-    _log.error "#{err}"
   end
 
   def self.kill
@@ -430,14 +412,7 @@ class MiqServer < ApplicationRecord
 
   def shutdown
     _log.info("initiated for #{format_full_log_msg}")
-    begin
-      MiqEvent.raise_evm_event(self, "evm_server_stop")
-    rescue MiqException::PolicyPreventAction => err
-      _log.warn "#{err}"
-      return
-    rescue Exception => err
-      _log.error "#{err}"
-    end
+    MiqEvent.raise_evm_event(self, "evm_server_stop")
 
     quiesce
   end
@@ -449,19 +424,14 @@ class MiqServer < ApplicationRecord
 
   def quiesce
     update_attribute(:status, 'quiesce')
-    begin
-      deactivate_all_roles
-      quiesce_all_workers
-      update_attributes(:stopped_on => Time.now.utc, :status => "stopped", :is_master => false)
-    rescue => err
-      puts "#{err}"
-      puts "#{err.backtrace.join("\n")}"
-    end
+    deactivate_all_roles
+    quiesce_all_workers
+    update_attributes(:stopped_on => Time.now.utc, :status => "stopped", :is_master => false)
   end
 
   # Restart the local server
   def restart
-    raise "Server restart is only supported on Linux" unless MiqEnvironment::Command.is_linux?
+    raise _("Server restart is only supported on Linux") unless MiqEnvironment::Command.is_linux?
 
     _log.info("Server restart initiating...")
     update_attribute(:status, "restarting")
@@ -478,7 +448,7 @@ class MiqServer < ApplicationRecord
   end
 
   def friendly_name
-    "EVM Server (#{pid})"
+    _("EVM Server (%{id})") % {:id => pid}
   end
 
   def who_am_i
@@ -499,13 +469,13 @@ class MiqServer < ApplicationRecord
 
   def is_deleteable?
     if self.is_local?
-      @error_message = "Cannot delete currently used #{format_short_log_msg}"
+      @error_message = N_("Cannot delete currently used %{log_message}") % {:log_message => format_short_log_msg}
       return false
     end
     return true if self.stopped?
 
     if is_recently_active?
-      @error_message = "Cannot delete recently active #{format_short_log_msg}"
+      @error_message = N_("Cannot delete recently active %{log_message}") % {:log_message => format_short_log_msg}
       return false
     end
 
@@ -534,7 +504,7 @@ class MiqServer < ApplicationRecord
 
   def logon_status
     return :ready if self.started?
-    started_on < (Time.now.utc - get_config("vmdb").config[:server][:startup_timeout]) ? :timed_out_starting : status.to_sym
+    started_on < (Time.now.utc - ::Settings.server.startup_timeout) ? :timed_out_starting : status.to_sym
   end
 
   def logon_status_details
@@ -545,28 +515,6 @@ class MiqServer < ApplicationRecord
     workers = wcnt == 1 ? "worker" : "workers"
     message = "Waiting for #{wcnt} #{workers} to start"
     result.merge(:message => message)
-  end
-
-  def self.config_updated
-    cfg = VMDB::Config.new("vmdb")
-    cfg.save
-  end
-
-  def config_updated(data, _mode = "activate")
-    # Check that the column exists in the table and we are passed data that does not match
-    # the current vaule.  The first check allows this code to run if we migrate down then
-    # back up again.
-    if self.respond_to?(:name) && data.name && name != data.name
-      self.name = data.name
-    end
-
-    unless data.zone.nil?
-      self.zone = Zone.find_by(:name => data.zone)
-      save
-    end
-    update_capabilities
-
-    save
   end
 
   #
@@ -587,7 +535,7 @@ class MiqServer < ApplicationRecord
   end
 
   def zone_description
-    zone ? zone.description : nil
+    zone.try(:description)
   end
 
   def self.my_roles(force_reload = false)
@@ -643,11 +591,6 @@ class MiqServer < ApplicationRecord
     zone.miq_servers.to_a.delete_if { |s| s.id == id }
   end
 
-  # Determines the average time to the database in milliseconds
-  def self.db_ping
-    EvmDatabase.ping(connection)
-  end
-
   def log_prefix
     @log_prefix ||= "MIQ(#{self.class.name})"
   end
@@ -657,10 +600,14 @@ class MiqServer < ApplicationRecord
   end
 
   def server_timezone
-    get_config("vmdb").config.fetch_path(:server, :timezone) || "UTC"
+    ::Settings.server.timezone || "UTC"
   end
 
   def tenant_identity
     User.super_admin
+  end
+
+  def miq_region
+    ::MiqRegion.my_region
   end
 end # class MiqServer

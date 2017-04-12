@@ -12,19 +12,32 @@ Rails.logger.level = env_level
 module EvmSpecHelper
   extend RSpec::Mocks::ExampleMethods
 
+  module EmsMetadataHelper
+    def self.vmware_nested_folders(ems)
+      datacenters = FactoryGirl.create(:ems_folder, :name => 'Datacenters').tap { |x| x.parent = ems }
+      nested = FactoryGirl.create(:ems_folder, :name => 'nested').tap { |x| x.parent = datacenters }
+      testing = FactoryGirl.create(:ems_folder, :name => 'testing').tap { |x| x.parent = nested }
+      FactoryGirl.create(:datacenter).tap { |x| x.parent = testing }
+    end
+  end
+
   # Clear all EVM caches
   def self.clear_caches
+    @settings_loaded = Vmdb::Settings.last_loaded
+
+    yield if block_given?
+  ensure
     Module.clear_all_cache_with_timeout if Module.respond_to?(:clear_all_cache_with_timeout)
 
     clear_instance_variables(MiqEnvironment::Command)
     clear_instance_variable(MiqProductFeature, :@feature_cache) if defined?(MiqProductFeature)
+    clear_instance_variable(MiqProductFeature, :@obj_cache) if defined?(MiqProductFeature)
     clear_instance_variable(BottleneckEvent, :@event_definitions) if defined?(BottleneckEvent)
 
     # Clear the thread local variable to prevent test contamination
     User.current_user = nil if defined?(User) && User.respond_to?(:current_user=)
 
-    # Clear configuration caches
-    VMDB::Config.invalidate_all
+    ::Settings.reload! if @settings_loaded != Vmdb::Settings.last_loaded
   end
 
   def self.clear_instance_variables(instance)
@@ -59,8 +72,7 @@ module EvmSpecHelper
   def self.remote_miq_server(attrs = {})
     Tenant.root_tenant || Tenant.create!(:use_config_for_attributes => false)
 
-    server = FactoryGirl.create(:miq_server, attrs)
-    server
+    FactoryGirl.create(:miq_server, attrs)
   end
 
   def self.remote_guid_miq_server_zone
@@ -105,7 +117,7 @@ module EvmSpecHelper
   end
 
   def self.stub_amqp_support
-    require 'openstack/amqp/openstack_rabbit_event_monitor'
+    require 'openstack/events/openstack_rabbit_event_monitor'
     allow(OpenstackRabbitEventMonitor).to receive(:available?).and_return(true)
     allow(OpenstackRabbitEventMonitor).to receive(:test_connection).and_return(true)
   end

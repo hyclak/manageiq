@@ -4,57 +4,44 @@ class Tag < ApplicationRecord
   virtual_has_one :category,       :class_name => "Classification"
   virtual_has_one :categorization, :class_name => "Hash"
 
+  has_many :container_label_tag_mappings
+
   before_destroy :remove_from_managed_filters
+
+  def self.list(object, options = {})
+    ns = get_namespace(options)
+    if ns[0..7] == "/virtual"
+      ns.gsub!('/virtual/','')  # throw away /virtual
+      ns, virtual_custom_attribute = MiqExpression.escape_virtual_custom_attribute(ns)
+      predicate = ns.split("/")
+      predicate.map!{ |x| URI::RFC2396_Parser.new.unescape(x) } if virtual_custom_attribute
+
+      begin
+        predicate.inject(object) { |target, method| target.public_send method }
+      rescue NoMethodError
+        ""
+      end
+    else
+      filter_ns(object.try(:tags) || [], ns).join(" ")
+    end
+  end
 
   def self.to_tag(name, options = {})
     File.join(Tag.get_namespace(options), name)
   end
 
-  def self.add(list, options = {})
-    ns = Tag.get_namespace(options)
-    Tag.parse(list).each do |name|
-      Tag.find_or_create_by(:name => find_by_name(File.join(ns, name)))
-    end
-  end
-
-  def self.remove(list, options = {})
-    ns = Tag.get_namespace(options)
-    Tag.parse(list).each do |name|
-      tag = Tag.find_by_name(File.join(ns, name))
-      tag.destroy unless tag.nil?
-    end
-  end
-
   def self.tags(options = {})
-    query = Tag.includes(:taggings)
-    query = query.where(Tagging.arel_table[:taggable_type].eq options[:taggable_type])
-    query = query.where(Tag.arel_table[:name].matches "#{options[:ns]}%") if options[:ns]
-    Tag.filter_ns(query, options[:ns])
-  end
+    query = Tag.joins(:taggings)
 
-  def self.all_tags(options = {})
-    query = Tag.scoped
-    ns    = Tag.get_namespace(options)
-    query = query.where(Tag.arel_table[:name].matches "#{ns}%") unless ns.blank?
-    Tag.filter_ns(query, ns)
-  end
-
-  def self.tag_count(olist, name, options = {})
-    ns  = Tag.get_namespace(options)
-    tag = find_by_name(File.join(ns, name))
-    return 0 if tag.nil?
-
-    if olist.kind_of?(MIQ_Report) # support for ruport
-      klass        = olist.db
-      taggable_ids = olist.table.data.collect { |o| o.data["id"].to_i }
-    else
-      klass        = olist[0].class # assumes all objects in list are of the same class
-      taggable_ids = olist.collect { |o| o.id.to_i }
+    if options[:taggable_type].present?
+      query = query.where(Tagging.arel_table[:taggable_type].eq(options[:taggable_type]))
     end
 
-    Tagging.where(:tag_id        => tag.id,
-                  :taggable_id   => taggable_ids,
-                  :taggable_type => klass.base_class.name).count
+    if options[:ns].present?
+      query = query.where(Tag.arel_table[:name].matches("#{options[:ns]}%"))
+    end
+
+    Tag.filter_ns(query, options[:ns])
   end
 
   def self.parse(list)
@@ -86,11 +73,14 @@ class Tag < ApplicationRecord
     end
   end
 
+  # @option options :ns [String, nil]
+  # @option options :cat [String, nil] optional category to add to the end (with a slash)
+  # @return [String] downcases namespace or category
   def self.get_namespace(options)
-    options = {:ns => '/user'}.merge(options)
-    ns = options[:ns]
-    ns = "" if [:none, "none", "*", nil].include?(options[:ns])
-    options[:cat].nil? ? ns.downcase : [ns, options[:cat]].join("/").downcase
+    ns = options.fetch(:ns, '/user')
+    ns = "" if [:none, "none", "*", nil].include?(ns)
+    ns += "/" + options[:cat] if options[:cat]
+    ns.include?(CustomAttributeMixin::CUSTOM_ATTRIBUTES_PREFIX) ? ns : ns.downcase
   end
 
   def self.filter_ns(tags, ns)
@@ -109,12 +99,21 @@ class Tag < ApplicationRecord
     list
   end
 
-  def self.find_by_classification_name(name, region_id = Classification.my_region_number, ns = Classification::DEFAULT_NAMESPACE)
-    if region_id.nil?
-      Tag.find_by_name(Classification.name2tag(name, 0, ns))
-    else
-      Tag.in_region(region_id).find_by_name(Classification.name2tag(name, 0, ns))
-    end
+  # @param tag_names [Array<String>] list of non namespaced tags
+  def self.for_names(tag_names, ns)
+    fq_tag_names = tag_names.collect { |tag_name| File.join(ns, tag_name) }
+    where(:name => fq_tag_names)
+  end
+
+  def self.find_by_classification_name(name, region_id = Classification.my_region_number,
+                                       ns = Classification::DEFAULT_NAMESPACE, parent_id = 0)
+    in_region(region_id).find_by(:name => Classification.name2tag(name, parent_id, ns))
+  end
+
+  def self.find_or_create_by_classification_name(name, region_id = Classification.my_region_number,
+                                                 ns = Classification::DEFAULT_NAMESPACE, parent_id = 0)
+    tag_name = Classification.name2tag(name, parent_id, ns)
+    in_region(region_id).find_by(:name => tag_name) || create(:name => tag_name)
   end
 
   def ==(comparison_object)
@@ -146,7 +145,7 @@ class Tag < ApplicationRecord
   private
 
   def remove_from_managed_filters
-    MiqGroup.remove_tag_from_all_managed_filters(name)
+    Entitlement.remove_tag_from_all_managed_filters(name)
   end
 
   def name_path

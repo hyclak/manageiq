@@ -4,74 +4,42 @@ if defined?(RSpec) && defined?(RSpec::Core::RakeTask)
 namespace :test do
   namespace :replication do
     desc "Setup environment for replication specs"
-    task :setup => :initialize do
-      EvmTestSetupReplication.new.execute
+    task :setup do
+      EvmTestSetupReplication.new.write_released_migrations
     end
-  end
-
-  desc "Run all replication specs"
-  RSpec::Core::RakeTask.new(:replication => :initialize) do |t|
-    EvmTestHelper.init_rspec_task(t)
-    t.pattern = EvmTestHelper::REPLICATION_SPECS
   end
 end
 end # ifdef
 
 class EvmTestSetupReplication
-  def initialize
-    @db_yaml_file      = Rails.root.join("config", "database.yml")
-    @db_yaml_file_orig = Rails.root.join("config", "database.evm_test_setup_replication.yml")
-    @region_file       = Rails.root.join("REGION")
-    @region_file_orig  = Rails.root.join("REGION.evm_test_setup_replication")
-  end
+  TEST_BRANCH = "evm_test_setup_replication_branch".freeze
 
-  def execute
-    prepare_slave_database
-    prepare_master_database
+  def write_released_migrations
+    file_contents = released_migrations.sort.join("\n")
+    File.write(Rails.root.join("spec/replication/util/data/previous_migrations"), file_contents)
   end
 
   private
 
-  def prepare_slave_database
-    puts "** Preparing slave database"
-    db_reset
-  end
-
-  def prepare_master_database
-    puts "** Preparing master database"
-    backup_system_files
-
-    begin
-      File.open(@region_file, "w") { |f| f.puts(99) }
-      config = YAML.load(File.read(@db_yaml_file))
-      config["test"]["database"] += "_master"
-      File.open(@db_yaml_file, "w") { |f| f.puts(config.to_yaml) }
-
-      db_reset
-    ensure
-      restore_system_files
+  def released_migrations
+    unless system(fetch_command)
+      return []
     end
-  end
+    files = `git ls-tree -r --name-only #{TEST_BRANCH} db/migrate/`
+    return [] unless $CHILD_STATUS.success?
 
-  def db_reset
-    env = {
-      "RAILS_ENV" => ENV["RAILS_ENV"] || "test",
-      "VERBOSE"   => ENV["VERBOSE"]   || "false",
-    }
-    EvmTestHelper.run_rake_via_shell("evm:db:reset", env)
-  end
-
-  def backup_system_files
-    FileUtils.cp(@db_yaml_file, @db_yaml_file_orig)
-    FileUtils.cp(@region_file,  @region_file_orig) if File.exist?(@region_file)
-  end
-
-  def restore_system_files
-    FileUtils.mv(@db_yaml_file_orig, @db_yaml_file)
-    if File.exist?(@region_file_orig)
-      FileUtils.mv(@region_file_orig, @region_file)
-    else
-      FileUtils.rm(@region_file)
+    migrations = files.split.map do |path|
+      filename = path.split("/")[-1]
+      filename.split('_')[0]
     end
+
+    # eliminate any non-timestamp entries
+    migrations.keep_if { |timestamp| timestamp =~ /\d+/ }
+  ensure
+    `git branch -D #{TEST_BRANCH}`
+  end
+
+  def fetch_command
+    "git fetch #{'--depth=1 ' if ENV['CI']}http://github.com/ManageIQ/manageiq.git refs/heads/fine:#{TEST_BRANCH}"
   end
 end

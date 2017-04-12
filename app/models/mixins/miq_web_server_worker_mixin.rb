@@ -1,31 +1,39 @@
 require 'miq_apache'
+class NoFreePortError < StandardError; end
+
 module MiqWebServerWorkerMixin
   extend ActiveSupport::Concern
 
-  BINDING_ADDRESS = Rails.env.production? ? "127.0.0.1" : "0.0.0.0"
+  BINDING_ADDRESS = ENV['BINDING_ADDRESS'] || (Rails.env.production? ? "127.0.0.1" : "0.0.0.0")
 
   included do
     class << self
       attr_accessor :registered_ports
     end
 
-    def self.binding_address
+    try(:maximum_workers_count=, 10)
+  end
+
+  module ClassMethods
+    def binding_address
       BINDING_ADDRESS
     end
 
-    def self.preload_for_worker_role
-      require 'hamlit-rails'
+    def preload_for_console
+      configure_secret_token(SecureRandom.hex(64))
+    end
 
+    def preload_for_worker_role
       # Make these constants globally available
       ::UiConstants
 
       configure_secret_token
     end
 
-    def self.configure_secret_token
+    def configure_secret_token(token = MiqDatabase.first.session_secret_token)
       return if Rails.application.config.secret_token
 
-      Rails.application.config.secret_token = MiqDatabase.first.session_secret_token
+      Rails.application.config.secret_token = token
 
       # To set a secret token after the Rails.application is initialized,
       # we need to reset the secrets since they are cached:
@@ -33,19 +41,19 @@ module MiqWebServerWorkerMixin
       Rails.application.secrets = nil
     end
 
-    def self.rails_server
-      VMDB::Config.new("vmdb").config.fetch_path(:server, :rails_server) || "thin"
+    def rails_server
+      ::Settings.server.rails_server
     end
 
-    def self.all_ports_in_use
+    def all_ports_in_use
       server_scope.select(&:enabled_or_running?).collect(&:port)
     end
 
-    def self.build_uri(port)
+    def build_uri(port)
       URI::HTTP.build(:host => binding_address, :port => port).to_s
     end
 
-    def self.sync_workers
+    def sync_workers
       # TODO: add an at_exit to remove all registered ports and gracefully stop apache
       self.registered_ports ||= []
 
@@ -85,139 +93,115 @@ module MiqWebServerWorkerMixin
         end
       end
 
-      modify_apache_ports(ports_hash) if MiqEnvironment::Command.supports_apache?
-
       result
     end
 
-    def self.pid_file(port)
+    def pid_file(port)
       Rails.root.join("tmp/pids/rails_server.#{port}.pid")
     end
 
-    def pid_file
-      @pid_file ||= self.class.pid_file(port)
-    end
-
-    def self.install_apache_proxy_config
+    def install_apache_proxy_config
       options = {
         :member_file    => self::BALANCE_MEMBER_CONFIG_FILE,
         :redirects_file => self::REDIRECTS_CONFIG_FILE,
-        :method         => self::LB_METHOD,
+        :lbmethod       => self::LB_METHOD,
         :redirects      => self::REDIRECTS,
         :cluster        => self::CLUSTER,
+        :protocol       => self::PROTOCOL
       }
 
       _log.info("[#{options.inspect}")
       MiqApache::Conf.install_default_config(options)
     end
 
-    def self.modify_apache_ports(ports_hash)
-      return unless MiqEnvironment::Command.supports_apache?
-      adds    = Array(ports_hash[:adds])
-      deletes = Array(ports_hash[:deletes])
+    def port_range
+      self::STARTING_PORT...(self::STARTING_PORT + maximum_workers_count)
+    end
 
-      # Remove any already registered
-      adds -= self.registered_ports
-
-      return false if adds.empty? && deletes.empty?
-
+    def add_apache_balancer_members
       conf = MiqApache::Conf.instance(self::BALANCE_MEMBER_CONFIG_FILE)
-
-      unless adds.empty?
-        _log.info("Adding port(s) #{adds.inspect}")
-        conf.add_ports(adds)
-      end
-
-      unless deletes.empty?
-        _log.info("Removing port(s) #{deletes.inspect}")
-        conf.remove_ports(deletes)
-      end
-
-      saved = conf.save
-      if saved
-        self.registered_ports += adds
-        self.registered_ports -= deletes
-
-        # Update the apache load balancer regardless but only restart apache
-        # when adding a new port to the balancer.
-        MiqServer.my_server.queue_restart_apache unless adds.empty?
-        _log.info("Added/removed port(s) #{adds.inspect}/#{deletes.inspect}, registered ports after #{self.registered_ports.inspect}")
-      end
-      saved
+      conf.add_ports(port_range.to_a, self::PROTOCOL)
+      conf.save
     end
 
-    def self.reserve_port(ports)
-      index = 0
-      loop do
-        port = self::STARTING_PORT + index
-        return port unless ports.include?(port)
-        index += 1
-      end
+    def reserve_port(ports)
+      free_ports = port_range.to_a - ports
+      raise NoFreePortError if free_ports.empty?
+      free_ports.first
     end
+  end
 
-    def rails_server_options
-      # See Rack::Server options which is what Rails::Server uses:
-      # https://github.com/rack/rack/blob/1.6.4/lib/rack/server.rb#L152-L183
-      params = {
-        :Host        => self.class.binding_address,
-        :environment => Rails.env.to_s,
-        :app         => Rails.application
-      }
+  def pid_file
+    @pid_file ||= self.class.pid_file(port)
+  end
 
-      params[:Port] = port.kind_of?(Numeric) ? port : 3000
-      params[:pid]  = self.class.pid_file(params[:Port]).to_s
+  def rails_server_options
+    # See Rack::Server options which is what Rails::Server uses:
+    # https://github.com/rack/rack/blob/1.6.4/lib/rack/server.rb#L152-L183
+    params = {
+      :Host        => self.class.binding_address,
+      :environment => Rails.env.to_s,
+      :app         => rails_application,
+      :server      => self.class.rails_server
+    }
 
-      params
-    end
+    params[:Port] = port.kind_of?(Numeric) ? port : 3000
+    params[:pid]  = self.class.pid_file(params[:Port]).to_s
 
-    def start
-      delete_pid_file
-      ENV['PORT'] = port.to_s
-      ENV['MIQ_GUID'] = guid
-      super
-    end
+    params
+  end
 
-    def terminate
-      # HACK: Cannot call exit properly from UiWorker nor can we Process.kill('INT', ...) from inside the worker
-      # Hence, this is an external mechanism for terminating this worker.
+  def rails_application
+    @app ||= defined?(self.class::RACK_APPLICATION) ? self.class::RACK_APPLICATION.new : Rails.application
+  end
 
-      begin
-        _log.info("Terminating #{format_full_log_msg}, status [#{status}]")
-        Process.kill("TERM", pid)
-        # TODO: Variablize and clean up this 10-second-max loop of waiting on Worker to gracefully shut down
-        10.times do
-          unless MiqProcess.alive?(pid)
-            update_attributes(:stopped_on => Time.now.utc, :status => MiqWorker::STATUS_STOPPED)
-            break
-          end
-          sleep 1
+  def start
+    delete_pid_file
+    ENV['PORT'] = port.to_s
+    ENV['MIQ_GUID'] = guid
+    super
+  end
+
+  def terminate
+    # HACK: Cannot call exit properly from UiWorker nor can we Process.kill('INT', ...) from inside the worker
+    # Hence, this is an external mechanism for terminating this worker.
+
+    begin
+      _log.info("Terminating #{format_full_log_msg}, status [#{status}]")
+      Process.kill("TERM", pid)
+      # TODO: Variablize and clean up this 10-second-max loop of waiting on Worker to gracefully shut down
+      10.times do
+        unless MiqProcess.alive?(pid)
+          update_attributes(:stopped_on => Time.now.utc, :status => MiqWorker::STATUS_STOPPED)
+          break
         end
-      rescue Errno::ESRCH
-        _log.warn("#{format_full_log_msg} has been killed")
-      rescue => err
-        _log.warn("#{format_full_log_msg} has been killed, but with the following error: #{err}")
+        sleep 1
       end
-
-      kill if MiqProcess.alive?(pid)
+    rescue Errno::ESRCH
+      _log.warn("#{format_full_log_msg} has been killed")
+    rescue => err
+      _log.warn("#{format_full_log_msg} has been killed, but with the following error: #{err}")
     end
 
-    def kill
-      deleted_worker = super
-      delete_pid_file
-      deleted_worker
-    end
+    kill if MiqProcess.alive?(pid)
+  end
 
-    def delete_pid_file
-      File.delete(pid_file) if File.exist?(pid_file)
-    end
+  def kill
+    deleted_worker = super
+    delete_pid_file
+    deleted_worker
+  end
 
-    def port
-      @port ||= uri.blank? ? nil : URI.parse(uri).port
-    end
+  def delete_pid_file
+    File.delete(pid_file) if File.exist?(pid_file)
+  end
 
-    def release_db_connection
-      self.update_spid!(nil)
-      self.class.release_db_connection
-    end
+  def port
+    @port ||= uri.blank? ? nil : URI.parse(uri).port
+  end
+
+  def release_db_connection
+    self.update_spid!(nil)
+    self.class.release_db_connection
   end
 end

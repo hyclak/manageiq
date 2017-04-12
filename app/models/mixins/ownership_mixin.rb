@@ -5,12 +5,47 @@ module OwnershipMixin
     belongs_to :evm_owner, :class_name => "User"
     belongs_to :miq_group
 
-    virtual_column :evm_owner_email,                      :type => :string,     :uses => :evm_owner
-    virtual_column :evm_owner_name,                       :type => :string,     :uses => :evm_owner
-    virtual_column :evm_owner_userid,                     :type => :string,     :uses => :evm_owner
-    virtual_column :owned_by_current_user,                :type => :boolean,    :uses => :evm_owner_userid
-    virtual_column :owning_ldap_group,                    :type => :string,     :uses => :miq_group
-    virtual_column :owned_by_current_ldap_group,          :type => :boolean,    :uses => :owning_ldap_group
+    virtual_delegate :email, :name, :userid, :to => :evm_owner, :prefix => true, :allow_nil => true
+
+    # Determine whether the selected object is owned by the current user
+    # Resulting SQL:
+    #
+    #   (LOWER((SELECT "users"."userid"
+    #           FROM "users"
+    #           WHERE "users"."id" = "THIS_MODELS_TABLE"."evm_owner_id")) = 'some_userid')
+    #
+    # explination:
+    # At first it looks like a simple compare with evm_owner_id = current user id would suffice.
+    #   i.e.: t.grouping(arel_attribute(:evm_owner_id)]).eq(User.current_user.try(:id)))
+    #
+    # But the code is written to support the same userid used across multiple regions. Assuming that they are
+    # all the same user.
+    virtual_attribute :owned_by_current_user, :boolean, :uses => :evm_owner, :arel => (lambda do |t|
+      userid = User.current_userid.to_s.downcase
+      t.grouping(Arel::Nodes::NamedFunction.new("LOWER", [arel_attribute(:evm_owner_userid)]).eq(userid))
+    end)
+
+    virtual_delegate :owning_ldap_group, :to => "miq_group.description", :allow_nil => true
+
+    # Determine whether to return objects owned by the current user's miq_group
+    # or not.
+    #
+    # Resulting SQL:
+    #
+    #   (LOWER((SELECT "miq_groups"."description"
+    #           FROM "miq_groups"
+    #           WHERE "miq_groups"."id" = "THIS_MODELS_TABLE"."miq_group_id")) = 'some_miq_group')
+    #
+    # Will result in the following when used with MiqExpression:
+    #
+    #   WHERE (LOWER((SELECT "miq_groups"."description"
+    #                 FROM "miq_groups"
+    #                 WHERE "miq_groups"."id" = "THIS_MODELS_TABLE"."miq_group_id")) = 'some_miq_group') = 'true'
+    virtual_attribute :owned_by_current_ldap_group, :boolean, :arel => (lambda do |t|
+      ldap_group = User.current_user.try(:ldap_group).to_s.downcase
+
+      t.grouping(Arel::Nodes::NamedFunction.new("LOWER", [arel_attribute(:owning_ldap_group)]).eq(ldap_group))
+    end)
   end
 
   module ClassMethods
@@ -27,7 +62,7 @@ module OwnershipMixin
                   when :owner then :evm_owner
                   when :group then :miq_group
                   else
-                    raise "Unknown option, '#{k}'"
+                    raise _("Unknown option, '%{name}'") % {:name => k}
                   end
             obj.send("#{col}=", options[k])
           end
@@ -40,55 +75,31 @@ module OwnershipMixin
       errors.empty? ? true : errors
     end
 
-    def conditions_for_owned(user_or_group = nil)
-      user_or_group ||= User.current_user
-
-      case user_or_group
-      when User
-        ["evm_owner_id = ?", user_or_group.id]
-      when MiqGroup
-        ["miq_group_id = ?", user_or_group.id]
+    def user_or_group_owned(user, miq_group)
+      if user && miq_group
+        user_owned(user).or(group_owned(miq_group))
+      elsif user
+        user_owned(user)
+      elsif miq_group
+        group_owned(miq_group)
+      else
+        none
       end
     end
 
-    def conditions_for_owned_or_group_owned(user_or_group = nil)
-      user_or_group ||= User.current_user
+    private
 
-      cond = conditions_for_owned(user_or_group)
-      case user_or_group
-      when MiqGroup
-        cond
-      when User
-        group_cond = conditions_for_owned(user_or_group.current_group)
-        cond[0] += " OR #{group_cond[0]}"
-        cond << group_cond[1]
-        cond
-      end
+    def user_owned(user)
+      where(arel_table.grouping(Arel::Nodes::NamedFunction.new("LOWER", [arel_attribute(:evm_owner_userid)]).eq(user.userid.downcase)))
     end
 
-    def user_or_group_owned(user = nil)
-      where(conditions_for_owned_or_group_owned(user)).to_a
+    def group_owned(miq_group)
+      where(arel_table.grouping(Arel::Nodes::NamedFunction.new("LOWER", [arel_attribute(:owning_ldap_group)]).eq(miq_group.description.downcase)))
     end
-  end
-
-  def evm_owner_email
-    evm_owner.try(:email)
-  end
-
-  def evm_owner_name
-    evm_owner.try(:name)
-  end
-
-  def evm_owner_userid
-    evm_owner.try(:userid)
   end
 
   def owned_by_current_user
     User.current_userid && evm_owner_userid && User.current_userid.downcase == evm_owner_userid.downcase
-  end
-
-  def owning_ldap_group
-    miq_group.try(:description)
   end
 
   def owned_by_current_ldap_group

@@ -4,8 +4,6 @@ class MiqLdap
   include Vmdb::Logging
   DEFAULT_LDAP_PORT      = 389
   DEFAULT_LDAPS_PORT     = 636
-  DEFAULT_BIND_TIMEOUT   = 30
-  DEFAULT_SEARCH_TIMEOUT = 30
 
   attr_accessor :basedn
 
@@ -32,28 +30,27 @@ class MiqLdap
   end
 
   def initialize(options = {})
-    @auth = options[:auth] || VMDB::Config.new("vmdb").config[:authentication]
-    log_auth = VMDB::Config.clone_auth_for_log(@auth)
+    @auth = options[:auth] || ::Settings.authentication.to_hash
+
+    log_auth = Vmdb::Settings.mask_passwords!(@auth.deep_clone)
     _log.info("Server Settings: #{log_auth.inspect}")
-    mode              = options.delete(:mode) || @auth[:mode]
-    @basedn           = options.delete(:basedn) || @auth[:basedn]
-    @user_type        = options.delete(:user_type) || @auth[:user_type]
-    @user_suffix      = options.delete(:user_suffix) || @auth[:user_suffix]
-    @domain_prefix    = options.delete(:domain_prefix) || @auth[:domain_prefix]
-    @bind_timeout     = options.delete(:bind_timeout) || @auth[:bind_timeout] || self.class.default_bind_timeout
-    @search_timeout   = options.delete(:search_timeout) || @auth[:search_timeout] || self.class.default_search_timeout
-    @follow_referrals = options.delete(:follow_referrals) || @auth[:follow_referrals] || false
-    defaults = {
-      :host => @auth[:ldaphost],
-      :port => @auth[:ldapport],
-    }
-    options = defaults.merge(options)
+
+    mode              = options.delete(:mode) || ::Settings.authentication.mode
+    @basedn           = options.delete(:basedn) || ::Settings.authentication.basedn
+    @user_type        = options.delete(:user_type) || ::Settings.authentication.user_type
+    @user_suffix      = options.delete(:user_suffix) || ::Settings.authentication.user_suffix
+    @domain_prefix    = options.delete(:domain_prefix) || ::Settings.authentication.domain_prefix
+    @bind_timeout     = options.delete(:bind_timeout) || ::Settings.authentication.bind_timeout.to_i_with_method
+    @search_timeout   = options.delete(:search_timeout) || ::Settings.authentication.search_timeout.to_i_with_method
+    @follow_referrals = options.delete(:follow_referrals) || ::Settings.authentication.follow_referrals
+    options[:host] ||= ::Settings.authentication.ldaphost
+    options[:port] ||= ::Settings.authentication.ldapport
     options[:encryption] = {:method => :simple_tls} if mode == "ldaps"
 
     options[:host] = resolve_host(options[:host], options[:port])
 
     # Make sure we do NOT log the clear-text password
-    log_options = VMDB::Config.clone_auth_for_log(options)
+    log_options = Vmdb::Settings.mask_passwords!(options.deep_clone)
     $log.info "options: #{log_options.inspect}"
 
     @ldap = Net::LDAP.new(options)
@@ -92,7 +89,7 @@ class MiqLdap
       return selected_host if selected_host
     end
 
-    raise Net::LDAP::LdapError.new("unable to establish a connection to server")
+    raise Net::LDAP::Error.new("unable to establish a connection to server")
   end
 
   def bind(username, password)
@@ -212,7 +209,7 @@ class MiqLdap
             ref_res = handle._search(opts.merge(:base => dn), seen)
             _log.debug("Referral: #{ref}, returned [#{ref_res.length}] objects")
             res += ref_res
-          rescue Net::LDAP::LdapError => err
+          rescue Net::LDAP::Error => err
             _log.warn("Unable to chase referral [#{ref}] because #{err.message}")
           end
         end
@@ -265,11 +262,11 @@ class MiqLdap
   end
 
   def is_dn?(str)
-    str =~ /^([a-z|0-9|A-Z]+ *=[^,]+[,| ]*)+$/ ? true : false
+    !!(str =~ /^([a-z|0-9|A-Z]+ *=[^,]+[,| ]*)+$/)
   end
 
   def domain_username?(str)
-    str =~ /^([a-zA-Z][a-zA-Z0-9.-]+)\\.+$/ ? true : false
+    !!(str =~ /^([a-zA-Z][a-zA-Z0-9.-]+)\\.+$/)
   end
 
   def fqusername(username)
@@ -432,29 +429,8 @@ class MiqLdap
     end
   end
 
-  def self.default_bind_timeout
-    value = VMDB::Config.new("vmdb").config[:authentication][:bind_timeout] || DEFAULT_BIND_TIMEOUT
-    value = value.to_i_with_method if value.respond_to?(:to_i_with_method)
-    value
-  end
-
-  def self.default_search_timeout
-    value = VMDB::Config.new("vmdb").config[:authentication][:search_timeout] || DEFAULT_SEARCH_TIMEOUT
-    value = value.to_i_with_method if value.respond_to?(:to_i_with_method)
-    value
-  end
-
   def self.using_ldap?
-    VMDB::Config.new("vmdb").config[:authentication][:mode].include?('ldap')
-  end
-
-  def self.resolve_ldap_host?
-    if @resolve_ldap_host.nil?
-      @resolve_ldap_host = VMDB::Config.new("vmdb").config[:authentication][:resolve_ldap_host]
-      @resolve_ldap_host = false if @resolve_ldap_host.nil?
-    end
-
-    @resolve_ldap_host
+    ::Settings.authentication.mode.include?('ldap')
   end
 
   def self.sid_to_s(data)

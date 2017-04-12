@@ -29,7 +29,7 @@ describe MiqProvisionWorkflow do
           @hardware    = FactoryGirl.create(:hardware, :vm_or_template => @vm_template, :guest_os => "winxppro",
                                             :memory_mb => 512,
                                             :cpu_sockets => 2)
-          @switch      = FactoryGirl.create(:switch, :name => 'vSwitch0', :ports => 32, :host => @host)
+          @switch      = FactoryGirl.create(:switch, :name => 'vSwitch0', :ports => 32, :hosts => [@host])
           @lan         = FactoryGirl.create(:lan, :name => "VM Network", :switch => @switch)
           @ethernet    = FactoryGirl.create(:guest_device, :hardware => @hardware, :lan => @lan,
                                             :device_type => 'ethernet',
@@ -59,7 +59,7 @@ describe MiqProvisionWorkflow do
         it "should encrypt fields" do
           password_input = "secret"
           request = ManageIQ::Providers::Vmware::InfraManager::ProvisionWorkflow.from_ws(
-            "1.1", admin, {'name' => 'template'}, {'vm_name' => 'spec_test', 'root_password' => "#{password_input}"},
+            "1.1", admin, {'name' => 'template'}, {'vm_name' => 'spec_test', 'root_password' => password_input.dup}, # dup because it's mutated
             {'owner_email' => 'admin'}, {'owner_first_name' => 'test'},
             {'owner_last_name' => 'test'}, nil, nil, nil, nil)
 
@@ -95,16 +95,6 @@ describe MiqProvisionWorkflow do
           end
         end
       end
-
-      context "#show_customize_fields" do
-        it "should show PXE fields when customization supported" do
-          fields = {'key' => 'value'}
-          wf = MiqProvisionVirtWorkflow.new({}, admin)
-          expect(wf).to receive(:supports_customization_template?).and_return(true)
-          expect(wf).to receive(:show_customize_fields_pxe).with(fields)
-          wf.show_customize_fields(fields, 'linux')
-        end
-      end
     end
   end
 
@@ -134,6 +124,16 @@ describe MiqProvisionWorkflow do
     it 'with archived source' do
       expect(template.archived?).to be_truthy
       expect(described_class.class_for_source(template.id)).to eq(workflow_class)
+    end
+  end
+
+  context '.class_for_platform' do
+    {
+      "openstack" => ManageIQ::Providers::Openstack::CloudManager::ProvisionWorkflow,
+      "redhat"    => ManageIQ::Providers::Redhat::InfraManager::ProvisionWorkflow,
+      "vmware"    => ManageIQ::Providers::Vmware::InfraManager::ProvisionWorkflow,
+    }.each do |k, v|
+      it(k) { expect(described_class.class_for_platform(k)).to eq(v) }
     end
   end
 end

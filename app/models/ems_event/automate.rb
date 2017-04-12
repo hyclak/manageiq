@@ -2,14 +2,37 @@ class EmsEvent
   module Automate
     extend ActiveSupport::Concern
 
-    def refresh(*targets)
+    def manager_refresh(sync: false)
+      refresh_targets = manager_refresh_targets
+
+      return if refresh_targets.empty?
+
+      EmsRefresh.queue_refresh(refresh_targets, nil, :create_task => sync)
+    end
+
+    def refresh(*targets, sync)
       targets = targets.flatten
       return if targets.blank?
 
       refresh_targets = targets.collect { |t| get_target("#{t}_refresh_target") unless t.blank? }.compact.uniq
       return if refresh_targets.empty?
 
-      EmsRefresh.queue_refresh(refresh_targets)
+      task_ids = EmsRefresh.queue_refresh(refresh_targets, nil, :create_task => sync)
+
+      # Wait for the tasks to finish if we are doing a synchronous refresh
+      task_ids.each { |tid| MiqTask.wait_for_taskid(tid) } if sync
+    end
+
+    def refresh_new_target
+      ems = ext_management_system
+      if ems.supports_refresh_new_target?
+        ep_class = ems.class::EventParser
+        target_hash = ep_class.parse_new_target(full_data, message, ems, event_type)
+
+        EmsRefresh.queue_refresh_new_target(target_hash, ems)
+      else
+        EmsRefresh.queue_refresh(ems)
+      end
     end
 
     def policy(target_str, policy_event, param = nil)
@@ -20,7 +43,6 @@ class EmsEvent
       return if target.nil? || policy_event.nil? || policy_src.nil?
 
       inputs = {
-        target.class.name.downcase.singularize.to_sym => target,
         policy_src.class.table_name.to_sym            => policy_src,
         :ems_event                                    => self
       }
@@ -80,10 +102,6 @@ class EmsEvent
       call("src_vm", "disconnect_storage")
     end
 
-    def src_vm_refresh_on_reconfig
-      call("src_vm", "refresh_on_reconfig")
-    end
-
     private
 
     def parse_policy_parameters(target_str, policy_event, param)
@@ -91,11 +109,11 @@ class EmsEvent
       policy_event ||= event_type
       policy_src     = parse_policy_source(target, param) if target
 
+      _log.warn("Unable to find target [#{target_str}], skipping policy evaluation") if target.nil?
       _log.debug("Target: [#{target_str}], Policy event: [#{policy_event}]")
       _log.debug("Target object: [#{target.inspect}]")
       _log.debug("Policy source: [#{policy_src}]")
 
-      return if target.nil? || policy_event.nil? || policy_src.nil?
       [target, policy_event, policy_src]
     end
 

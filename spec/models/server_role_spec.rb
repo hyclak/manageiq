@@ -33,7 +33,6 @@ describe ServerRole do
         automate,Automation Engine,0,false,region
         database_operations,Database Operations,0,false,region
         database_owner,Database Owner,1,false,database
-        database_synchronization,Database Synchronization,1,false,region
         ems_inventory,Management System Inventory,1,false,zone
         ems_metrics_collector,Capacity & Utilization Data Collector,0,false,zone
         ems_metrics_coordinator,Capacity & Utilization Coordinator,1,false,zone
@@ -47,6 +46,7 @@ describe ServerRole do
         smartstate,SmartState Analysis,0,false,zone
         storage_inventory,Storage Inventory,1,false,zone
         user_interface,User Interface,0,false,region
+        websocket,Websocket,0,false,region
         web_services,Web Services,0,false,region
       CSV
 
@@ -68,7 +68,7 @@ describe ServerRole do
         max_concurrent = max_concurrent.to_i
         external_failover = true  if external_failover == 'true'
         external_failover = false if external_failover == 'false'
-        sr = ServerRole.find_by_name(name)
+        sr = ServerRole.find_by(:name => name)
         expect(sr.description).to eq(description)
         expect(sr.max_concurrent).to eq(max_concurrent)
         expect(sr.external_failover).to eq(external_failover)

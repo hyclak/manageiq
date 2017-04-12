@@ -65,7 +65,6 @@ module VimPerformanceAnalysis
         includes = topts[:compute_type].to_sym == :Host ? {:hardware => {}, :vms => {:hardware => {}}} : nil
         search_options = {
           :class            => topts[:compute_type].to_s,
-          :results_format   => :objects,
           :include_for_find => includes,
           :userid           => @options[:userid],
           :miq_group_id     => @options[:miq_group_id],
@@ -107,7 +106,7 @@ module VimPerformanceAnalysis
       if target.kind_of?(EmsCluster)
         return target.hosts.collect(&:storages).flatten.compact
       else
-        raise "unable to get storages for #{target.class}"
+        raise _("unable to get storages for %{name}") % {:name => target.class}
       end
     end
 
@@ -133,16 +132,18 @@ module VimPerformanceAnalysis
         compute_hosts = @compute
       end
 
-      # Set :only_cols for target daily requested cols for better performance
-      options[:ext_options][:only_cols] = [:cpu, :memory, :storage].collect { |t| [options[:target_options].fetch_path(t, :metric), options[:target_options].fetch_path(t, :limit_col)] }.flatten.compact
-      compute_hosts.each do |c|
-        hash = {:target => c}
+      if VimPerformanceAnalysis.needs_perf_data?(options[:target_options])
+        perf_cols = [:cpu, :vcpus, :memory, :storage].collect do |t|
+          [options[:target_options].fetch_path(t, :metric), options[:target_options].fetch_path(t, :limit_col)]
+        end.flatten.compact
+      end
+
+      result = compute_hosts.collect do |c|
         count_hash = {}
 
-        need_compute_perf = VimPerformanceAnalysis.needs_perf_data?(options[:target_options])
-        start_time, end_time = get_time_range(options[:range])
-        compute_perf = VimPerformanceAnalysis.get_daily_perf(c, start_time, end_time, options[:ext_options]) if need_compute_perf
-        unless need_compute_perf && compute_perf.blank?
+        compute_perf = VimPerformanceAnalysis.get_daily_perf(c, options[:range], options[:ext_options], perf_cols)
+        # if we rely upon daily perf columns, make sure we have values for them
+        if perf_cols.nil? || compute_perf.present?
           ts = compute_perf.last.timestamp if compute_perf
 
           [:cpu, :vcpus, :memory].each do |type|
@@ -151,32 +152,25 @@ module VimPerformanceAnalysis
               count_hash[type] = {:total => 0}
               next
             end
-            avail, usage = compute_offers(compute_perf, ts, options[:target_options][type], type, c)
+            avail, usage = offers(compute_perf, ts, options[:target_options][type], type, c)
             count_hash[type] = {:total => can_fit(avail, usage, vm_needs[type])}
           end
 
           unless vm_needs[:storage].nil? || options[:target_options][:storage].nil?
             details = []
             total   = 0
+            type    = :storage
             storages_for_compute_target(c).each do |s|
-              avail, usage = storage_offers(compute_perf, ts, options[:target_options][:storage], s)
-              fits = can_fit(avail, usage, vm_needs[:storage])
+              avail, usage = offers(compute_perf, ts, options[:target_options][type], type, s)
+              fits = can_fit(avail, usage, vm_needs[type])
               details << {s.id => fits}
               total += fits unless fits.nil?
             end
-            count_hash[:storage] = {:total => total, :details => details}
+            count_hash[type] = {:total => total, :details => details}
           end
         end
-
-        total = nil
-        count_hash.each_value do |v|
-          next if v[:total].nil?
-          total = v[:total] if total.nil? || total > v[:total]
-        end
-        count_hash[:total] = {:total => total}
-
-        hash[:count] = count_hash
-        result << hash
+        count_hash[:total] = {:total => count_hash.each_value.pluck(:total).compact.max}
+        {:target => c, :count => count_hash}
       end
 
       result = how_many_more_can_fit_host_to_cluster_results(result) if @compute.first.kind_of?(EmsCluster)
@@ -210,9 +204,8 @@ module VimPerformanceAnalysis
             # build up array of storage details unique by storage Id
             chash[:details] ||= []
             hhash[:details].each do |h|
-              id, val = h.to_a.flatten
-              next if chash[:details].find { |i| i.keys.first == id }
-              chash[:details] << h
+              id, = h.to_a.flatten
+              chash[:details] << h unless chash[:details].find { |i| i.keys.first == id }
             end
           end
         end
@@ -279,22 +272,15 @@ module VimPerformanceAnalysis
     def get_vm_needs
       options = @options
 
-      vm_perf = nil
       if VimPerformanceAnalysis.needs_perf_data?(options[:vm_options])
-        # Get VM performance data
-        start_time, end_time = get_time_range(options[:range])
-        # Set :only_cols for VM daily requested cols for better performance
-        options[:ext_options] ||= {}
-        options[:ext_options][:only_cols] = [:cpu, :vcpus, :memory, :storage].collect { |t| options[:vm_options][t][:metric] if options[:vm_options][t] }.compact
-        vm_perf    = VimPerformanceAnalysis.get_daily_perf(@vm, start_time, end_time, options[:ext_options])
+        perf_cols = [:cpu, :vcpus, :memory, :storage].collect { |t| options.fetch_path(:vm_options, t, :metric) }.compact
       end
 
-      @vm_needs = {}
+      vm_perf = VimPerformanceAnalysis.get_daily_perf(@vm, options[:range], options[:ext_options], perf_cols)
       vm_ts = vm_perf.last.timestamp unless vm_perf.blank?
-      [:cpu, :vcpus, :memory, :storage].each do |type|
-        @vm_needs[type] = vm_consumes(vm_perf, vm_ts, options[:vm_options][type], type)
+      [:cpu, :vcpus, :memory, :storage].each_with_object({}) do |type, vm_needs|
+        vm_needs[type] = vm_consumes(vm_perf, vm_ts, options[:vm_options][type], type)
       end
-      @vm_needs
     end
 
     def vm_consumes(perf, ts, options, type, vm = @vm)
@@ -389,14 +375,6 @@ module VimPerformanceAnalysis
       [avail, usage]
     end
 
-    def compute_offers(perf, ts, options, type, target)
-      offers(perf, ts, options, type, target)
-    end
-
-    def storage_offers(perf, ts, options, storage)
-      offers(perf, ts, options, :storage, storage)
-    end
-
     def can_fit(avail, usage, need)
       return nil if avail.nil? || usage.nil? || need.nil?
       return 0   unless avail > usage && need > 0
@@ -413,7 +391,9 @@ module VimPerformanceAnalysis
       when :perf_trend
         VimPerformanceAnalysis.calc_trend_value_at_timestamp(perf, col, ts)
       else
-        raise "Unsupported Mode (#{mode}) for #{obj.class} #{type} options"
+        raise _("Unsupported Mode (%{mode}) for %{class} %{type} options") % {:mode  => mode,
+                                                                              :class => obj.class,
+                                                                              :type  => type}
       end
     end
 
@@ -437,28 +417,12 @@ module VimPerformanceAnalysis
       end
       {:recomendations => [hash], :errors => nil}
     end
-
-    def get_time_range(range)
-      ##########################################################
-      #   :range        => Trend calculation options
-      #     :days         => Number of days back from daily_date
-      #     :end_date     => Ending date
-      ##########################################################
-      range[:days] ||= 20
-      range[:end_date] ||= Time.now
-
-      start_time = (range[:end_date].utc - range[:days].days)
-      end_time   = Time.now.utc
-
-      return start_time, end_time
-    end
   end # class Planning
 
   # Helper methods
 
   def self.needs_perf_data?(options)
-    options.each { |_k, v| return true if v && v[:mode] == :perf_trend }
-    false
+    options.values.detect { |v| v && v[:mode] == :perf_trend }
   end
 
   def self.find_perf_for_time_period(obj, interval_name, options = {})
@@ -467,80 +431,55 @@ module VimPerformanceAnalysis
     #   :start_date  => Starting date
     #   :end_date    => Ending date
     #   :conditions  => ActiveRecord find conditions
-
-    options[:end_date] ||= Time.now.utc
-    start_time = (options[:start_date] || (options[:end_date].utc - options[:days].days)).utc
-    end_time   = options[:end_date].utc
-
-    rel = if interval_name == "daily"
-            VimPerformanceDaily.find_entries(options[:ext_options])
-          else
-            klass, _meth = Metric::Helper.class_and_association_for_interval_name(interval_name)
-            klass.where(:capture_interval_name => interval_name)
-          end
-
-    rel = rel.where(options[:conditions]) if options[:conditions]
-
-    rel
-      .where("timestamp > ? and timestamp <= ?", start_time.utc, end_time.utc)
-      .where(:resource => obj)
-      .order("timestamp")
-      .select(options[:select])
-      .to_a
+    ext_options = options[:ext_options] || {}
+    Metric::Helper.find_for_interval_name(interval_name, ext_options[:time_profile] || ext_options[:tz],
+                                          ext_options[:class])
+                  .where(:timestamp => Metric::Helper.time_range_from_hash(options), :resource => obj)
+                  .where(options[:conditions]).order("timestamp")
+                  .select(options[:select])
   end
 
+  # @param obj base object
+  # @param interval_name
+  # @option options :days        [Numeric] Number of days back from end_date. Used to derive start_date (if not passed)
+  # @option options :start_date  [Date] Starting date (typically not passed)
+  # @option options :end_date    [Date] Ending date
+  # @option options :select      [String|Array] Active record list of columns to bring back
+  # @option options :conditions  [String|Hash|nil]
+  # @option options[:ext_options] :time_profile [TimeProfile]
+  # @option options[:ext_options] :tz [String] timezone used to derive time_profile (if not passed)
   def self.find_child_perf_for_time_period(obj, interval_name, options = {})
-    # Options
-    #   :days        => Number of days back from end_date. Used only if start_date not passed
-    #   :start_date  => Starting date
-    #   :end_date    => Ending date
-    #   :conditions  => ActiveRecord find conditions
-
-    start_time = (options[:start_date] || (options[:end_date].utc - options[:days].days)).utc
-    end_time   = options[:end_date].utc
-    klass, = Metric::Helper.class_and_association_for_interval_name(interval_name)
-
-    user_cond = nil
-    user_cond = klass.send(:sanitize_sql_for_conditions, options[:conditions]) if options[:conditions]
-    cond =  klass.send(:sanitize_sql_for_conditions, ["(timestamp > ? AND timestamp <= ?)", start_time.utc, end_time.utc])
-    cond += klass.send(:sanitize_sql_for_conditions, [" AND capture_interval_name = ?", interval_name]) unless interval_name == "daily"
-    cond =  "(#{user_cond}) AND (#{cond})" if user_cond
-
-    if obj.kind_of?(MiqEnterprise) || obj.kind_of?(MiqRegion)
-      cond1 = klass.send(:sanitize_sql_for_conditions, :resource_type => "Storage",             :resource_id => obj.storage_ids)
-      cond2 = klass.send(:sanitize_sql_for_conditions, :resource_type => "ExtManagementSystem", :resource_id => obj.ext_management_system_ids)
-      cond += " AND ((#{cond1}) OR (#{cond2}))"
+    ext_options = options[:ext_options] || {}
+    rel = Metric::Helper.find_for_interval_name(interval_name, ext_options[:time_profile] || ext_options[:tz],
+                                                ext_options[:class])
+    case obj
+    when MiqEnterprise, MiqRegion then
+      rel = rel.where(:resource => obj.storages).or(rel.where(:resource => obj.ext_management_systems))
+    when Host then
+      rel = rel.where(:parent_host_id => obj.id)
+    when EmsCluster
+      rel = rel.where(:parent_ems_cluster_id => obj.id)
+    when Storage then
+      rel = rel.where(:parent_storage_id => obj.id)
+    when ExtManagementSystem then
+      rel = rel.where(:parent_ems_id => obj.id).where(:resource_type => %w(Host EmsCluster))
     else
-      parent_col = case obj
-                   when Host then                :parent_host_id
-                   when EmsCluster then          :parent_ems_cluster_id
-                   when Storage then             :parent_storage_id
-                   when ExtManagementSystem then :parent_ems_id
-                   else                      raise "unknown object type: #{obj.class}"
-                   end
-
-      cond += " AND #{parent_col} = ?"
-      cond += " AND resource_type in ('Host', 'EmsCluster')" if obj.kind_of?(ExtManagementSystem)
-      cond = [cond, obj.id]
+      raise _("unknown object type: %{class}") % {:class => obj.class}
     end
 
-    # puts "find_child_perf_for_time_period: cond: #{cond.inspect}"
-
-    if interval_name == "daily"
-      VimPerformanceDaily.find_entries(options[:ext_options]).where(cond).select(options[:select])
-    else
-      klass.where(cond).select(options[:select]).to_a
-    end
+    rel.where(options[:conditions]).select(options[:select])
+       .where(:timestamp => Metric::Helper.time_range_from_hash(options)).to_a
   end
 
+  # @params obj base object
+  # @params interval_name (currently only 'daily')
+  # @opts options :end_date [Date] end_date
+  # @opts options :days     [Numeric] Number of days back from daily_date
+  # @opts options :ext_options [Hash] :tz and :time_profile
+  # @returns [Hash<String,String>] environment name and corresponding tags
+  #   "Host/environment/prod" => "Host: Environment: Production",
+  #   "Host/environment/dev"  => "Host: Environment: Development"
   def self.child_tags_over_time_period(obj, interval_name, options = {})
-    # Options
-    #   :days        => Number of days back from daily_date
-    #   :end_date    => Ending date
-
-    # Returns a hash:
-    #   "Host/environment/prod" => "Host: Environment: Production",
-    #   "Host/environment/dev"  => "Host: Environment: Development"
     classifications = Classification.hash_all_by_type_and_name
 
     find_child_perf_for_time_period(obj, interval_name, options.merge(:conditions => "resource_type != 'VmOrTemplate' AND tag_names IS NOT NULL", :select => "resource_type, tag_names")).inject({}) do |h, p|
@@ -586,7 +525,7 @@ module VimPerformanceAnalysis
         result[key][c] ||= 0
         counts[key][c] ||= 0
 
-        Metric::Aggregation.aggregate_for_column(c, nil, result[key], counts[key], p.send(c), :average)
+        Metric::Aggregation::Aggregate.column(c, nil, result[key], counts[key], p.send(c), :average)
       end
     end
 
@@ -596,13 +535,14 @@ module VimPerformanceAnalysis
         mm[k] = val unless val.nil?
         mm
       end
+      h.reject! { |k, _v| perf_klass.virtual_attribute? k }
     end
 
     result.inject([]) do |recs, k|
       ts, v = k
       cols.each do |c|
         next unless v[c].kind_of?(Float)
-        Metric::Aggregation.process_for_column(c, nil, v, counts[k], true, :average)
+        Metric::Aggregation::Process.column(c, nil, v, counts[k], true, :average)
       end
 
       recs.push(perf_klass.new(v))
@@ -611,7 +551,7 @@ module VimPerformanceAnalysis
   end
 
   def self.calc_slope_from_data(recs, x_attr, y_attr)
-    recs.sort! { |a, b| a.send(x_attr) <=> b.send(x_attr) } if recs.first.respond_to?(x_attr)
+    recs = recs.sort_by { |r| r.send(x_attr) } if recs.first.respond_to?(x_attr)
 
     y_array, x_array = recs.inject([]) do |arr, r|
       arr[0] ||= []; arr[1] ||= []
@@ -643,13 +583,13 @@ module VimPerformanceAnalysis
     slope_arr
   end
 
-  def self.get_daily_perf(obj, start_time, end_time, options)
-    cond = ["resource_type = ? and resource_id = ? and (timestamp > ? and timestamp <= ?)", obj.class.base_class.name, obj.id, start_time.utc, end_time.utc]
-    results = VimPerformanceDaily.find_entries(options).where(cond).order("timestamp")
+  def self.get_daily_perf(obj, range, ext_options, perf_cols)
+    return unless perf_cols
 
-    # apply time profile to returned records if one was specified
-    results.each { |rec| rec.apply_time_profile(options[:time_profile]) if rec.respond_to?(:apply_time_profile) } unless options[:time_profile].nil?
-    results
+    ext_options ||= {}
+    Metric::Helper.find_for_interval_name("daily", ext_options[:time_profile] || ext_options[:tz], ext_options[:class])
+                  .order("timestamp") #.select(perf_cols) - Currently passing perf_cols to select is broken because it includes virtual cols. This is actively being worked on.
+                  .where(:resource => obj, :timestamp => Metric::Helper.time_range_from_hash(range))
   end
 
   def self.calc_trend_value_at_timestamp(recs, attr, timestamp)

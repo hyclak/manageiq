@@ -7,7 +7,7 @@ module Metric::CiMixin::Targets
     when ManageIQ::Providers::Kubernetes::ContainerManager::ContainerGroup then true
     when ManageIQ::Providers::Kubernetes::ContainerManager::ContainerNode then true
     # going to treat an availability_zone like a host wrt perf_capture settings
-    when Host, EmsCluster, AvailabilityZone then Metric::Targets.perf_capture_always[:host_and_cluster]
+    when Host, EmsCluster, AvailabilityZone, HostAggregate then Metric::Targets.perf_capture_always[:host_and_cluster]
     when Storage then                            Metric::Targets.perf_capture_always[:storage]
     else;                                    false
     end
@@ -18,6 +18,7 @@ module Metric::CiMixin::Targets
     @perf_capture_enabled ||= (perf_capture_always? || self.is_tagged_with?("capture_enabled", :ns => "/performance"))
   end
   alias_method :perf_capture_enabled, :perf_capture_enabled?
+  Vmdb::Deprecation.deprecate_methods(self, :perf_capture_enabled => :perf_capture_enabled?)
 
   # TODO: Should enabling a Host also enable the cluster?
   def perf_capture_enabled=(enable)

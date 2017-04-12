@@ -498,7 +498,7 @@ describe MiqSchedule do
       context "deliver DatabaseBackup.gc message" do
         before(:each) do
           # stub out the actual backup behavior
-          allow(DatabaseBackup).to receive(:_gc)
+          allow(PostgresAdmin).to receive(:gc)
 
           @status, message, result = @gc_message.deliver
           @gc_message.delivered(@status, message, result)
@@ -508,6 +508,31 @@ describe MiqSchedule do
           expect(@status).to eq("ok")
           expect(MiqTask.where(:state => "Finished", :status => "Ok").count).to eq(1)
         end
+      end
+    end
+
+    context "valid action_automation_request" do
+      let(:admin) { FactoryGirl.create(:user_miq_request_approver) }
+      let(:automate_sched) do
+        MiqSchedule.create(:name          => "test_method", :towhat => "AutomationRequest",
+                           :userid        => admin.userid, :enabled => true,
+                           :run_at        => {:interval   => {:value => "1", :unit => "daily"},
+                                              :start_time => 2.hours.from_now.utc.to_i},
+                           :sched_action  => {:method => "automation_request"},
+                           :filter        => {:uri_parts  => {:namespace => 'ss',
+                                                              :instance  => 'vv',
+                                                              :message   => 'mm'},
+                                              :parameters => {"param" => "8"}})
+      end
+
+      it "should create a request from a scheduled task" do
+        expect(AutomationRequest).to receive(:create_from_scheduled_task).once
+        automate_sched.run_automation_request
+      end
+
+      it "should create 1 automation request" do
+        automate_sched.action_automation_request(AutomationRequest, '')
+        expect(AutomationRequest.where(:description => "Automation Task", :userid => admin.userid).count).to eq(1)
       end
     end
 

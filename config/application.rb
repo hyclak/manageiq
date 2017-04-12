@@ -7,9 +7,10 @@ require 'action_view/railtie'
 require 'action_mailer/railtie'
 require 'active_job/railtie'
 require 'sprockets/railtie'
+require 'action_cable/engine'
 
 if defined?(Bundler)
-  Bundler.require *Rails.groups(:assets => %w(development test))
+  Bundler.require(*Rails.groups(:assets => %w(development test)), :ui_dependencies)
 end
 
 module Vmdb
@@ -60,15 +61,16 @@ module Vmdb
     # Version of your assets, change this if you want to expire all your assets
     config.assets.version = '1.0'
 
+    # Set the manifest file name so that we are sure it gets overwritten on updates
+    config.assets.manifest = Rails.root.join("public/assets/.sprockets-manifest.json").to_s
+
+    # Disable ActionCable's request forgery protection
+    # This is basically matching a set of allowed origins which is not good for us
+    # Our own origin-host forgery protection is implemented in lib/websocket_server.rb
+    Rails.application.config.action_cable.disable_request_forgery_protection = true
+
     # Customize any additional options below...
 
-    # HACK: By default, Rails.configuration.eager_load_paths contains all of the directories
-    # in app and Rails.configuration.autoload_paths is empty.  Sometime during initialization,
-    # these two arrays are combined and placed into ActiveSupport::Dependencies.autoload_paths,
-    # which is what is used for autoloading.  Since we do not want to eager load anything due
-    # to memory bloat, we clear out eager_load_paths down below.  This ends up leaving the
-    # ActiveSupport::Dependencies.autoload_paths empty, thus breaking autoloading.  Thus, in
-    # order to prevent eager loading, but still populate autoload_paths, we copy them.
     config.autoload_paths += config.eager_load_paths
     config.autoload_paths << Rails.root.join("app", "models", "aliases")
     config.autoload_paths << Rails.root.join("app", "models", "mixins")
@@ -76,10 +78,12 @@ module Vmdb
     config.autoload_paths << Rails.root.join("lib", "miq_automation_engine", "models", "mixins")
     config.autoload_paths << Rails.root.join("app", "controllers", "mixins")
     config.autoload_paths << Rails.root.join("lib")
+    config.autoload_paths << Rails.root.join("lib", "services")
+
+    config.autoload_once_paths << Rails.root.join("lib", "vmdb", "console_methods.rb")
 
     # config.eager_load_paths accepts an array of paths from which Rails will eager load on boot if cache classes is enabled.
     # Defaults to every folder in the app directory of the application.
-    config.eager_load_paths = []
 
     # This must be done outside of initialization blocks
     #   as the Vmdb::Logging constant is needed very early
@@ -92,18 +96,38 @@ module Vmdb
     config.logger = Vmdb.rails_logger
     config.colorize_logging = false
 
-    initializer :prepare_productization, :after => :append_asset_paths do
-      Vmdb::Productization.new.prepare
-    end
-
     config.before_initialize do
       require_relative 'environments/patches/database_configuration'
 
-      # To evaluate ERB from database.yml containing encrypted passwords
+      # To evaluate settings or database.yml with encrypted passwords
       require 'miq-password'
       MiqPassword.key_root = Rails.root.join("certs")
 
       require 'vmdb_helper'
+    end
+
+    initializer :load_inflections, :before => :load_vmdb_settings do
+      Vmdb::Inflections.load_inflections
+    end
+
+    # Note: If an initializer doesn't have an after, Rails will add one based
+    # on the top to bottom order of initializer calls in the file.
+    # Because this is easy to mess up, keep your initializers in order.
+    # register plugins even before loading settings, as plugins can bring their own settings
+    initializer :register_vmdb_plugins, :before => :load_vmdb_settings do
+      Rails.application.railties.each do |railtie|
+        next unless railtie.class.name.start_with?("ManageIQ::Providers::") || railtie.try(:vmdb_plugin?)
+        Vmdb::Plugins.instance.register_vmdb_plugin(railtie)
+      end
+    end
+
+    initializer :load_vmdb_settings, :before => :load_config_initializers do
+      Vmdb::Settings.init
+      Vmdb::Loggers.apply_config(::Settings.log)
+    end
+
+    initializer :prepare_productization, :after => :append_asset_paths do
+      Vmdb::Productization.new.prepare
     end
 
     config.after_initialize do
@@ -112,16 +136,19 @@ module Vmdb
     end
 
     console do
-      # Re-enable SQL logging in the console.  This log level setting gets set
-      #   to INFO, by default, for the loggers in Vmdb::Initializer.init.  So,
-      #   we set the value back to DEBUG for now.
-      # TODO: This can be removed once we can have separate config settings for
-      #   dev/test/prod in the config revamp.
-      ActiveRecord::Base.logger.level = Logger::DEBUG
-
-      Rails::ConsoleMethods.class_eval do
-        include Vmdb::ConsoleMethods
-      end
+      # This is to include vmdb methods into the top level namespace of the
+      # repl session being opened (either through `pry` or IRB)
+      #
+      # This takes a page from `pry-rails` and extends the TOPLEVEL_BINDING
+      # instead of Rails::ConsoleMethods when adding the Vmdb::ConsoleMethods.
+      #
+      # https://github.com/rweng/pry-rails/blob/fe29ddcdd/lib/pry-rails/railtie.rb#L25
+      #
+      # Without pry, this isn't required and we could just include this into
+      # the `Rails::ConsoleMethods`, but with `pry-rails`, this isn't possible
+      # since the railtie for it is loaded first and will include
+      # `Rails::ConsoleMethods` before we have a chance to modify them here.
+      TOPLEVEL_BINDING.eval('self').extend(Vmdb::ConsoleMethods)
     end
   end
 end

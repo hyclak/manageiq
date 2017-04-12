@@ -1,6 +1,6 @@
-include AutomationSpecHelper
-
 describe MiqAeDatastore do
+  include Spec::Support::AutomationHelper
+
   before(:each) do
     @ver_fname = File.expand_path(File.join(File.dirname(__FILE__), "version.xml"))
 
@@ -94,6 +94,10 @@ describe MiqAeDatastore do
     expect(MiqAeMethod.count).to         eq(3)
   end
 
+  it ".default_domain_names" do
+    expect(MiqAeDatastore.default_domain_names).to include("ManageIQ")
+  end
+
   it "temporary file cleanup for unsuccessful import" do
     fd = double(:original_filename => "dummy.zip", :read => "junk", :eof => true, :close => true)
     import_file = File.expand_path(File.join(Rails.root, "tmp/miq_automate_engine", "dummy.zip"))
@@ -131,13 +135,11 @@ describe MiqAeDatastore do
     end
 
     it "#restore_attrs_for_domains" do
-      d1 = FactoryGirl.create(:miq_ae_domain, :enabled => false, :system => true,
-                              :priority => 10, :name => "DOM1")
-      d2 = FactoryGirl.create(:miq_ae_domain, :enabled => true, :system => false,
-                              :priority => 11, :name => "DOM2")
+      d1 = FactoryGirl.create(:miq_ae_system_domain, :priority => 10, :name => "DOM1")
+      d2 = FactoryGirl.create(:miq_ae_domain_enabled, :priority => 11, :name => "DOM2")
       domain_attributes = MiqAeDatastore.preserved_attrs_for_domains
-      d2.update_attributes(:priority => 6, :enabled => false, :system => true)
-      d1.update_attributes(:priority => 1, :enabled => true, :system => false)
+      d2.update_attributes(:priority => 6, :enabled => false)
+      d1.update_attributes(:priority => 1, :enabled => true)
       expect(MiqAeDatastore.preserved_attrs_for_domains).not_to eq(domain_attributes)
       MiqAeDatastore.restore_attrs_for_domains(domain_attributes)
       expect(MiqAeDatastore.preserved_attrs_for_domains).to eq(domain_attributes)

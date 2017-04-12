@@ -15,6 +15,7 @@ class MiqRequestTask < ApplicationRecord
 
   default_value_for :phase_context, {}
   default_value_for :options,       {}
+  default_value_for :state,         'pending'
 
   delegate :request_class, :task_description, :to => :class
 
@@ -40,6 +41,7 @@ class MiqRequestTask < ApplicationRecord
 
     # If this request has a miq_request_task parent use that, otherwise the parent is the miq_request
     parent = miq_request_task || miq_request
+    parent.reload
     parent.update_request_status
   end
 
@@ -106,14 +108,22 @@ class MiqRequestTask < ApplicationRecord
     self.class.get_description(self)
   end
 
+  def task_check_on_delivery
+    if request_class::ACTIVE_STATES.include?(state)
+      raise _("%{task} request is already being processed") % {:task => request_class::TASK_DESCRIPTION}
+    end
+    task_check_on_execute
+  end
+
   def task_check_on_execute
-    raise "#{request_class::TASK_DESCRIPTION} request is already being processed" if request_class::ACTIVE_STATES.include?(state)
-    raise "#{request_class::TASK_DESCRIPTION} request has already been processed" if state == "finished"
-    raise "approval is required for #{request_class::TASK_DESCRIPTION}"           unless self.approved?
+    if state == "finished"
+      raise _("%{task} request has already been processed") % {:task => request_class::TASK_DESCRIPTION}
+    end
+    raise _("approval is required for %{task}") % {:task => request_class::TASK_DESCRIPTION} unless approved?
   end
 
   def deliver_to_automate(req_type = request_type, zone = nil)
-    task_check_on_execute
+    task_check_on_delivery
 
     _log.info("Queuing #{request_class::TASK_DESCRIPTION}: [#{description}]...")
 
@@ -176,7 +186,7 @@ class MiqRequestTask < ApplicationRecord
 
     begin
       message = "#{request_class::TASK_DESCRIPTION} initiated"
-      _log.info("#{message}")
+      _log.info(message)
       update_and_notify_parent(:message => message)
 
       # Process the request

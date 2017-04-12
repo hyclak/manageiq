@@ -1,6 +1,4 @@
 describe ActsAsArModel do
-  before { base_class }
-
   # id is a default column included regardless if it's in the set_columns_hash
   let(:col_names_syms) { [:str, :id, :int, :flt, :dt] }
   let(:col_names_strs) { %w(str id int flt dt) }
@@ -57,38 +55,36 @@ describe ActsAsArModel do
     it { expect(sub_class.attribute_names).to be_empty }
   end
 
-  context "AR backed model" do
-    # model contains ids of important vms - acts like ar model
-    let(:important_vm_model) do
-      Class.new(ActsAsArModel) do
-        def self.vm_ids
-          @vm_ids ||= []
-        end
-
-        def self.vm_ids=(new_ids)
-          @vm_ids = new_ids
-        end
-
-        def self.aar_scope
-          Vm.where(:id => vm_ids)
-        end
-      end
+  describe ".all" do
+    it "chains through active query" do
+      expect(base_class).to receive(:find).with(:all, {}).and_return([])
+      expect(base_class.all.to_a).to eq([])
     end
 
-    it ".all" do
-      good = FactoryGirl.create_list(:vm, 3)
-      bad = FactoryGirl.create_list(:vm, 1)
+    it "supports where (as an example)" do
+      expect(base_class).to receive(:find).with(:all, :conditions => {:id => 5}).and_return([])
+      expect(base_class.all.where(:id => 5).to_a).to eq([])
+    end
+  end
 
-      important_vm_model.vm_ids += good.map(&:id)
+  describe ".first" do
+    it "chains through active query" do
+      expect(base_class).to receive(:find).with(:first).and_return(nil)
+      expect(base_class.first).to eq(nil)
+    end
+  end
 
-      expect(important_vm_model.all.order(:id)).to eq(good)
-      expect(important_vm_model.all.order('id desc').first).to eq(good.last)
-      expect(important_vm_model.first).to eq(good.first)
-      expect(important_vm_model.last).to eq(good.last)
-      expect(important_vm_model.all.count).to eq(3)
-      expect(important_vm_model.all.order('id desc').first).to eq(good.last)
-      expect(important_vm_model.where(:id => good.last.id).count).to eq(1)
-      expect(important_vm_model.where(:id => bad.last.id).count).to eq(0)
+  describe ".last" do
+    it "chains through active query" do
+      expect(base_class).to receive(:find).with(:last).and_return(nil)
+      expect(base_class.last).to eq(nil)
+    end
+  end
+
+  describe ".count" do
+    it "chains through active query" do
+      expect(base_class).to receive(:find).with(:all, {}).and_return([])
+      expect(base_class.count).to eq(0)
     end
   end
 end

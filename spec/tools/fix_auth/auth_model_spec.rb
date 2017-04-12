@@ -5,7 +5,7 @@ require "fix_auth/auth_config_model"
 require "fix_auth/models"
 
 describe FixAuth::AuthModel do
-  let(:v0_key)  { CryptString.new(nil, "AES-128-CBC", "9999999999999999", "5555555555555555") }
+  let(:v0_key)  { MiqPassword::Key.new("AES-128-CBC", Base64.encode64("9999999999999999"), Base64.encode64("5555555555555555")) }
   let(:v1_key)  { MiqPassword.generate_symmetric }
   let(:pass)    { "password" }
   let(:enc_v1)  { MiqPassword.new.encrypt(pass, "v1", v1_key) }
@@ -160,6 +160,28 @@ describe FixAuth::AuthModel do
       v1 # make sure record exists
       subject.run(:silent => true)
       expect(v1.reload.value).to be_encrypted_version(2)
+    end
+  end
+
+  context "#settings_change" do
+    subject { FixAuth::FixSettingsChange }
+    let(:v1)  { subject.create(:key => "/v1/password", :value => enc_v1) }
+    let(:v2)  { subject.create(:key => "/v2/password", :value => enc_v2) }
+    let(:bad) { subject.create(:key => "/bad/password", :value => bad_v2) }
+
+    it "with hardcode" do
+      subject.fix_passwords(v1, :hardcode => pass)
+      expect(v1.value).to eq(enc_v2)
+    end
+
+    it "with invalid" do
+      subject.fix_passwords(bad, :invalid => pass)
+      expect(bad.value).to eq(enc_v2)
+    end
+
+    it "upgrades" do
+      expect(subject.fix_passwords(v1).value).to eq(enc_v2)
+      expect(subject.fix_passwords(v2).value).to eq(enc_v2)
     end
   end
 end

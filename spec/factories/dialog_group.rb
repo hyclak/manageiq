@@ -1,5 +1,7 @@
 FactoryGirl.define do
   factory :dialog_group do
+    sequence(:label) { |n| "Dialog Group #{n}" }
+
     # HACK: This is required because we were previously depending on rspec-mocks'
     # .stub monkeypatch here; the monkeypatch has since been removed and rspec-mocks
     # should NOT be used within factories anyway.
@@ -10,6 +12,12 @@ FactoryGirl.define do
         def validate_children; true; end
       end
       instance.save!
+    end
+  end
+
+  factory :dialog_group_with_field, :parent => :dialog_group do
+    after(:create) do |dialog_group|
+      create(:dialog_field_text_box, :dialog_group => dialog_group)
     end
   end
 end

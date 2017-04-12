@@ -22,8 +22,8 @@ class AssetTagImport
 
   def self.upload(klass, fd)
     klass = Object.const_get(klass.to_s)
-    raise "#{klass} not supported for upload!" unless REQUIRED_COLS.key?(klass)
-    raise "#{klass} not supported for upload!" unless MATCH_KEYS.key?(klass)
+    raise _("%{name} not supported for upload!") % {:name => klass} unless REQUIRED_COLS.key?(klass)
+    raise _("%{name} not supported for upload!") % {:name => klass} unless MATCH_KEYS.key?(klass)
     data, keys, tags = MiqBulkImport.upload(fd, REQUIRED_COLS[klass], MATCH_KEYS[klass].dup)
 
     import = new(:data => data, :keys => keys, :tags => tags, :klass => klass)
@@ -70,7 +70,7 @@ class AssetTagImport
 
     @verified_data.each do|id, data|
       if data.length > 1
-        obj = @klass.find_by_id(id)
+        obj = @klass.find_by(:id => id)
         while data.length > 1
           data.shift
           _log.warn "#{@klass.name} #{obj.name}, Multiple lines for the same object, the last line is applied"
@@ -86,7 +86,7 @@ class AssetTagImport
 
   def apply
     @verified_data.each do |id, data|
-      obj = @klass.find_by_id(id)
+      obj = @klass.find_by(:id => id)
       if obj
         attrs = obj.miq_custom_attributes
         new_attrs = []

@@ -5,21 +5,15 @@ class ImportFileUpload < ApplicationRecord
     MiqPolicy.import_from_array(uploaded_yaml_content, :preview => true)
   end
 
-  def service_dialog_json
+  def service_dialog_list
     sorted_service_dialogs = uploaded_yaml_content.sort_by { |service_dialog| service_dialog["label"].downcase }
-    service_dialogs = sorted_service_dialogs.collect.with_index do |dialog, index|
-      status_icon = Dialog.exists?(:label => dialog["label"]) ? "checkmark" : "equal-green"
-      status = determine_status(status_icon)
-
+    sorted_service_dialogs.collect.with_index do |dialog, index|
       {
-        :id          => index,
-        :name        => dialog["label"],
-        :status_icon => ActionController::Base.helpers.image_path("16/#{status_icon}.png"),
-        :status      => status
+        :id     => index,
+        :name   => dialog["label"],
+        :exists => Dialog.exists?(:label => dialog["label"])
       }
     end
-
-    service_dialogs.to_json
   end
 
   def widget_list
@@ -28,14 +22,10 @@ class ImportFileUpload < ApplicationRecord
     end
 
     sorted_widgets.collect.with_index do |widget, index|
-      status_icon = MiqWidget.exists?(:title => widget["MiqWidget"]["title"]) ? "checkmark" : "equal-green"
-      status = determine_status(status_icon)
-
       {
-        :id          => index,
-        :name        => widget["MiqWidget"]["title"],
-        :status_icon => ActionController::Base.helpers.image_path("16/#{status_icon}.png"),
-        :status      => status
+        :id     => index,
+        :name   => widget["MiqWidget"]["title"],
+        :exists => MiqWidget.exists?(:title => widget["MiqWidget"]["title"])
       }
     end
   end
@@ -54,16 +44,5 @@ class ImportFileUpload < ApplicationRecord
 
   def uploaded_yaml_content
     YAML.load(binary_blob.binary)
-  end
-
-  private
-
-  def determine_status(status_icon)
-    case status_icon
-    when "checkmark"
-      "This object already exists in the database with the same name"
-    when "equal-green"
-      "New object"
-    end
   end
 end

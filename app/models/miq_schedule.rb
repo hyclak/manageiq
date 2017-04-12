@@ -1,9 +1,7 @@
 class MiqSchedule < ApplicationRecord
-  validates_uniqueness_of :name, :scope => [:userid, :towhat]
-  validates_presence_of   :name, :description, :towhat, :run_at
-  validate                :validate_run_at, :validate_file_depot
-
-  include ReportableMixin
+  validates :name, :uniqueness => {:scope => [:userid, :towhat]}
+  validates :name, :description, :towhat, :run_at, :presence => true
+  validate  :validate_run_at, :validate_file_depot
 
   before_save :set_start_time_and_prod_default
 
@@ -23,13 +21,15 @@ class MiqSchedule < ApplicationRecord
     where("updated_at > ?", time)
   }
 
+  scope :filter_matches_with, -> (exp) { where(:filter => exp) }
+
   serialize :sched_action
   serialize :filter
   serialize :run_at
 
-  SYSTEM_SCHEDULE_CLASSES = ["MiqReport", "MiqAlert", "MiqWidget"]
-  VALID_INTERVAL_UNITS = ['minutely', 'hourly', 'daily', 'weekly', 'monthly', 'once']
-  ALLOWED_CLASS_METHOD_ACTIONS = ["db_backup", "db_gc"]
+  SYSTEM_SCHEDULE_CLASSES = %w(MiqReport MiqAlert MiqWidget).freeze
+  VALID_INTERVAL_UNITS = %w(minutely hourly daily weekly monthly once).freeze
+  ALLOWED_CLASS_METHOD_ACTIONS = %w(db_backup db_gc automation_request).freeze
 
   default_value_for :userid,  "system"
   default_value_for :enabled, true
@@ -41,7 +41,7 @@ class MiqSchedule < ApplicationRecord
   end
 
   def run_at
-    val = read_attribute(:run_at)
+    val = self[:run_at]
     if val.kind_of?(Hash)
       st = val[:start_time]
       if st && String === st
@@ -58,7 +58,7 @@ class MiqSchedule < ApplicationRecord
     # puts "now:         #{Time.now.to_f}, #{Time.now}"
     # puts "params: #{params.inspect}"
 
-    sched = find_by_id(id)
+    sched = find_by(:id => id)
     unless sched
       _log.warn("unable to find schedule with id: [#{id}], skipping")
       return
@@ -93,7 +93,7 @@ class MiqSchedule < ApplicationRecord
     end
 
     targets = get_targets
-    _log.warn("[#{name}] No targets match filter [#{filter.to_human}]") if (targets.length == 0) && (!filter.nil?)
+    _log.warn("[#{name}] No targets match filter [#{filter.to_human}]") if targets.empty? && !filter.nil?
     targets.each do |obj|
       _log.info("[#{name}] invoking action: [#{sched_action[:method]}] for target: [#{obj.name}]")
       begin
@@ -111,7 +111,7 @@ class MiqSchedule < ApplicationRecord
     # Let RBAC evaluate the filter's MiqExpression, and return the first value (the target ids)
     my_filter = get_filter
     return [] if my_filter.nil?
-    Rbac.filtered(towhat, :filter => my_filter)
+    Rbac.filtered(towhat, :filter => my_filter).pluck(:id)
   end
 
   def get_targets
@@ -148,24 +148,29 @@ class MiqSchedule < ApplicationRecord
     start_time = run_at[:start_time].in_time_zone(timezone)
     start_time = start_time.strftime("%a %b %d %H:%M:%S %Z %Y")
     if run_at[:interval][:unit].downcase == "once"
-      return "Run #{run_at[:interval][:unit]} on #{start_time}"
+      return _("Run %{interval} on %{start_time}") % {:interval => run_at[:interval][:unit], :start_time => start_time}
     else
       if run_at[:interval][:value].to_i == 1
-        return "Run #{run_at[:interval][:unit]} starting on #{start_time}"
+        return _("Run %{interval} starting on %{start_time}") % {:interval   => run_at[:interval][:unit],
+                                                                 :start_time => start_time}
       else
         case run_at[:interval][:unit]
         when "minutely"
-          unit = "minutes"
+          unit = _("minutes")
         when "hourly"
-          unit = "hours"
+          unit = _("hours")
         when "daily"
-          unit = "days"
+          unit = _("days")
         when "weekly"
-          unit = "weeks"
+          unit = _("weeks")
         when "monthly"
-          unit = "months"
+          unit = _("months")
         end
-        return "Run #{run_at[:interval][:unit]} every #{run_at[:interval][:value]} #{unit} starting on #{start_time}"
+        return _("Run %{interval} every %{value} %{unit} starting on %{start_time}") %
+                 {:interval   => run_at[:interval][:unit],
+                  :value      => run_at[:interval][:value],
+                  :unit       => unit,
+                  :start_time => start_time}
       end
     end
   end
@@ -212,6 +217,12 @@ class MiqSchedule < ApplicationRecord
     _log.info("Action [#{name}] has been run for target type: [#{obj.class}] with name: [#{obj.name}]")
   end
 
+  def action_automation_request(_klass, _at)
+    parameters = filter[:parameters]
+    user = User.find_by_userid(userid)
+    AutomationRequest.create_from_scheduled_task(user, filter[:uri_parts], parameters)
+  end
+
   def action_db_backup(klass, _at)
     self.sched_action ||= {}
     self.sched_action[:options] ||= {}
@@ -234,6 +245,10 @@ class MiqSchedule < ApplicationRecord
     MiqTask.generic_action_with_callback(task_opts, queue_opts)
   end
 
+  def run_automation_request
+    action_automation_request(AutomationRequest, nil)
+  end
+
   def run_adhoc_db_backup
     action_db_backup(DatabaseBackup, nil)
   end
@@ -244,7 +259,7 @@ class MiqSchedule < ApplicationRecord
     # :aggressive   true  (if provided and true, a full GC will be done)
 
     userid = options.delete(:userid)
-    raise "No userid provided!" unless userid
+    raise _("No userid provided!") unless userid
 
     sch = new(:userid => userid, :sched_action => {:options => options})
     sch.action_db_gc(DatabaseBackup, nil)
@@ -341,7 +356,10 @@ class MiqSchedule < ApplicationRecord
       return nil if interval_value == 0
 
       meth = rails_interval
-      raise "Schedule: [#{id}] [#{name}], cannot calculate next run with past start_time using: #{run_at.fetch_path(:interval, :unit)}" if meth.nil?
+      if meth.nil?
+        raise _("Schedule: [%{id}] [%{name}], cannot calculate next run with past start_time using: %{path}") %
+                {:id => id, :name => name, :path => run_at.fetch_path(:interval, :unit)}
+      end
 
       if meth == :months
         # use the scheduled start_time, adding x.months, until it's in the future
@@ -398,7 +416,7 @@ class MiqSchedule < ApplicationRecord
     slist = YAML.load_file(fixture_file) if File.exist?(fixture_file)
 
     slist.each do |sched|
-      rec = find_by_name(sched[:attributes][:name])
+      rec = find_by(:name => sched[:attributes][:name])
       unless rec
         create(sched[:attributes])
       else

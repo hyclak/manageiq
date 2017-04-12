@@ -14,7 +14,10 @@ class MiqEvent < EventStream
     }
   }
 
-  SUPPORTED_POLICY_AND_ALERT_CLASSES = [Host, VmOrTemplate, Storage, EmsCluster, ResourcePool, MiqServer, ExtManagementSystem]
+  SUPPORTED_POLICY_AND_ALERT_CLASSES = [Host, VmOrTemplate, Storage, EmsCluster, ResourcePool,
+                                        MiqServer, ExtManagementSystem,
+                                        ContainerReplicator, ContainerGroup, ContainerNode, ContainerImage,
+                                        MiddlewareServer].freeze
 
   def self.raise_evm_event(target, raw_event, inputs = {}, options = {})
     # Target may have been deleted if it's a worker
@@ -40,6 +43,9 @@ class MiqEvent < EventStream
     inputs.merge!('MiqEvent::miq_event' => event_obj.id, :miq_event_id => event_obj.id)
     inputs.merge!('EventStream::event_stream' => event_obj.id, :event_stream_id => event_obj.id)
 
+    # save the EmsEvent that are required by some actions later in policy resolution
+    event_obj.update_attributes(:full_data => {:source_event_id => inputs[:ems_event].id}) if inputs[:ems_event]
+
     MiqAeEvent.raise_evm_event(raw_event, target, inputs, options)
     event_obj
   end
@@ -53,6 +59,7 @@ class MiqEvent < EventStream
 
     results = {}
     inputs[:type] ||= target.class.name
+    inputs[:source_event] = source_event if source_event
 
     _log.info("Event Raised [#{event_type}]")
     begin
@@ -72,7 +79,7 @@ class MiqEvent < EventStream
   end
 
   def self.build_evm_event(event, target)
-    MiqEvent.create(:event_type => event, :target => target, :source => 'POLICY')
+    MiqEvent.create(:event_type => event, :target => target, :source => 'POLICY', :timestamp => Time.now.utc)
   end
 
   def update_with_policy_result(result = {})
@@ -88,7 +95,7 @@ class MiqEvent < EventStream
   end
 
   def self.normalize_event(event)
-    return event if MiqEventDefinition.find_by_name(event)
+    return event if MiqEventDefinition.find_by(:name => event)
     "unknown"
   end
 
@@ -150,5 +157,14 @@ class MiqEvent < EventStream
 
   def self.event_name_for_target(target, event_suffix)
     "#{target.class.base_model.name.underscore}_#{event_suffix}"
+  end
+
+  # return the event that triggered the policy event
+  def source_event
+    return @source_event if @source_event
+    return unless full_data
+
+    source_event_id = full_data.fetch_path(:source_event_id)
+    @source_event = EventStream.find_by(:id => source_event_id) if source_event_id
   end
 end

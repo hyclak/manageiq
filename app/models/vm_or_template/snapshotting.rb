@@ -4,7 +4,7 @@ module VmOrTemplate::Snapshotting
   included do
     has_many :snapshots, :dependent => :destroy
 
-    virtual_column :v_total_snapshots,                    :type => :integer,    :uses => :snapshots
+    virtual_total  :v_total_snapshots, :snapshots
     virtual_column :v_snapshot_oldest_name,               :type => :string,     :uses => :snapshots
     virtual_column :v_snapshot_oldest_description,        :type => :string,     :uses => :snapshots
     virtual_column :v_snapshot_oldest_total_size,         :type => :integer,    :uses => :snapshots
@@ -15,16 +15,12 @@ module VmOrTemplate::Snapshotting
     virtual_column :v_snapshot_newest_timestamp,          :type => :datetime,   :uses => :snapshots
   end
 
-  def v_total_snapshots
-    snapshots.size
-  end
-
   def newest_snapshot
-    snapshots.sort { |a, b| a.create_time <=> b.create_time }.last
+    snapshots.max_by(&:create_time)
   end
 
   def oldest_snapshot
-    snapshots.sort { |a, b| a.create_time <=> b.create_time }.first
+    snapshots.min_by(&:create_time)
   end
 
   def v_snapshot_oldest_name

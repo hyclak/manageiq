@@ -1,6 +1,6 @@
 class AutomationTask < MiqRequestTask
   alias_attribute :automation_request, :miq_request
-
+  has_one :container_deployment
   AUTOMATE_DRIVES = false
 
   def self.get_description(_request_obj)
@@ -28,8 +28,7 @@ class AutomationTask < MiqRequestTask
   def after_ae_delivery(ae_result)
     _log.info("ae_result=#{ae_result.inspect}")
 
-    return if ae_result == 'retry'
-    return if miq_request.state == 'finished'
+    return if ae_result == 'retry' || miq_request.state == 'finished'
 
     if ae_result == 'ok'
       update_and_notify_parent(:state => "finished", :status => "Ok",    :message => "#{request_class::TASK_DESCRIPTION} completed")

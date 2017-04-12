@@ -33,8 +33,7 @@ module ActsAsMiqSetMember
   end # module SingletonMethods
 
   def make_memberof(set)
-    raise "object of type #{self.class} may not be a member of a set of type #{set.class}" unless self.kind_of?(set.class.model_class)
-    with_relationship_type("membership") { self.parent = set }
+    set.add_member(self)
   end
 end # module ActsAsMiqSetMember
 
@@ -59,7 +58,6 @@ module ActsAsMiqSet
 
     belongs_to  :owner, :polymorphic => true
 
-    include ReportableMixin
     acts_as_miq_taggable
 
     alias_with_relationship_type :members,            :children

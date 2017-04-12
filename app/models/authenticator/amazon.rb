@@ -15,7 +15,7 @@ module Authenticator
         result = false
         errors[[:authentication, auth[:mode]].join("_")] = err.message
       else
-        errors[[:authentication, auth[:mode]].join("_")] = "Authentication failed" unless result
+        errors[[:authentication, auth[:mode]].join("_")] = _("Authentication failed") unless result
       end
 
       return result, errors
@@ -24,14 +24,15 @@ module Authenticator
     def admin_connect
       @admin_iam ||=
         begin
-          log_auth = VMDB::Config.clone_auth_for_log(config)
+          log_auth = Vmdb::Settings.mask_passwords!(config.deep_clone)
           _log.info("Server Settings: #{log_auth.inspect}")
 
           verify_credentials(config[:amazon_key], config[:amazon_secret])
           iam = aws_connect(config[:amazon_key], config[:amazon_secret])
           if iam_user?(iam)
             # FIXME: this is probably the wrong error category to raise
-            raise MiqException::MiqHostError, "Access key #{config[:amazon_key]} belongs to IAM user, not to the AWS account holder."
+            raise MiqException::MiqHostError, _("Access key %{number} belongs to IAM user, not to the AWS account holder.") %
+              {:number => config[:amazon_key]}
           end
           iam
         end
@@ -57,7 +58,7 @@ module Authenticator
       end
     end
 
-    def find_external_identity(username)
+    def find_external_identity(username, *_args)
       # Amazon IAM will be used for authentication and role assignment
       _log.info("AWS key: [#{config[:amazon_key]}]")
       _log.info(" User: [#{username}]")
@@ -84,7 +85,8 @@ module Authenticator
           return user if access_key.access_key_id == access_key_id
         end
       end
-      raise MiqException::MiqHostError, "Access key #{access_key_id} does not match an IAM user for aws account holder."
+      raise MiqException::MiqHostError, _("Access key %{number} does not match an IAM user for aws account holder.") %
+        {:number => access_key_id}
     end
 
     def iam_user?(iam)
@@ -102,15 +104,15 @@ module Authenticator
       begin
         aws_connect(access_key_id, secret_access_key, :EC2).client.describe_regions.regions.map(&:region_name)
       rescue Aws::EC2::Errors::SignatureDoesNotMatch
-        raise MiqException::MiqHostError, "SignatureMismatch - check your AWS Secret Access Key and signing method"
+        raise MiqException::MiqHostError, _("SignatureMismatch - check your AWS Secret Access Key and signing method")
       rescue Aws::EC2::Errors::AuthFailure
-        raise MiqException::MiqHostError, "Login failed due to a bad username or password."
+        raise MiqException::MiqHostError, _("Login failed due to a bad username or password.")
       rescue Aws::EC2::Errors::UnauthorizedOperation
         # user unauthorized for ec2, but still a valid IAM login
         return true
       rescue Exception => err
         _log.error("Error Class=#{err.class.name}, Message=#{err.message}")
-        raise MiqException::MiqHostError, "Unexpected response returned from system, see log for details"
+        raise MiqException::MiqHostError, _("Unexpected response returned from system, see log for details")
       end
       true
     end

@@ -1,9 +1,8 @@
 #
 # REST API Request Tests - /api/vms
 #
-describe ApiController do
+describe "Vms API" do
   let(:zone)       { FactoryGirl.create(:zone, :name => "api_zone") }
-  let(:miq_server) { FactoryGirl.create(:miq_server, :guid => miq_server_guid, :zone => zone) }
   let(:ems)        { FactoryGirl.create(:ems_vmware, :zone => zone) }
   let(:host)       { FactoryGirl.create(:host) }
 
@@ -27,6 +26,92 @@ describe ApiController do
 
   def update_raw_power_state(state, *vms)
     vms.each { |vm| vm.update_attributes!(:raw_power_state => state) }
+  end
+
+  context 'Vm edit' do
+    let(:new_vms) { FactoryGirl.create_list(:vm_openstack, 2) }
+
+    before do
+      vm.set_child(vm_openstack)
+      vm.set_parent(vm_openstack1)
+    end
+
+    it 'cannot edit a VM without an appropriate role' do
+      api_basic_authorize
+
+      run_post(vms_url(vm.id), :action => 'edit')
+
+      expect(response).to have_http_status(:forbidden)
+    end
+
+    it 'can edit a VM with an appropriate role' do
+      api_basic_authorize collection_action_identifier(:vms, :edit)
+      children = new_vms.collect do |vm|
+        { 'href' => vms_url(vm.id) }
+      end
+
+      run_post(vms_url(vm.id), :action          => 'edit',
+                               :description     => 'bar',
+                               :child_resources => children,
+                               :custom_1        => 'foobar',
+                               :custom_9        => 'fizzbuzz',
+                               :parent_resource => { :href => vms_url(vm_openstack2.id) })
+
+      expected = {
+        'description' => 'bar'
+      }
+      expect(response).to have_http_status(:ok)
+      expect(response.parsed_body).to include(expected)
+      expect(vm.reload.children).to match_array(new_vms)
+      expect(vm.parent).to eq(vm_openstack2)
+      expect(vm.custom_1).to eq('foobar')
+      expect(vm.custom_9).to eq('fizzbuzz')
+    end
+
+    it 'only allows edit of custom_1, description, parent, and children' do
+      api_basic_authorize collection_action_identifier(:vms, :edit)
+
+      run_post(vms_url(vm.id), :action => 'edit', :name => 'foo', :autostart => true, :power_state => 'off')
+
+      expected = {
+        'error' => a_hash_including(
+          'kind'    => 'bad_request',
+          'message' => 'Cannot edit VM - Cannot edit values name, autostart, power_state'
+        )
+      }
+      expect(response).to have_http_status(:bad_request)
+      expect(response.parsed_body).to include(expected)
+    end
+
+    it 'can edit multiple vms' do
+      api_basic_authorize collection_action_identifier(:vms, :edit)
+
+      run_post(vms_url, :action => 'edit', :resources => [{ :id => vm.id, :description => 'foo' }, { :id => vm_openstack.id, :description => 'bar'}])
+
+      expected = {
+        'results' => [
+          a_hash_including('description' => 'foo'),
+          a_hash_including('description' => 'bar')
+        ]
+      }
+      expect(response).to have_http_status(:ok)
+      expect(response.parsed_body).to include(expected)
+    end
+
+    it 'requires a valid child/parent relationship ' do
+      api_basic_authorize collection_action_identifier(:vms, :edit)
+
+      run_post(vms_url(vm.id), :action => 'edit', :parent_resource => { :href => users_url(10) })
+
+      expected = {
+        'error' => a_hash_including(
+          'kind'    => 'bad_request',
+          'message' => 'Cannot edit VM - Invalid relationship type users'
+        )
+      }
+      expect(response).to have_http_status(:bad_request)
+      expect(response.parsed_body).to include(expected)
+    end
   end
 
   context "Vm accounts subcollection" do
@@ -54,7 +139,7 @@ describe ApiController do
       run_get vm_accounts_url
 
       expect_query_result(:accounts, 2)
-      expect_result_resources_to_include_hrefs("resources", :vm_accounts_url_list)
+      expect_result_resources_to_include_hrefs("resources", vm_accounts_url_list)
     end
 
     it "query VM accounts subcollection with a valid Account Id" do
@@ -70,19 +155,19 @@ describe ApiController do
 
       run_get "#{vm_accounts_url}/999999"
 
-      expect_resource_not_found
+      expect(response).to have_http_status(:not_found)
     end
 
     it "query VM accounts subcollection with two related accounts using expand directive" do
-      api_basic_authorize
+      api_basic_authorize action_identifier(:vms, :read, :resource_actions, :get)
       # create resources
       acct1
       acct2
 
       run_get vm_url, :expand => "accounts"
 
-      expect_single_resource_query("guid" => :vm_guid)
-      expect_result_resources_to_include_hrefs("accounts", :vm_accounts_url_list)
+      expect_single_resource_query("guid" => vm_guid)
+      expect_result_resources_to_include_hrefs("accounts", vm_accounts_url_list)
     end
   end
 
@@ -111,7 +196,7 @@ describe ApiController do
       run_get vm_software_url
 
       expect_query_result(:software, 2)
-      expect_result_resources_to_include_hrefs("resources", :vm_software_url_list)
+      expect_result_resources_to_include_hrefs("resources", vm_software_url_list)
     end
 
     it "query VM software subcollection with a valid Software Id" do
@@ -127,19 +212,19 @@ describe ApiController do
 
       run_get "#{vm_software_url}/999999"
 
-      expect_resource_not_found
+      expect(response).to have_http_status(:not_found)
     end
 
     it "query VM software subcollection with two related software using expand directive" do
-      api_basic_authorize
+      api_basic_authorize action_identifier(:vms, :read, :resource_actions, :get)
       # create resources
       sw1
       sw2
 
       run_get vms_url(vm.id), :expand => "software"
 
-      expect_single_resource_query("guid" => :vm_guid)
-      expect_result_resources_to_include_hrefs("software", :vm_software_url_list)
+      expect_single_resource_query("guid" => vm_guid)
+      expect_result_resources_to_include_hrefs("software", vm_software_url_list)
     end
   end
 
@@ -149,7 +234,7 @@ describe ApiController do
 
       run_post(invalid_vm_url, gen_request(:start))
 
-      expect_resource_not_found
+      expect(response).to have_http_status(:not_found)
     end
 
     it "starts an invalid vm without appropriate role" do
@@ -157,7 +242,7 @@ describe ApiController do
 
       run_post(invalid_vm_url, gen_request(:start))
 
-      expect_request_forbidden
+      expect(response).to have_http_status(:forbidden)
     end
 
     it "starts a powered on vm" do
@@ -165,7 +250,7 @@ describe ApiController do
 
       run_post(vm_url, gen_request(:start))
 
-      expect_single_action_result(:success => false, :message => "is powered on", :href => :vm_url)
+      expect_single_action_result(:success => false, :message => "is powered on", :href => vm_url)
     end
 
     it "starts a vm" do
@@ -174,7 +259,20 @@ describe ApiController do
 
       run_post(vm_url, gen_request(:start))
 
-      expect_single_action_result(:success => true, :message => "starting", :href => :vm_url, :task => true)
+      expect_single_action_result(:success => true, :message => "starting", :href => vm_url, :task => true)
+    end
+
+    it "starting a vm queues it properly" do
+      api_basic_authorize action_identifier(:vms, :start)
+      update_raw_power_state("poweredOff", vm)
+
+      run_post(vm_url, gen_request(:start))
+
+      expect_single_action_result(:success => true, :message => "starting", :href => vm_url, :task => true)
+      expect(MiqQueue.where(:class_name  => vm.class.name,
+                            :instance_id => vm.id,
+                            :method_name => "start",
+                            :zone        => zone.name).count).to eq(1)
     end
 
     it "starts multiple vms" do
@@ -184,7 +282,7 @@ describe ApiController do
       run_post(vms_url, gen_request(:start, nil, vm1_url, vm2_url))
 
       expect_multiple_action_result(2, :task => true)
-      expect_result_resources_to_include_hrefs("results", :vms_list)
+      expect_result_resources_to_include_hrefs("results", vms_list)
     end
   end
 
@@ -194,7 +292,7 @@ describe ApiController do
 
       run_post(invalid_vm_url, gen_request(:stop))
 
-      expect_resource_not_found
+      expect(response).to have_http_status(:not_found)
     end
 
     it "stops an invalid vm without appropriate role" do
@@ -202,7 +300,7 @@ describe ApiController do
 
       run_post(invalid_vm_url, gen_request(:stop))
 
-      expect_request_forbidden
+      expect(response).to have_http_status(:forbidden)
     end
 
     it "stops a powered off vm" do
@@ -211,7 +309,7 @@ describe ApiController do
 
       run_post(vm_url, gen_request(:stop))
 
-      expect_single_action_result(:success => false, :message => "is not powered on", :href => :vm_url)
+      expect_single_action_result(:success => false, :message => "is not powered on", :href => vm_url)
     end
 
     it "stops a vm" do
@@ -219,7 +317,7 @@ describe ApiController do
 
       run_post(vm_url, gen_request(:stop))
 
-      expect_single_action_result(:success => true, :message => "stopping", :href => :vm_url, :task => true)
+      expect_single_action_result(:success => true, :message => "stopping", :href => vm_url, :task => true)
     end
 
     it "stops multiple vms" do
@@ -228,7 +326,7 @@ describe ApiController do
       run_post(vms_url, gen_request(:stop, nil, vm1_url, vm2_url))
 
       expect_multiple_action_result(2, :task => true)
-      expect_result_resources_to_include_hrefs("results", :vms_list)
+      expect_result_resources_to_include_hrefs("results", vms_list)
     end
   end
 
@@ -238,7 +336,7 @@ describe ApiController do
 
       run_post(invalid_vm_url, gen_request(:suspend))
 
-      expect_resource_not_found
+      expect(response).to have_http_status(:not_found)
     end
 
     it "suspends an invalid vm without appropriate role" do
@@ -246,7 +344,7 @@ describe ApiController do
 
       run_post(invalid_vm_url, gen_request(:suspend))
 
-      expect_request_forbidden
+      expect(response).to have_http_status(:forbidden)
     end
 
     it "suspends a powered off vm" do
@@ -255,7 +353,7 @@ describe ApiController do
 
       run_post(vm_url, gen_request(:suspend))
 
-      expect_single_action_result(:success => false, :message => "is not powered on", :href => :vm_url)
+      expect_single_action_result(:success => false, :message => "is not powered on", :href => vm_url)
     end
 
     it "suspends a suspended vm" do
@@ -264,7 +362,7 @@ describe ApiController do
 
       run_post(vm_url, gen_request(:suspend))
 
-      expect_single_action_result(:success => false, :message => "is not powered on", :href => :vm_url)
+      expect_single_action_result(:success => false, :message => "is not powered on", :href => vm_url)
     end
 
     it "suspends a vm" do
@@ -272,7 +370,7 @@ describe ApiController do
 
       run_post(vm_url, gen_request(:suspend))
 
-      expect_single_action_result(:success => true, :message => "suspending", :href => :vm_url, :task => true)
+      expect_single_action_result(:success => true, :message => "suspending", :href => vm_url, :task => true)
     end
 
     it "suspends multiple vms" do
@@ -281,7 +379,7 @@ describe ApiController do
       run_post(vms_url, gen_request(:suspend, nil, vm1_url, vm2_url))
 
       expect_multiple_action_result(2, :task => true)
-      expect_result_resources_to_include_hrefs("results", :vms_list)
+      expect_result_resources_to_include_hrefs("results", vms_list)
     end
   end
 
@@ -291,7 +389,7 @@ describe ApiController do
 
       run_post(invalid_vm_url, gen_request(:pause))
 
-      expect_resource_not_found
+      expect(response).to have_http_status(:not_found)
     end
 
     it "pauses an invalid vm without appropriate role" do
@@ -299,7 +397,7 @@ describe ApiController do
 
       run_post(invalid_vm_url, gen_request(:pause))
 
-      expect_request_forbidden
+      expect(response).to have_http_status(:forbidden)
     end
 
     it "pauses a powered off vm" do
@@ -308,7 +406,7 @@ describe ApiController do
 
       run_post(vm_url, gen_request(:pause))
 
-      expect_single_action_result(:success => false, :message => "is not powered on", :href => :vm_url)
+      expect_single_action_result(:success => false, :message => "is not powered on", :href => vm_url)
     end
 
     it "pauses a pauseed vm" do
@@ -317,7 +415,7 @@ describe ApiController do
 
       run_post(vm_url, gen_request(:pause))
 
-      expect_single_action_result(:success => false, :message => "is not powered on", :href => :vm_url)
+      expect_single_action_result(:success => false, :message => "is not powered on", :href => vm_url)
     end
 
     it "pauses a vm" do
@@ -325,7 +423,7 @@ describe ApiController do
 
       run_post(vm_url, gen_request(:pause))
 
-      expect_single_action_result(:success => true, :message => "pausing", :href => :vm_url, :task => true)
+      expect_single_action_result(:success => true, :message => "pausing", :href => vm_url, :task => true)
     end
 
     it "pauses multiple vms" do
@@ -334,7 +432,7 @@ describe ApiController do
       run_post(vms_url, gen_request(:pause, nil, vm1_url, vm2_url))
 
       expect_multiple_action_result(2, :task => true)
-      expect_result_resources_to_include_hrefs("results", :vms_list)
+      expect_result_resources_to_include_hrefs("results", vms_list)
     end
   end
 
@@ -344,7 +442,7 @@ describe ApiController do
 
       run_post(invalid_vm_url, gen_request(:shelve))
 
-      expect_resource_not_found
+      expect(response).to have_http_status(:not_found)
     end
 
     it "shelves an invalid vm without appropriate role" do
@@ -352,7 +450,7 @@ describe ApiController do
 
       run_post(invalid_vm_url, gen_request(:shelve))
 
-      expect_request_forbidden
+      expect(response).to have_http_status(:forbidden)
     end
 
     it "shelves a powered off vm" do
@@ -361,7 +459,7 @@ describe ApiController do
 
       run_post(vm_openstack_url, gen_request(:shelve))
 
-      expect_single_action_result(:success => true, :message => 'shelving', :href => :vm_openstack_url)
+      expect_single_action_result(:success => true, :message => 'shelving', :href => vm_openstack_url)
     end
 
     it "shelves a suspended vm" do
@@ -370,7 +468,7 @@ describe ApiController do
 
       run_post(vm_openstack_url, gen_request(:shelve))
 
-      expect_single_action_result(:success => true, :message => 'shelving', :href => :vm_openstack_url)
+      expect_single_action_result(:success => true, :message => 'shelving', :href => vm_openstack_url)
     end
 
     it "shelves a paused off vm" do
@@ -379,7 +477,7 @@ describe ApiController do
 
       run_post(vm_openstack_url, gen_request(:shelve))
 
-      expect_single_action_result(:success => true, :message => 'shelving', :href => :vm_openstack_url)
+      expect_single_action_result(:success => true, :message => 'shelving', :href => vm_openstack_url)
     end
 
     it "shelves a shelveed vm" do
@@ -390,7 +488,7 @@ describe ApiController do
 
       expect_single_action_result(:success => false,
                                   :message => "The VM can't be shelved, current state has to be powered on, off, suspended or paused",
-                                  :href    => :vm_openstack_url)
+                                  :href    => vm_openstack_url)
     end
 
     it "shelves a vm" do
@@ -398,7 +496,7 @@ describe ApiController do
 
       run_post(vm_openstack_url, gen_request(:shelve))
 
-      expect_single_action_result(:success => true, :message => "shelving", :href => :vm_openstack_url, :task => true)
+      expect_single_action_result(:success => true, :message => "shelving", :href => vm_openstack_url, :task => true)
     end
 
     it "shelve for a VMWare vm is not supported" do
@@ -408,7 +506,7 @@ describe ApiController do
 
       expect_single_action_result(:success => false,
                                   :message => "Shelve Operation is not available for Vmware VM.",
-                                  :href    => :vm_url,
+                                  :href    => vm_url,
                                   :task    => false)
     end
 
@@ -418,7 +516,7 @@ describe ApiController do
       run_post(vms_url, gen_request(:shelve, nil, vm_openstack1_url, vm_openstack2_url))
 
       expect_multiple_action_result(2, :task => true)
-      expect_result_resources_to_include_hrefs("results", :vms_openstack_list)
+      expect_result_resources_to_include_hrefs("results", vms_openstack_list)
     end
   end
 
@@ -428,7 +526,7 @@ describe ApiController do
 
       run_post(invalid_vm_url, gen_request(:shelve_offload))
 
-      expect_resource_not_found
+      expect(response).to have_http_status(:not_found)
     end
 
     it "shelve_offloads an invalid vm without appropriate role" do
@@ -436,7 +534,7 @@ describe ApiController do
 
       run_post(invalid_vm_url, gen_request(:shelve_offload))
 
-      expect_request_forbidden
+      expect(response).to have_http_status(:forbidden)
     end
 
     it "shelve_offloads a active vm" do
@@ -446,7 +544,7 @@ describe ApiController do
 
       expect_single_action_result(:success => false,
                                   :message => "The VM can't be shelved offload, current state has to be shelved",
-                                  :href    => :vm_openstack_url)
+                                  :href    => vm_openstack_url)
     end
 
     it "shelve_offloads a powered off vm" do
@@ -457,7 +555,7 @@ describe ApiController do
 
       expect_single_action_result(:success => false,
                                   :message => "The VM can't be shelved offload, current state has to be shelved",
-                                  :href    => :vm_openstack_url)
+                                  :href    => vm_openstack_url)
     end
 
     it "shelve_offloads a suspended vm" do
@@ -468,7 +566,7 @@ describe ApiController do
 
       expect_single_action_result(:success => false,
                                   :message => "The VM can't be shelved offload, current state has to be shelved",
-                                  :href    => :vm_openstack_url)
+                                  :href    => vm_openstack_url)
     end
 
     it "shelve_offloads a paused off vm" do
@@ -479,7 +577,7 @@ describe ApiController do
 
       expect_single_action_result(:success => false,
                                   :message => "The VM can't be shelved offload, current state has to be shelved",
-                                  :href    => :vm_openstack_url)
+                                  :href    => vm_openstack_url)
     end
 
     it "shelve_offloads a shelve_offloaded vm" do
@@ -490,7 +588,7 @@ describe ApiController do
 
       expect_single_action_result(:success => false,
                                   :message => "The VM can't be shelved offload, current state has to be shelved",
-                                  :href    => :vm_openstack_url)
+                                  :href    => vm_openstack_url)
     end
 
     it "shelve_offloads a shelved vm" do
@@ -501,7 +599,7 @@ describe ApiController do
 
       expect_single_action_result(:success => true,
                                   :message => "shelve-offloading",
-                                  :href    => :vm_openstack_url)
+                                  :href    => vm_openstack_url)
     end
 
     it "shelve_offload for a VMWare vm is not supported" do
@@ -511,7 +609,7 @@ describe ApiController do
 
       expect_single_action_result(:success => false,
                                   :message => "Shelve Offload Operation is not available for Vmware VM.",
-                                  :href    => :vm_url,
+                                  :href    => vm_url,
                                   :task    => false)
     end
 
@@ -524,7 +622,7 @@ describe ApiController do
       run_post(vms_url, gen_request(:shelve_offload, nil, vm_openstack1_url, vm_openstack2_url))
 
       expect_multiple_action_result(2, :task => true)
-      expect_result_resources_to_include_hrefs("results", :vms_openstack_list)
+      expect_result_resources_to_include_hrefs("results", vms_openstack_list)
     end
   end
 
@@ -534,7 +632,7 @@ describe ApiController do
 
       run_post(invalid_vm_url, gen_request(:delete))
 
-      expect_resource_not_found
+      expect(response).to have_http_status(:not_found)
     end
 
     it "deletes a vm via a resource POST without appropriate role" do
@@ -542,7 +640,7 @@ describe ApiController do
 
       run_post(invalid_vm_url, gen_request(:delete))
 
-      expect_request_forbidden
+      expect(response).to have_http_status(:forbidden)
     end
 
     it "deletes a vm via a resource DELETE without appropriate role" do
@@ -550,7 +648,7 @@ describe ApiController do
 
       run_delete(invalid_vm_url)
 
-      expect_request_forbidden
+      expect(response).to have_http_status(:forbidden)
     end
 
     it "deletes a vm via a resource POST" do
@@ -558,7 +656,7 @@ describe ApiController do
 
       run_post(vm_url, gen_request(:delete))
 
-      expect_single_action_result(:success => true, :message => "deleting", :href => :vm_url, :task => true)
+      expect_single_action_result(:success => true, :message => "deleting", :href => vm_url, :task => true)
     end
 
     it "deletes a vm via a resource DELETE" do
@@ -566,7 +664,7 @@ describe ApiController do
 
       run_delete(vm_url)
 
-      expect_request_success_with_no_content
+      expect(response).to have_http_status(:no_content)
     end
 
     it "deletes multiple vms" do
@@ -584,7 +682,7 @@ describe ApiController do
 
       run_post(invalid_vm_url, gen_request(:set_owner, "owner" => "admin"))
 
-      expect_resource_not_found
+      expect(response).to have_http_status(:not_found)
     end
 
     it "set_owner without appropriate action role" do
@@ -592,7 +690,7 @@ describe ApiController do
 
       run_post(vm_url, gen_request(:set_owner, "owner" => "admin"))
 
-      expect_request_forbidden
+      expect(response).to have_http_status(:forbidden)
     end
 
     it "set_owner with missing owner" do
@@ -608,7 +706,7 @@ describe ApiController do
 
       run_post(vm_url, gen_request(:set_owner, "owner" => "bad_user"))
 
-      expect_single_action_result(:success => false, :message => /.*/, :href => :vm_url)
+      expect_single_action_result(:success => false, :message => /.*/, :href => vm_url)
     end
 
     it "set_owner to a vm" do
@@ -616,7 +714,7 @@ describe ApiController do
 
       run_post(vm_url, gen_request(:set_owner, "owner" => api_config(:user)))
 
-      expect_single_action_result(:success => true, :message => "setting owner", :href => :vm_url)
+      expect_single_action_result(:success => true, :message => "setting owner", :href => vm_url)
       expect(vm.reload.evm_owner).to eq(@user)
     end
 
@@ -626,7 +724,7 @@ describe ApiController do
       run_post(vms_url, gen_request(:set_owner, {"owner" => api_config(:user)}, vm1_url, vm2_url))
 
       expect_multiple_action_result(2)
-      expect_result_resources_to_include_hrefs("results", :vms_list)
+      expect_result_resources_to_include_hrefs("results", vms_list)
       expect(vm1.reload.evm_owner).to eq(@user)
       expect(vm2.reload.evm_owner).to eq(@user)
     end
@@ -655,7 +753,7 @@ describe ApiController do
       run_get vm_ca_url
 
       expect_query_result(:custom_attributes, 2)
-      expect_result_resources_to_include_hrefs("resources", :vm_ca_url_list)
+      expect_result_resources_to_include_hrefs("resources", vm_ca_url_list)
     end
 
     it "getting custom_attributes from a vm in expanded form" do
@@ -669,12 +767,12 @@ describe ApiController do
     end
 
     it "getting custom_attributes from a vm using expand" do
-      api_basic_authorize
+      api_basic_authorize action_identifier(:vms, :read, :resource_actions, :get)
       vm.custom_attributes = [ca1, ca2]
 
       run_get vm_url, :expand => "custom_attributes"
 
-      expect_single_resource_query("guid" => :vm_guid)
+      expect_single_resource_query("guid" => vm_guid)
       expect_result_resources_to_include_data("custom_attributes", "name" => %w(name1 name2))
     end
 
@@ -684,7 +782,7 @@ describe ApiController do
 
       run_post(vm_ca_url, gen_request(:delete, nil, vm_url))
 
-      expect_request_forbidden
+      expect(response).to have_http_status(:forbidden)
     end
 
     it "delete a custom_attribute from a vm via the delete action" do
@@ -693,7 +791,7 @@ describe ApiController do
 
       run_post(vm_ca_url, gen_request(:delete, nil, ca1_url))
 
-      expect_request_success
+      expect(response).to have_http_status(:ok)
       expect(vm.reload.custom_attributes).to be_empty
     end
 
@@ -711,7 +809,7 @@ describe ApiController do
       run_post(vm_ca_url, gen_request(:add, [{"name" => "name1", "value" => "value1"},
                                              {"name" => "name2", "value" => "value2"}]))
 
-      expect_request_success
+      expect(response).to have_http_status(:ok)
       expect_result_resources_to_include_data("results", "name" => %w(name1 name2))
       expect(vm.custom_attributes.size).to eq(2)
       expect(vm.custom_attributes.pluck(:value).sort).to eq(%w(value1 value2))
@@ -723,7 +821,7 @@ describe ApiController do
 
       run_post(vm_ca_url, gen_request(:edit, "name" => "name1", "value" => "value one"))
 
-      expect_request_success
+      expect(response).to have_http_status(:ok)
       expect_result_resources_to_include_data("results", "value" => ["value one"])
       expect(vm.reload.custom_attributes.first.value).to eq("value one")
     end
@@ -734,7 +832,7 @@ describe ApiController do
 
       run_post(vm_ca_url, gen_request(:edit, "href" => ca1_url, "value" => "new value1"))
 
-      expect_request_success
+      expect(response).to have_http_status(:ok)
       expect_result_resources_to_include_data("results", "value" => ["new value1"])
       expect(vm.reload.custom_attributes.first.value).to eq("new value1")
     end
@@ -746,7 +844,7 @@ describe ApiController do
       run_post(vm_ca_url, gen_request(:edit, [{"name" => "name1", "value" => "new value1"},
                                               {"name" => "name2", "value" => "new value2"}]))
 
-      expect_request_success
+      expect(response).to have_http_status(:ok)
       expect_result_resources_to_include_data("results", "value" => ["new value1", "new value2"])
       expect(vm.reload.custom_attributes.pluck(:value).sort).to eq(["new value1", "new value2"])
     end
@@ -764,7 +862,7 @@ describe ApiController do
 
       run_post(invalid_vm_url, gen_request(:add_lifecycle_event, :event => "event 1"))
 
-      expect_resource_not_found
+      expect(response).to have_http_status(:not_found)
     end
 
     it "add_lifecycle_event without appropriate action role" do
@@ -772,7 +870,7 @@ describe ApiController do
 
       run_post(vm_url, gen_request(:add_lifecycle_event, :event => "event 1"))
 
-      expect_request_forbidden
+      expect(response).to have_http_status(:forbidden)
     end
 
     it "add_lifecycle_event to a vm" do
@@ -780,7 +878,7 @@ describe ApiController do
 
       run_post(vm_url, gen_request(:add_lifecycle_event, events[0]))
 
-      expect_single_action_result(:success => true, :message => /adding lifecycle event/i, :href => :vm_url)
+      expect_single_action_result(:success => true, :message => /adding lifecycle event/i, :href => vm_url)
       expect(vm.lifecycle_events.size).to eq(1)
       expect(vm.lifecycle_events.first.event).to eq(events[0][:event])
     end
@@ -803,7 +901,7 @@ describe ApiController do
 
       run_post(invalid_vm_url, gen_request(:scan))
 
-      expect_resource_not_found
+      expect(response).to have_http_status(:not_found)
     end
 
     it "scans an invalid Vm without appropriate role" do
@@ -811,7 +909,7 @@ describe ApiController do
 
       run_post(invalid_vm_url, gen_request(:scan))
 
-      expect_request_forbidden
+      expect(response).to have_http_status(:forbidden)
     end
 
     it "scan a Vm" do
@@ -819,7 +917,7 @@ describe ApiController do
 
       run_post(vm_url, gen_request(:scan))
 
-      expect_single_action_result(:success => true, :message => "scanning", :href => :vm_url, :task => true)
+      expect_single_action_result(:success => true, :message => "scanning", :href => vm_url, :task => true)
     end
 
     it "scan multiple Vms" do
@@ -828,7 +926,7 @@ describe ApiController do
       run_post(vms_url, gen_request(:scan, nil, vm1_url, vm2_url))
 
       expect_multiple_action_result(2, :task => true)
-      expect_result_resources_to_include_hrefs("results", :vms_list)
+      expect_result_resources_to_include_hrefs("results", vms_list)
     end
   end
 
@@ -838,7 +936,7 @@ describe ApiController do
 
       run_post(invalid_vm_url, gen_request(:add_event))
 
-      expect_resource_not_found
+      expect(response).to have_http_status(:not_found)
     end
 
     it "to an invalid vm without appropriate role" do
@@ -846,7 +944,7 @@ describe ApiController do
 
       run_post(invalid_vm_url, gen_request(:add_event))
 
-      expect_request_forbidden
+      expect(response).to have_http_status(:forbidden)
     end
 
     it "to a single Vm" do
@@ -854,7 +952,7 @@ describe ApiController do
 
       run_post(vm_url, gen_request(:add_event, :event_type => "special", :event_message => "message"))
 
-      expect_single_action_result(:success => true, :message => /adding event/i, :href => :vm_url)
+      expect_single_action_result(:success => true, :message => /adding event/i, :href => vm_url)
     end
 
     it "to multiple Vms" do
@@ -865,10 +963,22 @@ describe ApiController do
                            [{"href" => vm1_url, "event_type" => "etype1", "event_message" => "emsg1"},
                             {"href" => vm2_url, "event_type" => "etype2", "event_message" => "emsg2"}]))
 
-      expect_multiple_action_result(2)
-      expect_result_resources_to_include_hrefs("results", :vms_list)
-      expect_result_resources_to_match_key_data("results", "message",
-                                                [/adding event .*etype1/i, /adding event .*etype2/i])
+      expected = {
+        "results" => a_collection_containing_exactly(
+          {
+            "message" => a_string_matching(/adding event .*etype1/i),
+            "success" => true,
+            "href"    => a_string_matching(vm1_url)
+          },
+          {
+            "message" => a_string_matching(/adding event .*etype2/i),
+            "success" => true,
+            "href"    => a_string_matching(vm2_url)
+          }
+        )
+      }
+      expect(response.parsed_body).to include(expected)
+      expect(response).to have_http_status(:ok)
     end
   end
 
@@ -878,7 +988,7 @@ describe ApiController do
 
       run_post(invalid_vm_url, gen_request(:retire))
 
-      expect_resource_not_found
+      expect(response).to have_http_status(:not_found)
     end
 
     it "to an invalid vm without appropriate role" do
@@ -886,7 +996,7 @@ describe ApiController do
 
       run_post(invalid_vm_url, gen_request(:retire))
 
-      expect_request_forbidden
+      expect(response).to have_http_status(:forbidden)
     end
 
     it "to a single Vm" do
@@ -894,7 +1004,7 @@ describe ApiController do
 
       run_post(vm_url, gen_request(:retire))
 
-      expect_single_action_result(:success => true, :message => /#{vm.id}.* retiring/i, :href => :vm_url)
+      expect_single_action_result(:success => true, :message => /#{vm.id}.* retiring/i, :href => vm_url)
     end
 
     it "to multiple Vms" do
@@ -902,21 +1012,30 @@ describe ApiController do
 
       run_post(vms_url, gen_request(:retire, [{"href" => vm1_url}, {"href" => vm2_url}]))
 
-      expect_multiple_action_result(2)
-      expect_result_resources_to_include_hrefs("results", :vms_list)
-      expect_result_resources_to_match_key_data(
-        "results",
-        "message",
-        [/#{vm1.id}.* retiring/i, /#{vm2.id}.* retiring/i]
-      )
+      expected = {
+        "results" => a_collection_containing_exactly(
+          {
+            "message" => a_string_matching(/#{vm1.id}.* retiring/i),
+            "success" => true,
+            "href"    => a_string_matching(vm1_url)
+          },
+          {
+            "message" => a_string_matching(/#{vm2.id}.* retiring/ii),
+            "success" => true,
+            "href"    => a_string_matching(vm2_url)
+          }
+        )
+      }
+      expect(response.parsed_body).to include(expected)
+      expect(response).to have_http_status(:ok)
     end
 
     it "in the future" do
       api_basic_authorize action_identifier(:vms, :retire)
-      date = 2.weeks.from_now.to_date
-      run_post(vm_url, gen_request(:retire, :date => date.strftime("%m/%d/%Y")))
+      date = 2.weeks.from_now
+      run_post(vm_url, gen_request(:retire, :date => date.iso8601))
 
-      expect_single_action_result(:success => true, :message => /#{vm.id}.* retiring/i, :href => :vm_url)
+      expect_single_action_result(:success => true, :message => /#{vm.id}.* retiring/i, :href => vm_url)
     end
   end
 
@@ -926,7 +1045,7 @@ describe ApiController do
 
       run_post(invalid_vm_url, gen_request(:reset))
 
-      expect_resource_not_found
+      expect(response).to have_http_status(:not_found)
     end
 
     it "to an invalid vm without appropriate role" do
@@ -934,7 +1053,7 @@ describe ApiController do
 
       run_post(invalid_vm_url, gen_request(:reset))
 
-      expect_request_forbidden
+      expect(response).to have_http_status(:forbidden)
     end
 
     it "to a single Vm" do
@@ -942,7 +1061,7 @@ describe ApiController do
 
       run_post(vm_url, gen_request(:reset))
 
-      expect_single_action_result(:success => true, :message => /#{vm.id}.* resetting/i, :href => :vm_url)
+      expect_single_action_result(:success => true, :message => /#{vm.id}.* resetting/i, :href => vm_url)
     end
 
     it "to multiple Vms" do
@@ -950,13 +1069,22 @@ describe ApiController do
 
       run_post(vms_url, gen_request(:reset, [{"href" => vm1_url}, {"href" => vm2_url}]))
 
-      expect_multiple_action_result(2)
-      expect_result_resources_to_include_hrefs("results", :vms_list)
-      expect_result_resources_to_match_key_data(
-        "results",
-        "message",
-        [/#{vm1.id}.* resetting/i, /#{vm2.id}.* resetting/i]
-      )
+      expected = {
+        "results" => a_collection_containing_exactly(
+          a_hash_including(
+            "message" => a_string_matching(/#{vm1.id}.* resetting/i),
+            "success" => true,
+            "href"    => a_string_matching(vm1_url)
+          ),
+          a_hash_including(
+            "message" => a_string_matching(/#{vm2.id}.* resetting/i),
+            "success" => true,
+            "href"    => a_string_matching(vm2_url)
+          )
+        )
+      }
+      expect(response.parsed_body).to include(expected)
+      expect(response).to have_http_status(:ok)
     end
   end
 
@@ -966,7 +1094,7 @@ describe ApiController do
 
       run_post(invalid_vm_url, gen_request(:shutdown_guest))
 
-      expect_resource_not_found
+      expect(response).to have_http_status(:not_found)
     end
 
     it "to an invalid vm without appropriate role" do
@@ -974,7 +1102,7 @@ describe ApiController do
 
       run_post(invalid_vm_url, gen_request(:shutdown_guest))
 
-      expect_request_forbidden
+      expect(response).to have_http_status(:forbidden)
     end
 
     it "to a single Vm" do
@@ -982,7 +1110,7 @@ describe ApiController do
 
       run_post(vm_url, gen_request(:shutdown_guest))
 
-      expect_single_action_result(:success => true, :message => /#{vm.id}.* shutting down/i, :href => :vm_url)
+      expect_single_action_result(:success => true, :message => /#{vm.id}.* shutting down/i, :href => vm_url)
     end
 
     it "to multiple Vms" do
@@ -990,13 +1118,22 @@ describe ApiController do
 
       run_post(vms_url, gen_request(:shutdown_guest, [{"href" => vm1_url}, {"href" => vm2_url}]))
 
-      expect_multiple_action_result(2)
-      expect_result_resources_to_include_hrefs("results", :vms_list)
-      expect_result_resources_to_match_key_data(
-        "results",
-        "message",
-        [/#{vm1.id}.* shutting down/i, /#{vm2.id}.* shutting down/i]
-      )
+      expected = {
+        "results" => a_collection_containing_exactly(
+          a_hash_including(
+            "message" => a_string_matching(/#{vm1.id}.* shutting down/i),
+            "success" => true,
+            "href"    => a_string_matching(vm1_url)
+          ),
+          a_hash_including(
+            "message" => a_string_matching(/#{vm2.id}.* shutting down/i),
+            "success" => true,
+            "href"    => a_string_matching(vm2_url)
+          )
+        )
+      }
+      expect(response.parsed_body).to include(expected)
+      expect(response).to have_http_status(:ok)
     end
   end
 
@@ -1006,7 +1143,7 @@ describe ApiController do
 
       run_post(invalid_vm_url, gen_request(:refresh))
 
-      expect_resource_not_found
+      expect(response).to have_http_status(:not_found)
     end
 
     it "to an invalid vm without appropriate role" do
@@ -1014,7 +1151,7 @@ describe ApiController do
 
       run_post(invalid_vm_url, gen_request(:refresh))
 
-      expect_request_forbidden
+      expect(response).to have_http_status(:forbidden)
     end
 
     it "to a single Vm" do
@@ -1022,7 +1159,7 @@ describe ApiController do
 
       run_post(vm_url, gen_request(:refresh))
 
-      expect_single_action_result(:success => true, :message => /#{vm.id}.* refreshing/i, :href => :vm_url)
+      expect_single_action_result(:success => true, :message => /#{vm.id}.* refreshing/i, :href => vm_url)
     end
 
     it "to multiple Vms" do
@@ -1030,13 +1167,22 @@ describe ApiController do
 
       run_post(vms_url, gen_request(:refresh, [{"href" => vm1_url}, {"href" => vm2_url}]))
 
-      expect_multiple_action_result(2)
-      expect_result_resources_to_include_hrefs("results", :vms_list)
-      expect_result_resources_to_match_key_data(
-        "results",
-        "message",
-        [/#{vm1.id}.* refreshing/i, /#{vm2.id}.* refreshing/i]
-      )
+      expected = {
+        "results" => a_collection_containing_exactly(
+          a_hash_including(
+            "message" => a_string_matching(/#{vm1.id}.* refreshing/i),
+            "success" => true,
+            "href"    => a_string_matching(vm1_url)
+          ),
+          a_hash_including(
+            "message" => a_string_matching(/#{vm2.id}.* refreshing/i),
+            "success" => true,
+            "href"    => a_string_matching(vm2_url)
+          )
+        )
+      }
+      expect(response.parsed_body).to include(expected)
+      expect(response).to have_http_status(:ok)
     end
   end
 
@@ -1046,7 +1192,7 @@ describe ApiController do
 
       run_post(invalid_vm_url, gen_request(:reboot_guest))
 
-      expect_resource_not_found
+      expect(response).to have_http_status(:not_found)
     end
 
     it "to an invalid vm without appropriate role" do
@@ -1054,7 +1200,7 @@ describe ApiController do
 
       run_post(invalid_vm_url, gen_request(:reboot_guest))
 
-      expect_request_forbidden
+      expect(response).to have_http_status(:forbidden)
     end
 
     it "to a single Vm" do
@@ -1062,7 +1208,7 @@ describe ApiController do
 
       run_post(vm_url, gen_request(:reboot_guest))
 
-      expect_single_action_result(:success => true, :message => /#{vm.id}.* rebooting/i, :href => :vm_url)
+      expect_single_action_result(:success => true, :message => /#{vm.id}.* rebooting/i, :href => vm_url)
     end
 
     it "to multiple Vms" do
@@ -1070,13 +1216,219 @@ describe ApiController do
 
       run_post(vms_url, gen_request(:reboot_guest, [{"href" => vm1_url}, {"href" => vm2_url}]))
 
-      expect_multiple_action_result(2)
-      expect_result_resources_to_include_hrefs("results", :vms_list)
-      expect_result_resources_to_match_key_data(
-        "results",
-        "message",
-        [/#{vm1.id}.* rebooting/i, /#{vm2.id}.* rebooting/i]
+      expected = {
+        "results" => a_collection_containing_exactly(
+          a_hash_including(
+            "message" => a_string_matching(/#{vm1.id}.* rebooting/i,),
+            "success" => true,
+            "href"    => a_string_matching(vm1_url)
+          ),
+          a_hash_including(
+            "message" => a_string_matching(/#{vm2.id}.* rebooting/i),
+            "success" => true,
+            "href"    => a_string_matching(vm2_url)
+          )
+        )
+      }
+      expect(response.parsed_body).to include(expected)
+      expect(response).to have_http_status(:ok)
+    end
+  end
+
+  context "Vm request console action" do
+    it "to an invalid vm" do
+      api_basic_authorize action_identifier(:vms, :request_console)
+
+      run_post(invalid_vm_url, gen_request(:request_console))
+
+      expect(response).to have_http_status(:not_found)
+    end
+
+    it "to an invalid vm without appropriate role" do
+      api_basic_authorize
+
+      run_post(invalid_vm_url, gen_request(:request_console))
+
+      expect(response).to have_http_status(:forbidden)
+    end
+
+    it "to a single Vm" do
+      api_basic_authorize action_identifier(:vms, :request_console)
+
+      run_post(vm_url, gen_request(:request_console))
+
+      expect_single_action_result(:success => true, :message => /#{vm.id}.* requesting console/i, :href => vm_url)
+    end
+  end
+
+  context "Vm Tag subcollection" do
+    let(:tag1)         { {:category => "department", :name => "finance", :path => "/managed/department/finance"} }
+    let(:tag2)         { {:category => "cc",         :name => "001",     :path => "/managed/cc/001"} }
+
+    let(:vm1) { FactoryGirl.create(:vm_vmware, :host => host, :ems_id => ems.id, :raw_power_state => "poweredOn") }
+    let(:vm1_url)      { vms_url(vm1.id) }
+    let(:vm1_tags_url) { "#{vm1_url}/tags" }
+
+    let(:vm2) { FactoryGirl.create(:vm_vmware, :host => host, :ems_id => ems.id, :raw_power_state => "poweredOn") }
+    let(:vm2_url)      { vms_url(vm2.id) }
+    let(:vm2_tags_url) { "#{vm2_url}/tags" }
+
+    let(:invalid_tag_url) { tags_url(999_999) }
+
+    before do
+      FactoryGirl.create(:classification_department_with_tags)
+      FactoryGirl.create(:classification_cost_center_with_tags)
+      Classification.classify(vm2, tag1[:category], tag1[:name])
+      Classification.classify(vm2, tag2[:category], tag2[:name])
+    end
+
+    it "query all tags of a Vm with no tags" do
+      api_basic_authorize
+
+      run_get vm1_tags_url
+
+      expect_empty_query_result(:tags)
+    end
+
+    it "query all tags of a Vm" do
+      api_basic_authorize
+
+      run_get vm2_tags_url
+
+      expect_query_result(:tags, 2, Tag.count)
+    end
+
+    it "query all tags of a Vm and verify tag category and names" do
+      api_basic_authorize
+
+      run_get vm2_tags_url, :expand => "resources"
+
+      expect_query_result(:tags, 2, Tag.count)
+      expect_result_resources_to_include_data("resources", "name" => [tag1[:path], tag2[:path]])
+    end
+
+    it "query vms by tag name via filter[]=tags.name" do
+      api_basic_authorize collection_action_identifier(:vms, :read, :get)
+      # let's make sure both vms are created
+      vm1
+      vm2
+
+      run_get vms_url, :expand => "resources", :filter => ["tags.name='#{tag2[:path]}'"]
+
+      expect_query_result(:vms, 1, 2)
+      expect_result_resources_to_include_hrefs("resources", [vm2_url])
+    end
+
+    it "assigns a tag to a Vm without appropriate role" do
+      api_basic_authorize
+
+      run_post(vm1_tags_url, gen_request(:assign, :category => tag1[:category], :name => tag1[:name]))
+
+      expect(response).to have_http_status(:forbidden)
+    end
+
+    it "assigns a tag to a Vm" do
+      api_basic_authorize subcollection_action_identifier(:vms, :tags, :assign)
+
+      run_post(vm1_tags_url, gen_request(:assign, :category => tag1[:category], :name => tag1[:name]))
+
+      expect_tagging_result(
+        [{:success => true, :href => vm1_url, :tag_category => tag1[:category], :tag_name => tag1[:name]}]
       )
+    end
+
+    it "assigns a tag to a Vm by name path" do
+      api_basic_authorize subcollection_action_identifier(:vms, :tags, :assign)
+
+      run_post(vm1_tags_url, gen_request(:assign, :name => tag1[:path]))
+
+      expect_tagging_result(
+        [{:success => true, :href => vm1_url, :tag_category => tag1[:category], :tag_name => tag1[:name]}]
+      )
+    end
+
+    it "assigns a tag to a Vm by href" do
+      api_basic_authorize subcollection_action_identifier(:vms, :tags, :assign)
+
+      run_post(vm1_tags_url, gen_request(:assign, :href => tags_url(Tag.find_by(:name => tag1[:path]).id)))
+
+      expect_tagging_result(
+        [{:success => true, :href => vm1_url, :tag_category => tag1[:category], :tag_name => tag1[:name]}]
+      )
+    end
+
+    it "assigns an invalid tag by href to a Vm" do
+      api_basic_authorize subcollection_action_identifier(:vms, :tags, :assign)
+
+      run_post(vm1_tags_url, gen_request(:assign, :href => invalid_tag_url))
+
+      expect(response).to have_http_status(:not_found)
+    end
+
+    it "assigns an invalid tag to a Vm" do
+      api_basic_authorize subcollection_action_identifier(:vms, :tags, :assign)
+
+      run_post(vm1_tags_url, gen_request(:assign, :name => "/managed/bad_category/bad_name"))
+
+      expect_tagging_result(
+        [{:success => false, :href => vm1_url, :tag_category => "bad_category", :tag_name => "bad_name"}]
+      )
+    end
+
+    it "assigns multiple tags to a Vm" do
+      api_basic_authorize subcollection_action_identifier(:vms, :tags, :assign)
+
+      run_post(vm1_tags_url, gen_request(:assign, [{:name => tag1[:path]}, {:name => tag2[:path]}]))
+
+      expect_tagging_result(
+        [{:success => true, :href => vm1_url, :tag_category => tag1[:category], :tag_name => tag1[:name]},
+         {:success => true, :href => vm1_url, :tag_category => tag2[:category], :tag_name => tag2[:name]}]
+      )
+    end
+
+    it "assigns tags by mixed specification to a Vm" do
+      api_basic_authorize subcollection_action_identifier(:vms, :tags, :assign)
+
+      tag = Tag.find_by(:name => tag2[:path])
+      run_post(vm1_tags_url, gen_request(:assign, [{:name => tag1[:path]}, {:href => tags_url(tag.id)}]))
+
+      expect_tagging_result(
+        [{:success => true, :href => vm1_url, :tag_category => tag1[:category], :tag_name => tag1[:name]},
+         {:success => true, :href => vm1_url, :tag_category => tag2[:category], :tag_name => tag2[:name]}]
+      )
+    end
+
+    it "unassigns a tag from a Vm without appropriate role" do
+      api_basic_authorize
+
+      run_post(vm1_tags_url, gen_request(:assign, :category => tag1[:category], :name => tag1[:name]))
+
+      expect(response).to have_http_status(:forbidden)
+    end
+
+    it "unassigns a tag from a Vm" do
+      api_basic_authorize subcollection_action_identifier(:vms, :tags, :unassign)
+
+      run_post(vm2_tags_url, gen_request(:unassign, :category => tag1[:category], :name => tag1[:name]))
+
+      expect_tagging_result(
+        [{:success => true, :href => vm2_url, :tag_category => tag1[:category], :tag_name => tag1[:name]}]
+      )
+      expect(vm2.tags.count).to eq(1)
+      expect(vm2.tags.first.name).to eq(tag2[:path])
+    end
+
+    it "unassigns multiple tags from a Vm" do
+      api_basic_authorize subcollection_action_identifier(:vms, :tags, :unassign)
+
+      tag = Tag.find_by(:name => tag2[:path])
+      run_post(vm2_tags_url, gen_request(:unassign, [{:name => tag1[:path]}, {:href => tags_url(tag.id)}]))
+
+      expect_tagging_result(
+        [{:success => true, :href => vm2_url, :tag_category => tag1[:category], :tag_name => tag1[:name]},
+         {:success => true, :href => vm2_url, :tag_category => tag2[:category], :tag_name => tag2[:name]}]
+      )
+      expect(vm2.tags.count).to eq(0)
     end
   end
 end

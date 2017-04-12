@@ -1,30 +1,24 @@
 class RenameEmsEventTableToEventStream < ActiveRecord::Migration
+  disable_ddl_transaction!
   include MigrationHelper
-  include MigrationHelper::SharedStubs
 
   class EventStream < ActiveRecord::Base
-    self.inheritance_column = :_type_disabled # disable STI
+    self.inheritance_column = :_type_disabled
   end
 
-  class EmsEvent < ActiveRecord::Base
-    self.inheritance_column = :_type_disabled # disable STI
-  end
+  class EmsEvent < ActiveRecord::Base; end
 
   def up
     rename_table :ems_events, :event_streams
 
     add_column :event_streams, :type, :string
     say_with_time("Updating Type in EventStreams") do
-      EventStream.update_all(:type => 'EmsEvent')
-    end
-
-    if RrPendingChange.table_exists?
-      say_with_time("Renaming ems_events to event_streams in '#{RrPendingChange.table_name}'") do
-        RrPendingChange.where(:change_table => "ems_events").update_all(:change_table => "event_streams")
-      end
-
-      say_with_time("Renaming ems_events to event_streams in '#{RrSyncState.table_name}'") do
-        RrSyncState.where(:table_name => "ems_events").update_all(:table_name => "event_streams")
+      base_relation = EventStream.where(:type => nil)
+      say "#{base_relation.size} records with batch size 1000", :subitem
+      loop do
+        count = base_relation.limit(1000).update_all(:type => 'EmsEvent')
+        print "."
+        break if count == 0
       end
     end
 
@@ -41,15 +35,5 @@ class RenameEmsEventTableToEventStream < ActiveRecord::Migration
     end
 
     rename_table :event_streams, :ems_events
-
-    if RrPendingChange.table_exists?
-      say_with_time("Renaming event_streams to ems_events in '#{RrPendingChange.table_name}'") do
-        RrPendingChange.where(:change_table => "event_streams").update_all(:change_table => "ems_events")
-      end
-
-      say_with_time("Renaming event_streams to ems_events in '#{RrSyncState.table_name}'") do
-        RrSyncState.where(:table_name => "event_streams").update_all(:table_name => "ems_events")
-      end
-    end
   end
 end

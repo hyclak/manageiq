@@ -1,14 +1,15 @@
 class EmsCluster < ApplicationRecord
+  include SupportsFeatureMixin
   include NewWithTypeStiMixin
   include_concern 'CapacityPlanning'
-  include ReportableMixin
   include EventMixin
+  include TenantIdentityMixin
 
   acts_as_miq_taggable
 
   belongs_to  :ext_management_system, :foreign_key => "ems_id"
   has_many    :hosts, :dependent => :nullify
-  has_many    :vms_and_templates
+  has_many    :vms_and_templates, :dependent => :nullify
   has_many    :miq_templates, :inverse_of => :ems_cluster
   has_many    :vms, :inverse_of => :ems_cluster
 
@@ -25,13 +26,14 @@ class EmsCluster < ApplicationRecord
   virtual_column :v_parent_datacenter, :type => :string,  :uses => :all_relationships
   virtual_column :v_qualified_desc,    :type => :string,  :uses => :all_relationships
   virtual_column :last_scan_on,        :type => :time,    :uses => :last_drift_state_timestamp
-  virtual_column :total_vms,           :type => :integer, :uses => :all_relationships
-  virtual_column :total_miq_templates, :type => :integer, :uses => :all_relationships
-  virtual_column :total_hosts,         :type => :integer, :uses => :all_relationships
+  virtual_total  :total_vms,               :vms
+  virtual_total  :total_miq_templates,     :miq_templates
+  virtual_total  :total_vms_and_templates, :vms_and_templates
+  virtual_total  :total_hosts,             :hosts
 
   virtual_has_many :storages,       :uses => {:hosts => :storages}
   virtual_has_many :resource_pools, :uses => :all_relationships
-  virtual_has_many :failover_hosts, :uses => :hosts
+  has_many :failover_hosts, -> { failover }, :class_name => "Host"
 
   virtual_has_many :base_storage_extents, :class_name => "CimStorageExtent"
   virtual_has_many :storage_systems,      :class_name => "CimComputerSystem"
@@ -50,22 +52,10 @@ class EmsCluster < ApplicationRecord
   self.default_relationship_type = "ems_metadata"
 
   include AggregationMixin
-  # Since we've overridden the implementation of methods from AggregationMixin,
-  # we must also override the :uses portion of the virtual columns.
-  override_aggregation_mixin_virtual_columns_uses(:all_hosts, :hosts)
-  override_aggregation_mixin_virtual_columns_uses(:all_vms_and_templates, :vms_and_templates)
 
   include Metric::CiMixin
   include MiqPolicyMixin
   include AsyncDeleteMixin
-
-  def tenant_identity
-    if ext_management_system
-      ext_management_system.tenant_identity
-    else
-      User.super_admin.tap { |u| u.current_group = Tenant.root_tenant.default_miq_group }
-    end
-  end
 
   #
   # Provider Object methods
@@ -119,28 +109,6 @@ class EmsCluster < ApplicationRecord
   alias_method :storages,               :all_storages
   alias_method :datastores,             :all_storages    # Used by web-services to return datastores as the property name
 
-  alias_method :all_hosts,              :hosts
-  alias_method :all_host_ids,           :host_ids
-  alias_method :all_vms_and_templates,  :vms_and_templates
-  alias_method :all_vm_or_template_ids, :vm_or_template_ids
-  alias_method :all_vms,                :vms
-  alias_method :all_vm_ids,             :vm_ids
-  alias_method :all_miq_templates,      :miq_templates
-  alias_method :all_miq_template_ids,   :miq_template_ids
-
-  # Host relationship methods
-  def total_hosts
-    hosts.size
-  end
-
-  def failover_hosts(_options = {})
-    hosts.select(&:failover)
-  end
-
-  def failover_host_ids
-    failover_hosts.collect(&:id)
-  end
-
   # Direct Vm relationship methods
   def direct_vm_rels
     # Look for only the Vms at the second depth (default RP + 1)
@@ -167,29 +135,11 @@ class EmsCluster < ApplicationRecord
     direct_vm_ids + direct_miq_template_ids
   end
 
-  def total_direct_vms
-    direct_vm_rels.size
-  end
-
-  def total_direct_miq_templates
-    direct_miq_template_ids.size
-  end
+  virtual_total :total_direct_vms, :direct_vm_rels
+  virtual_total :total_direct_miq_templates, :direct_miq_templates
 
   def total_direct_vms_and_templates
     total_direct_vms + total_direct_miq_templates
-  end
-
-  # All VMs under this Cluster
-  def total_vms
-    vms.size
-  end
-
-  def total_miq_templates
-    miq_templates.size
-  end
-
-  def total_vms_and_templates
-    vms_and_templates.size
   end
 
   # Resource Pool relationship methods
@@ -198,19 +148,11 @@ class EmsCluster < ApplicationRecord
   end
 
   def resource_pools
-    # Look for only the resource_pools at the second depth (default depth + 1)
-    rels = descendant_rels(:of_type => 'ResourcePool')
-    min_depth = rels.collect(&:depth).min
-    rels = rels.select { |r| r.depth == min_depth + 1 }
-    Relationship.resources(rels).sort_by { |r| r.name.downcase }
+    Relationship.resources(grandchild_rels(:of_type => 'ResourcePool'))
   end
 
   def resource_pools_with_default
-    # Look for only the resource_pools up to the second depth (default depth + 1)
-    rels = descendant_rels(:of_type => 'ResourcePool')
-    min_depth = rels.collect(&:depth).min
-    rels = rels.select { |r| r.depth <= min_depth + 1 }
-    Relationship.resources(rels).sort_by { |r| r.name.downcase }
+    Relationship.resources(child_and_grandchild_rels(:of_type => 'ResourcePool'))
   end
 
   alias_method :add_resource_pool, :set_child
@@ -222,7 +164,10 @@ class EmsCluster < ApplicationRecord
 
   # All RPs under this Cluster and all child RPs
   def all_resource_pools
-    descendants(:of_type => 'ResourcePool')[1..-1].sort_by { |r| r.name.downcase }
+    # descendants typically returns the default_rp first but sporadically it
+    # will not due to a bug in the ancestry gem, this means we cannot simply
+    # drop the first value and need to check is_default
+    descendants(:of_type => 'ResourcePool').select { |r| !r.is_default }.sort_by { |r| r.name.downcase }
   end
 
   def all_resource_pools_with_default
@@ -231,11 +176,11 @@ class EmsCluster < ApplicationRecord
 
   # Parent relationship methods
   def parent_folder
-    detect_ancestor(:of_type => "EmsFolder") { |a| !a.is_datacenter && !["host", "vm"].include?(a.name) } # TODO: Fix this to use EmsFolder#hidden?
+    detect_ancestor(:of_type => "EmsFolder") { |a| !a.kind_of?(Datacenter) && !%w(host vm).include?(a.name) } # TODO: Fix this to use EmsFolder#hidden?
   end
 
   def parent_datacenter
-    detect_ancestor(:of_type => 'EmsFolder', &:is_datacenter)
+    detect_ancestor(:of_type => 'EmsFolder') { |a| a.kind_of?(Datacenter) }
   end
 
   def base_storage_extents
@@ -302,7 +247,9 @@ class EmsCluster < ApplicationRecord
 
   def effective_resource(resource)
     resource = resource.to_s
-    raise ArgumentError, "Unknown resource #{resource.inspect}" unless %w(cpu vcpu memory).include?(resource)
+    unless %w(cpu vcpu memory).include?(resource)
+      raise ArgumentError, _("Unknown resource %{name}") % {:name => resource.inspect}
+    end
     resource = "cpu" if resource == "vcpu"
     send("effective_#{resource}")
   end
@@ -354,7 +301,7 @@ class EmsCluster < ApplicationRecord
   # Vmware specific
   def register_host(host)
     host = Host.extract_objects(host)
-    raise "Host cannot be nil" if host.nil?
+    raise _("Host cannot be nil") if host.nil?
     userid, password = host.auth_user_pwd(:default)
     network_address  = host.address
 

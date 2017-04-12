@@ -1,7 +1,6 @@
 require 'cim_profile_defs'
 
 class SniaFileShare < MiqCimInstance
-  include ReportableMixin
   acts_as_miq_taggable
 
   virtual_column    :element_name,        :type => :string
@@ -264,7 +263,7 @@ class SniaFileShare < MiqCimInstance
   def queue_create_datastore(ds_name, hosts)
     unless /^[a-zA-Z0-9\-]+$/ =~ ds_name
       message          = "#{ds_name} is not valid"
-      _log.error("#{message}")
+      _log.error(message)
       errors.add("name", message)
       return false
     end
@@ -273,7 +272,7 @@ class SniaFileShare < MiqCimInstance
     nrs       = storage_system.storage_managers.first
     if nrs.nil?
       message   = "No available manager entry for NetApp filer: #{evm_display_name}"
-      _log.error("#{message}")
+      _log.error(message)
       errors.add("netapp_filer", message)
       return false
     end
@@ -308,7 +307,7 @@ class SniaFileShare < MiqCimInstance
 
     storage_system     = self.storage_system
     nrs                = storage_system.storage_managers.first
-    raise "Could not find manager entry for NetApp filer: #{evm_display_name}" if nrs.nil?
+    raise _("Could not find manager entry for NetApp filer: %{name}") % {:name => evm_display_name} if nrs.nil?
 
     # TODO: Log hostname, not ipaddress
     _log.info("Found service entry for NetApp filer: #{evm_display_name} -> #{nrs.ipaddress}")

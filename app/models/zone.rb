@@ -15,26 +15,30 @@ class Zone < ApplicationRecord
   has_many :ldap_regions
   has_many :providers
 
-  virtual_has_many :hosts,              :uses => {:ext_management_systems => :hosts}
+  has_many :hosts,               :through => :ext_management_systems
+  has_many :clustered_hosts,     :through => :ext_management_systems
+  has_many :non_clustered_hosts, :through => :ext_management_systems
+  has_many :vms_and_templates,   :through => :ext_management_systems
+  has_many :vms,                 :through => :ext_management_systems
+  has_many :miq_templates,       :through => :ext_management_systems
+  has_many :ems_clusters,        :through => :ext_management_systems
   virtual_has_many :active_miq_servers, :class_name => "MiqServer"
-  virtual_has_many :vms_and_templates,  :uses => {:ext_management_systems => :vms_and_templates}
-
-  include ReportableMixin
 
   before_destroy :check_zone_in_use_on_destroy
-  after_save     :queue_ntp_reload_if_changed
+  after_update   :queue_ntp_reload_if_changed
 
   include AuthenticationMixin
 
   include Metric::CiMixin
   include AggregationMixin
-  # Since we've overridden the implementation of methods from AggregationMixin,
-  # we must also override the :uses portion of the virtual columns.
-  override_aggregation_mixin_virtual_columns_uses(:all_hosts, :hosts)
-  override_aggregation_mixin_virtual_columns_uses(:all_vms_and_templates, :vms_and_templates)
+  include ConfigurationManagementMixin
 
   def active_miq_servers
     MiqServer.active_miq_servers.where(:zone_id => id)
+  end
+
+  def servers_for_settings_reload
+    miq_servers.where(:status => "started")
   end
 
   def find_master_server
@@ -110,32 +114,8 @@ class Zone < ApplicationRecord
     miq_servers.any? { |s| s.log_collection_active_recently?(since) }
   end
 
-  def host_ids
-    hosts.collect(&:id)
-  end
-
-  def hosts
-    MiqPreloader.preload(self, :ext_management_systems => :hosts)
-    ext_management_systems.flat_map(&:hosts)
-  end
-
   def self.hosts_without_a_zone
     Host.where(:ems_id => nil).to_a
-  end
-
-  def non_clustered_hosts
-    MiqPreloader.preload(self, :ext_management_systems => :hosts)
-    ext_management_systems.flat_map(&:non_clustered_hosts)
-  end
-
-  def clustered_hosts
-    MiqPreloader.preload(self, :ext_management_systems => :hosts)
-    ext_management_systems.flat_map(&:clustered_hosts)
-  end
-
-  def ems_clusters
-    MiqPreloader.preload(self, :ext_management_systems => :ems_clusters)
-    ext_management_systems.flat_map(&:ems_clusters)
   end
 
   def self.clusters_without_a_zone
@@ -154,8 +134,24 @@ class Zone < ApplicationRecord
     ext_management_systems.select { |e| e.kind_of? ManageIQ::Providers::MiddlewareManager }
   end
 
+  def middleware_servers
+    ems_middlewares.flat_map(&:middleware_servers)
+  end
+
+  def ems_datawarehouses
+    ext_management_systems.select { |e| e.kind_of? ManageIQ::Providers::DatawarehouseManager }
+  end
+
+  def ems_configproviders
+    ext_management_systems.select { |e| e.kind_of? ManageIQ::Providers::ConfigurationManager }
+  end
+
   def ems_clouds
     ext_management_systems.select { |e| e.kind_of? EmsCloud }
+  end
+
+  def ems_networks
+    ext_management_systems.select { |e| e.kind_of? ManageIQ::Providers::NetworkManager }
   end
 
   def availability_zones
@@ -163,41 +159,8 @@ class Zone < ApplicationRecord
     ems_clouds.flat_map(&:availability_zones)
   end
 
-  def vms_without_availability_zone
-    clouds = ext_management_systems.select { |e| e.kind_of?(EmsCloud) }
-    MiqPreloader.preload(clouds, :vms => :availability_zone)
-    clouds.flat_map { |e| e.vms.select { |vm| vm.availability_zone.nil? } }
-  end
-
-  def vms_and_templates
-    MiqPreloader.preload(self, :ext_management_systems => :vms_and_templates)
-    ext_management_systems.flat_map(&:vms_and_templates)
-  end
-
-  def vms
-    MiqPreloader.preload(self, :ext_management_systems => :vms)
-    ext_management_systems.flat_map(&:vms)
-  end
-
   def self.vms_without_a_zone
     Vm.where(:ems_id => nil).to_a
-  end
-
-  def miq_templates
-    MiqPreloader.preload(self, :ext_management_systems => :miq_templates)
-    ext_management_systems.flat_map(&:miq_templates)
-  end
-
-  def vm_or_template_ids
-    vms_and_templates.collect(&:id)
-  end
-
-  def vm_ids
-    vms.collect(&:id)
-  end
-
-  def miq_template_ids
-    miq_templates.collect(&:id)
   end
 
   def storages
@@ -210,17 +173,6 @@ class Zone < ApplicationRecord
     storage_without_ems = Host.where(:ems_id => nil).includes(:storages).flat_map(&:storages).uniq
     storage_without_hosts + storage_without_ems
   end
-
-  # Used by AggregationMixin
-  alias_method :all_storages,           :storages
-  alias_method :all_hosts,              :hosts
-  alias_method :all_host_ids,           :host_ids
-  alias_method :all_vms_and_templates,  :vms_and_templates
-  alias_method :all_vm_or_template_ids, :vm_or_template_ids
-  alias_method :all_vms,                :vms
-  alias_method :all_vm_ids,             :vm_ids
-  alias_method :all_miq_templates,      :miq_templates
-  alias_method :all_miq_template_ids,   :miq_template_ids
 
   def display_name
     name
@@ -237,8 +189,8 @@ class Zone < ApplicationRecord
   protected
 
   def check_zone_in_use_on_destroy
-    raise "cannot delete default zone" if name == "default"
-    raise "zone name '#{name}' is used by a server" unless miq_servers.blank?
+    raise _("cannot delete default zone") if name == "default"
+    raise _("zone name '%{name}' is used by a server") % {:name => name} unless miq_servers.blank?
   end
 
   private

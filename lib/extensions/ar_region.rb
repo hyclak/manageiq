@@ -1,12 +1,19 @@
-require_relative './ar_virtual'
+require_relative 'ar_virtual'
 
 module ArRegion
   extend ActiveSupport::Concern
 
   DEFAULT_RAILS_SEQUENCE_FACTOR = 1_000_000_000_000
+  COMPRESSED_ID_SEPARATOR = 'r'.freeze
+  CID_OR_ID_MATCHER = "\\d+?(#{COMPRESSED_ID_SEPARATOR}\\d+)?".freeze
+  RE_COMPRESSED_ID = /^(\d+)#{COMPRESSED_ID_SEPARATOR}(\d+)$/
 
   included do
     cache_with_timeout(:id_to_miq_region) { Hash.new }
+  end
+
+  def self.anonymous_class_with_ar_region
+    @klass_with_ar_region ||= Class.new(ActiveRecord::Base).send(:include, self)
   end
 
   module ClassMethods
@@ -49,6 +56,10 @@ module ArRegion
       id.to_i / rails_sequence_factor
     end
 
+    def id_in_region(id, region_number)
+      region_number * rails_sequence_factor + id
+    end
+
     def region_to_range(region_number)
       (region_number * rails_sequence_factor)..(region_number * rails_sequence_factor + rails_sequence_factor - 1)
     end
@@ -80,8 +91,7 @@ module ArRegion
 
     def split_id(id)
       return [my_region_number, nil] if id.nil?
-      id = uncompress_id(id) if compressed_id?(id)
-      id = id.to_i
+      id = uncompress_id(id)
 
       region_number = id_to_region(id)
       short_id      = (region_number == 0) ? id : id % (region_number * rails_sequence_factor)
@@ -93,10 +103,8 @@ module ArRegion
     # ID compression
     #
 
-    COMPRESSED_ID_SEPARATOR = 'r'
-    RE_COMPRESSED_ID = /^(\d+)#{COMPRESSED_ID_SEPARATOR}(\d+)$/
     def compressed_id?(id)
-      id.to_s =~ RE_COMPRESSED_ID
+      id.to_s =~ /^#{CID_OR_ID_MATCHER}$/
     end
 
     def compress_id(id)
@@ -124,10 +132,13 @@ module ArRegion
       ids.partition { |id| self.id_in_current_region?(id) }
     end
 
+    def group_ids_by_region(ids)
+      ids.group_by { |id| id_to_region(id) }
+    end
+
     def region_number_from_sequence
+      return unless connection.data_source_exists?("miq_databases")
       id_to_region(connection.select_value("SELECT last_value FROM miq_databases_id_seq"))
-    rescue ActiveRecord::StatementInvalid # sequence does not exist yet
-      nil
     end
 
     private
@@ -150,8 +161,7 @@ module ArRegion
   end
 
   def region_number
-    return my_region_number if self.new_record?
-    id ? (id / self.class.rails_sequence_factor) : nil
+    id ? (id / self.class.rails_sequence_factor) : my_region_number
   end
   alias_method :region_id, :region_number
 

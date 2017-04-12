@@ -2,7 +2,6 @@ class Account < ApplicationRecord
   belongs_to :vm_or_template
   belongs_to :host
 
-  include ReportableMixin
   include RelationshipMixin
   self.default_relationship_type = "accounts"
 
@@ -94,7 +93,8 @@ class Account < ApplicationRecord
     if accttype == valid_account_type
       block.call
     else
-      raise "Cannot call method '#{caller[0][/`.*'/][1..-2]}' on an Account of type '#{accttype}'"
+      raise _("Cannot call method '%{caller}' on an Account of type '%{type}'") % {:caller => caller[0][/`.*'/][1..-2],
+                                                                                   :type   => accttype}
     end
   end
 
@@ -104,7 +104,7 @@ class Account < ApplicationRecord
   end
 
   def add_user(owns)
-    with_valid_account_type('group') { set_child(owns) }
+    with_valid_account_type('group') { add_child(owns) }
   end
 
   def remove_user(owns)
@@ -120,7 +120,7 @@ class Account < ApplicationRecord
   end
 
   def add_group(owner)
-    with_valid_account_type('user') { set_parent(owner) }
+    with_valid_account_type('user') { add_parent(owner) }
   end
 
   def remove_group(owner)

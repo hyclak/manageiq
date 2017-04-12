@@ -32,7 +32,7 @@
           :data_type: :string
         :owner_first_name:
           :description: First Name
-          :required: true
+          :required: false
           :display: :edit
           :data_type: :string
         :owner_manager:
@@ -52,7 +52,7 @@
           :data_type: :string
         :owner_last_name:
           :description: Last Name
-          :required: true
+          :required: false
           :display: :edit
           :data_type: :string
         :owner_manager_mail:
@@ -193,7 +193,7 @@
         :sysprep_product_id:
           :description: ProductID
           :required_method: :validate_sysprep_field
-          :required: true
+          :required: false
           :display: :edit
           :data_type: :string
         :sysprep_identification:
@@ -421,13 +421,21 @@
           :required: false
           :display: :edit
           :data_type: :integer
+        :placement_storage_profile:
+          :values_from:
+            :method: :allowed_storage_profiles
+          :auto_select_single: false
+          :description: Storage Profile
+          :required: false
+          :display: :edit
+          :data_type: :integer
         :placement_host_name:
           :values_from:
             :method: :allowed_hosts
           :auto_select_single: false
           :description: Name
-          :required_method: :validate_placement
-          :required: true
+          :validation_method: :validate_placement_host_name
+          :required: false
           :display: :edit
           :data_type: :integer
           :required_description: Host Name
@@ -659,7 +667,7 @@
               :dvs: true
               :vlans: true
             :method: :allowed_vlans
-          :description: vLan
+          :description: Virtual Network
           :required: true
           :display: :edit
           :data_type: :string
@@ -725,9 +733,13 @@
           :data_type: :integer
         :vm_memory:
           :values:
+            "1024": "1024"
             "2048": "2048"
             "4096": "4096"
-            "1024": "1024"
+            "8192": "8192"
+            "12288": "12288"
+            "16384": "16384"
+            "32768": "32768"
           :description: Memory (MB)
           :required: false
           :display: :edit

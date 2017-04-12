@@ -1,15 +1,30 @@
 class ManageIQ::Providers::Google::CloudManager < ManageIQ::Providers::CloudManager
   require_nested :AvailabilityZone
+  require_nested :EventCatcher
   require_nested :EventParser
   require_nested :Flavor
   require_nested :Provision
   require_nested :ProvisionWorkflow
+  require_nested :MetricsCapture
+  require_nested :MetricsCollectorWorker
   require_nested :RefreshParser
   require_nested :RefreshWorker
   require_nested :Refresher
-  require_nested :SecurityGroup
   require_nested :Template
+  require_nested :VirtualTemplate
   require_nested :Vm
+
+  include ManageIQ::Providers::Google::ManagerMixin
+
+  supports :provisioning
+  supports :regions
+
+  before_create :ensure_managers
+  before_update :ensure_managers_zone_and_provider_region
+
+  def ensure_network_manager
+    build_network_manager(:type => 'ManageIQ::Providers::Google::NetworkManager') unless network_manager
+  end
 
   def self.ems_type
     @ems_type ||= "gce".freeze
@@ -47,52 +62,6 @@ class ManageIQ::Providers::Google::CloudManager < ManageIQ::Providers::CloudMana
 
   def description
     ManageIQ::Providers::Google::Regions.find_by_name(provider_region)[:description]
-  end
-
-  def verify_credentials(auth_type = nil, options = {})
-    begin
-      options[:auth_type] = auth_type
-
-      connection = connect(options)
-
-      # Not all errors will cause Fog to raise an exception,
-      # for example an error in the google_project id will
-      # succeed to connect but the first API call will raise
-      # an exception, so make a simple call to the API to
-      # confirm everything is working
-      connection.regions.all
-    rescue => err
-      raise MiqException::MiqInvalidCredentialsError, err.message
-    end
-
-    true
-  end
-
-  #
-  # Connections
-  #
-
-  def self.raw_connect(google_project, google_json_key)
-    require 'fog/google'
-
-    ::Fog::Compute.new(
-      :provider               => "Google",
-      :google_project         => google_project,
-      :google_json_key_string => google_json_key,
-    )
-  end
-
-  def connect(options = {})
-    require 'fog/google'
-
-    raise MiqException::MiqHostError, "No credentials defined" if self.missing_credentials?(options[:auth_type])
-
-    auth_token = authentication_token(options[:auth_type])
-    self.class.raw_connect(project, auth_token)
-  end
-
-  def gce
-    @gce ||= connect(:service => "GCE")
   end
 
   # Operations

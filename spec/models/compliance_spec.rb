@@ -6,6 +6,9 @@ describe Compliance do
     let(:vm1)        { FactoryGirl.create(:vm_vmware, :host => host1, :ext_management_system => ems_vmware) }
     let(:zone)       { FactoryGirl.build(:zone) }
 
+    let(:ems_kubernetes_container) { FactoryGirl.create(:ems_kubernetes, :zone => zone) }
+    let(:container_image) { FactoryGirl.create(:container_image, :ext_management_system => ems_kubernetes_container) }
+
     before { allow(MiqServer).to receive(:my_zone).and_return(zone) }
 
     context(".check_compliance_queue") do
@@ -33,8 +36,18 @@ describe Compliance do
         host1.check_compliance_queue
       end
 
+      it "for single container image" do
+        create_check_compliance_queue_expections(container_image)
+        Compliance.check_compliance_queue(container_image)
+      end
+
+      it "for single container image via vm method" do
+        create_check_compliance_queue_expections(container_image)
+        container_image.check_compliance_queue
+      end
+
       it "for multiple objects" do
-        subject = [vm1, host1]
+        subject = [vm1, host1, container_image]
         create_check_compliance_queue_expections(*subject)
 
         Compliance.check_compliance_queue(subject)
@@ -42,7 +55,7 @@ describe Compliance do
 
       it "for multiple objects with inputs" do
         inputs = {:foo => 'bar'}
-        subject = [vm1, host1]
+        subject = [vm1, host1, container_image]
         create_check_compliance_queue_expections(*subject, inputs)
 
         Compliance.check_compliance_queue(subject, inputs)
@@ -82,10 +95,23 @@ describe Compliance do
         let(:policy)     { FactoryGirl.create(:miq_policy, :mode => 'compliance', :towhat => 'Vm', :active => true) }
         let(:policy_set) { FactoryGirl.create(:miq_policy_set) }
         let(:template)   { FactoryGirl.create(:template_vmware, :host => host1, :ext_management_system => ems_vmware) }
+        let(:action)     { FactoryGirl.create(:miq_action, :name => 'compliance_failed', :action_type => 'default') }
+        let(:content) do
+          FactoryGirl.create(
+            :miq_policy_content, :qualifier => 'failure', :failure_sequence => 1, :failure_synchronous => true
+          )
+        end
+        let(:event_definition) { MiqEventDefinition.find_by(:name => "vm_compliance_check") }
+        let(:container_policy) do
+          FactoryGirl.create(:miq_policy, :mode => 'compliance', :towhat => 'Container Image', :active => true)
+        end
 
         before do
           policy.sync_events([FactoryGirl.create(:miq_event_definition, :name => "vm_compliance_check")])
           policy.conditions << FactoryGirl.create(:condition, :expression => MiqExpression.new("IS NOT EMPTY" => {"field" => "Vm-id"}))
+          content.miq_event_definition = event_definition
+          content.miq_action = action
+          policy.miq_policy_contents << content
           policy_set.add_member(policy)
           ems_vmware.add_policy(policy_set)
         end
@@ -93,6 +119,7 @@ describe Compliance do
         it "compliant" do
           expect(MiqEvent).to receive(:raise_evm_event_queue).with(subject, "vm_compliance_passed")
           expect(Compliance.check_compliance(subject)).to be_truthy
+          expect(subject.compliances.last.compliant).to be_truthy
         end
 
         it "non-compliant" do
@@ -100,6 +127,7 @@ describe Compliance do
 
           expect(MiqEvent).to receive(:raise_evm_event_queue).with(subject, "vm_compliance_failed")
           expect(Compliance.check_compliance(subject)).to be_falsey
+          expect(subject.compliances.last.compliant).to be_falsey
         end
       end
 
@@ -111,6 +139,35 @@ describe Compliance do
       context "template" do
         subject { template }
         include_examples ".check_compliance"
+      end
+
+      context "no condition" do
+        let(:policy) do
+          FactoryGirl.create(:miq_policy,
+                             :mode       => 'compliance',
+                             :towhat     => 'Vm',
+                             :expression => MiqExpression.new("=" => {"field" => "Vm-retired", "value" => "true"}),
+                             :active     => true)
+        end
+        let(:policy_set) { FactoryGirl.create(:miq_policy_set) }
+        let(:event_definition) { MiqEventDefinition.find_by(:name => "vm_compliance_check") }
+
+        before do
+          policy.sync_events([FactoryGirl.create(:miq_event_definition, :name => "vm_compliance_check")])
+          policy_set.add_member(policy)
+          ems_vmware.add_policy(policy_set)
+        end
+
+        it "compliant" do
+          vm1.update_attributes(:retired => true)
+          expect(MiqEvent).to receive(:raise_evm_event_queue).with(vm1, "vm_compliance_passed")
+          expect(Compliance.check_compliance(vm1)).to be_truthy
+          expect(vm1.compliances.last.compliant).to be_truthy
+        end
+
+        it "non-compliant" do
+          expect(Compliance.check_compliance(vm1)).to be_nil
+        end
       end
     end
   end

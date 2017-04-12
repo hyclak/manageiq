@@ -1,4 +1,15 @@
 module ManageIQ::Providers::Microsoft::InfraManager::VmOrTemplateShared::Scanning
+  extend ActiveSupport::Concern
+
+  included do
+    supports :smartstate_analysis do
+      feature_supported, reason = check_feature_support('smartstate_analysis')
+      unless feature_supported
+        unsupported_reason_add(:smartstate_analysis, reason)
+      end
+    end
+  end
+
   def perform_metadata_scan(ost)
     require 'MiqVm/miq_scvmm_vm'
 
@@ -22,8 +33,8 @@ module ManageIQ::Providers::Microsoft::InfraManager::VmOrTemplateShared::Scannin
     sync_stashed_metadata(ost)
   end
 
-  def validate_smartstate_analysis
-    validate_supported_check("Smartstate Analysis")
+  def requires_storage_for_scan?
+    false
   end
 
   def scan_via_ems?
@@ -78,6 +89,8 @@ module ManageIQ::Providers::Microsoft::InfraManager::VmOrTemplateShared::Scannin
         msg = "#{log_text} failed for VM:[#{vm_name}] with error [#{err}] after [#{Time.now.getlocal - st}] seconds"
         $log.error msg
         raise err, msg, err.backtrace
+      ensure
+        ost.miq_scvmm.close
       end
     end
   end

@@ -18,7 +18,7 @@
 #
 # - Refresh dialog fields       /api/service_catalogs/:id/service_templates/:id action "refresh_dialog_fields"
 #
-describe ApiController do
+describe "Service Catalogs API" do
   def sc_templates_url(id, st_id = nil)
     st_base = "#{service_catalogs_url(id)}/service_templates"
     st_id ? "#{st_base}/#{st_id}" : st_base
@@ -30,7 +30,7 @@ describe ApiController do
 
       run_post(service_catalogs_url, gen_request(:add, "name" => "sample service catalog"))
 
-      expect_request_forbidden
+      expect(response).to have_http_status(:forbidden)
     end
 
     it "rejects resource creation via create action without appropriate role" do
@@ -38,7 +38,7 @@ describe ApiController do
 
       run_post(service_catalogs_url, "name" => "sample service catalog")
 
-      expect_request_forbidden
+      expect(response).to have_http_status(:forbidden)
     end
 
     it "rejects resource creation with id specified" do
@@ -54,11 +54,18 @@ describe ApiController do
 
       run_post(service_catalogs_url, gen_request(:add, "name" => "sample service catalog"))
 
-      expect_request_success
-      expect_result_resource_keys_to_be_like_klass("results", "id", Integer)
-      expect_results_to_match_hash("results", [{"name" => "sample service catalog"}])
+      expect(response).to have_http_status(:ok)
+      expected = {
+        "results" => [
+          a_hash_including(
+            "id"   => kind_of(Integer),
+            "name" => "sample service catalog"
+          )
+        ]
+      }
+      expect(response.parsed_body).to include(expected)
 
-      sc_id = response_hash["results"].first["id"]
+      sc_id = response.parsed_body["results"].first["id"]
 
       expect(ServiceTemplateCatalog.find(sc_id)).to be_truthy
     end
@@ -68,11 +75,18 @@ describe ApiController do
 
       run_post(service_catalogs_url, "name" => "sample service catalog")
 
-      expect_request_success
-      expect_result_resource_keys_to_be_like_klass("results", "id", Integer)
-      expect_results_to_match_hash("results", [{"name" => "sample service catalog"}])
+      expect(response).to have_http_status(:ok)
+      expected = {
+        "results" => [
+          a_hash_including(
+            "id"   => kind_of(Integer),
+            "name" => "sample service catalog"
+          )
+        ]
+      }
+      expect(response.parsed_body).to include(expected)
 
-      sc_id = response_hash["results"].first["id"]
+      sc_id = response.parsed_body["results"].first["id"]
 
       expect(ServiceTemplateCatalog.find(sc_id)).to be_truthy
     end
@@ -82,11 +96,16 @@ describe ApiController do
 
       run_post(service_catalogs_url, gen_request(:add, [{"name" => "sc1"}, {"name" => "sc2"}]))
 
-      expect_request_success
-      expect_result_resource_keys_to_be_like_klass("results", "id", Integer)
-      expect_results_to_match_hash("results", [{"name" => "sc1"}, {"name" => "sc2"}])
+      expect(response).to have_http_status(:ok)
+      expected = {
+        "results" => a_collection_containing_exactly(
+          a_hash_including("id" => kind_of(Integer), "name" => "sc1"),
+          a_hash_including("id" => kind_of(Integer), "name" => "sc2")
+        )
+      }
+      expect(response.parsed_body).to include(expected)
 
-      results = response_hash["results"]
+      results = response.parsed_body["results"]
       sc_id1, sc_id2 = results.first["id"], results.second["id"]
       expect(ServiceTemplateCatalog.find(sc_id1)).to be_truthy
       expect(ServiceTemplateCatalog.find(sc_id2)).to be_truthy
@@ -106,10 +125,10 @@ describe ApiController do
                                                    {"href" => service_templates_url(st2.id)}
                                                  ]))
 
-      expect_request_success
+      expect(response).to have_http_status(:ok)
       expect_results_to_match_hash("results", [{"name" => "sc", "description" => "sc description"}])
 
-      sc_id = response_hash["results"].first["id"]
+      sc_id = response.parsed_body["results"].first["id"]
 
       expect(ServiceTemplateCatalog.find(sc_id)).to be_truthy
       expect(ServiceTemplateCatalog.find(sc_id).service_templates.pluck(:id)).to match_array([st1.id, st2.id])
@@ -122,7 +141,7 @@ describe ApiController do
 
       run_post(service_catalogs_url, gen_request(:edit, "name" => "sc1", "href" => service_catalogs_url(999_999)))
 
-      expect_request_forbidden
+      expect(response).to have_http_status(:forbidden)
     end
 
     it "rejects edits for invalid resources" do
@@ -130,7 +149,7 @@ describe ApiController do
 
       run_post(service_catalogs_url(999_999), gen_request(:edit, "description" => "updated sc description"))
 
-      expect_resource_not_found
+      expect(response).to have_http_status(:not_found)
     end
 
     it "supports single resource edit" do
@@ -140,6 +159,21 @@ describe ApiController do
 
       run_post(service_catalogs_url(sc.id), gen_request(:edit, "description" => "updated sc description"))
 
+      expected = {
+        "service_templates" => a_hash_including(
+          "actions" => a_collection_containing_exactly(
+            a_hash_including(
+              "name"   => "assign",
+              "method" => "post",
+            ),
+            a_hash_including(
+              "name"   => "unassign",
+              "method" => "post",
+            )
+          )
+        )
+      }
+      expect(response.parsed_body).to include(expected)
       expect_single_resource_query("id" => sc.id, "name" => "sc", "description" => "updated sc description")
       expect(sc.reload.description).to eq("updated sc description")
     end
@@ -169,7 +203,7 @@ describe ApiController do
 
       run_post(service_catalogs_url, gen_request(:delete, "name" => "sc1", "href" => service_catalogs_url(100)))
 
-      expect_request_forbidden
+      expect(response).to have_http_status(:forbidden)
     end
 
     it "rejects resource deletion without appropriate role" do
@@ -177,7 +211,7 @@ describe ApiController do
 
       run_delete(service_catalogs_url(100))
 
-      expect_request_forbidden
+      expect(response).to have_http_status(:forbidden)
     end
 
     it "rejects resource deletes for invalid resources" do
@@ -185,7 +219,7 @@ describe ApiController do
 
       run_delete(service_catalogs_url(999_999))
 
-      expect_resource_not_found
+      expect(response).to have_http_status(:not_found)
     end
 
     it "supports single resource deletes" do
@@ -195,7 +229,7 @@ describe ApiController do
 
       run_delete(service_catalogs_url(sc.id))
 
-      expect_request_success_with_no_content
+      expect(response).to have_http_status(:no_content)
       expect { sc.reload }.to raise_error(ActiveRecord::RecordNotFound)
     end
 
@@ -233,7 +267,7 @@ describe ApiController do
 
       run_post(sc_templates_url(100), gen_request(:assign, "href" => service_templates_url(1)))
 
-      expect_request_forbidden
+      expect(response).to have_http_status(:forbidden)
     end
 
     it "rejects unassign requests without appropriate role" do
@@ -241,7 +275,7 @@ describe ApiController do
 
       run_post(sc_templates_url(100), gen_request(:unassign, "href" => service_templates_url(1)))
 
-      expect_request_forbidden
+      expect(response).to have_http_status(:forbidden)
     end
 
     it "rejects assign requests with invalid service template" do
@@ -251,7 +285,7 @@ describe ApiController do
 
       run_post(sc_templates_url(sc.id), gen_request(:assign, "href" => service_templates_url(999_999)))
 
-      expect_request_success
+      expect(response).to have_http_status(:ok)
       expect_results_to_match_hash("results", [{"success" => false, "href" => service_catalogs_url(sc.id)}])
     end
 
@@ -263,7 +297,7 @@ describe ApiController do
 
       run_post(sc_templates_url(sc.id), gen_request(:assign, "href" => service_templates_url(st.id)))
 
-      expect_request_success
+      expect(response).to have_http_status(:ok)
       expect_results_to_match_hash("results", [{"success"               => true,
                                                 "href"                  => service_catalogs_url(sc.id),
                                                 "service_template_id"   => st.id,
@@ -282,7 +316,7 @@ describe ApiController do
 
       run_post(sc_templates_url(sc.id), gen_request(:unassign, "href" => service_templates_url(st1.id)))
 
-      expect_request_success
+      expect(response).to have_http_status(:ok)
       expect_results_to_match_hash("results", [{"success"               => true,
                                                 "href"                  => service_catalogs_url(sc.id),
                                                 "service_template_id"   => st1.id,
@@ -300,37 +334,105 @@ describe ApiController do
        "status"         => "Ok"}
     end
 
+    let(:dialog1) { FactoryGirl.create(:dialog, :label => "Dialog1") }
+    let(:tab1)    { FactoryGirl.create(:dialog_tab, :label => "Tab1") }
+    let(:group1)  { FactoryGirl.create(:dialog_group, :label => "Group1") }
+    let(:text1)   { FactoryGirl.create(:dialog_field_text_box, :label => "TextBox1", :name => "text1") }
+    let(:ra1)     { FactoryGirl.create(:resource_action, :action => "Provision", :dialog => dialog1) }
+    let(:st1)     { FactoryGirl.create(:service_template, :name => "service template 1", :display => true) }
+    let(:ra2)     { FactoryGirl.create(:resource_action, :action => "Provision", :dialog => dialog1) }
+    let(:st2)     { FactoryGirl.create(:service_template, :name => "service template 2", :display => true) }
+    let(:sc)      { FactoryGirl.create(:service_template_catalog, :name => "sc", :description => "sc description") }
+
+    def init_st(service_template, resource_action)
+      service_template.resource_actions = [resource_action]
+      dialog1.dialog_tabs << tab1
+      tab1.dialog_groups << group1
+      group1.dialog_fields << text1
+    end
+
+    it "does not return order action for non-orderable service templates" do
+      api_basic_authorize(subcollection_action_identifier(:service_catalogs, :service_templates, :edit),
+                          subcollection_action_identifier(:service_catalogs, :service_templates, :order))
+
+      init_st(st1, ra1)
+      sc.service_templates = [st1]
+
+      st1.display = false
+      st1.save
+
+      run_get sc_templates_url(sc.id, st1.id)
+
+      expect(response).to have_http_status(:ok)
+      expect(response.parsed_body).to_not include_actions("order")
+    end
+
+    it "returns order action for orderable service templates" do
+      api_basic_authorize(subcollection_action_identifier(:service_catalogs, :service_templates, :edit),
+                          subcollection_action_identifier(:service_catalogs, :service_templates, :order))
+
+      init_st(st1, ra1)
+      sc.service_templates = [st1]
+
+      run_get sc_templates_url(sc.id, st1.id)
+
+      expect(response).to have_http_status(:ok)
+      expect(response.parsed_body).to include_actions("order")
+    end
+
     it "rejects order requests without appropriate role" do
       api_basic_authorize
 
       run_post(sc_templates_url(100), gen_request(:order, "href" => service_templates_url(1)))
 
-      expect_request_forbidden
+      expect(response).to have_http_status(:forbidden)
     end
 
     it "supports single order request" do
       api_basic_authorize subcollection_action_identifier(:service_catalogs, :service_templates, :order)
 
-      sc  = FactoryGirl.create(:service_template_catalog, :name => "sc", :description => "sc description")
-      st1 = FactoryGirl.create(:service_template, :name => "service template 1")
+      init_st(st1, ra1)
       sc.service_templates = [st1]
 
       run_post(sc_templates_url(sc.id, st1.id), gen_request(:order))
 
+      expect_single_resource_query(order_request.merge("href" => /service_requests/))
+    end
+
+    it "accepts order requests with required fields" do
+      api_basic_authorize subcollection_action_identifier(:service_catalogs, :service_templates, :order)
+
+      text1.required = true
+      init_st(st1, ra1)
+      sc.service_templates = [st1]
+
+      run_post(sc_templates_url(sc.id, st1.id), gen_request(:order, "text1" => "value1"))
+
       expect_single_resource_query(order_request)
+    end
+
+    it "rejects order requests without required fields" do
+      api_basic_authorize subcollection_action_identifier(:service_catalogs, :service_templates, :order)
+
+      text1.required = true
+      init_st(st1, ra1)
+      sc.service_templates = [st1]
+
+      run_post(sc_templates_url(sc.id, st1.id), gen_request(:order))
+
+      expect_bad_request("Failed to order")
     end
 
     it "supports multiple order requests" do
       api_basic_authorize subcollection_action_identifier(:service_catalogs, :service_templates, :order)
 
-      sc  = FactoryGirl.create(:service_template_catalog, :name => "sc", :description => "sc description")
-      st1 = FactoryGirl.create(:service_template, :name => "service template 1")
-      st2 = FactoryGirl.create(:service_template, :name => "service template 1")
+      init_st(st1, ra1)
+      init_st(st2, ra2)
       sc.service_templates = [st1, st2]
 
       run_post(sc_templates_url(sc.id), gen_request(:order, [{"href" => service_templates_url(st1.id)},
                                                              {"href" => service_templates_url(st2.id)}]))
-      expect_request_success
+      expect(response).to have_http_status(:ok)
       expect_results_to_match_hash("results", [order_request, order_request])
     end
   end
@@ -361,7 +463,7 @@ describe ApiController do
 
       run_post(sc_templates_url(sc.id, st1.id), gen_request(:refresh_dialog_fields, "fields" => %w(test1)))
 
-      expect_request_forbidden
+      expect(response).to have_http_status(:forbidden)
     end
 
     it "rejects refresh dialog fields with unspecified fields" do
@@ -388,9 +490,16 @@ describe ApiController do
 
       run_post(sc_templates_url(sc.id, st1.id), gen_request(:refresh_dialog_fields, "fields" => %w(text1)))
 
-      expect_single_action_result(:success => true, :message => /refreshing dialog fields/i)
-      expect_hash_to_have_keys(response_hash, %w(success href service_template_id service_template_href result))
-      expect_hash_to_have_keys(response_hash["result"], %w(text1))
+      expected = {
+        "success"               => true,
+        "message"               => a_string_matching(/refreshing dialog fields/i),
+        "href"                  => anything,
+        "service_template_id"   => anything,
+        "service_template_href" => anything,
+        "result"                => hash_including("text1")
+      }
+      expect(response.parsed_body).to include(expected)
+      expect(response).to have_http_status(:ok)
     end
   end
 end

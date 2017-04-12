@@ -44,9 +44,11 @@ class LogFile < ApplicationRecord
     # TODO: Currently the ftp code in the LogFile class has LogFile logic for the destination folders (evm_1/server_1) and builds these paths and copies the logs
     # appropriately.  To make all the various mechanisms work, we need to build a destination URI based on the input filename and pass this along
     # so that the nfs, ftp, smb, etc. mechanism have very little LogFile logic and only need to know how decipher the URI and build the directories as appropraite.
-    raise "LogFile local_file is nil" unless local_file
-    raise "LogFile local_file: [#{local_file}] does not exist!" unless File.exist?(local_file)
-    raise "Log Depot settings not configured" unless file_depot
+    raise _("LogFile local_file is nil") unless local_file
+    unless File.exist?(local_file)
+      raise _("LogFile local_file: [%{file_name}] does not exist!") % {:file_name => local_file}
+    end
+    raise _("Log Depot settings not configured") unless file_depot
 
     method = get_post_method(file_depot.uri)
     send("upload_log_file_#{method}")
@@ -138,19 +140,12 @@ class LogFile < ApplicationRecord
                    :description => "Default logfile")
   end
 
-  # Added tcp ping stuff here until ftp is refactored into a separate class
-  def self.get_ping_depot_options
-    @@ping_depot_options ||= VMDB::Config.new("vmdb").config[:log][:collection]
-  end
-
   def self.ping_timeout
-    get_ping_depot_options
-    @@ping_timeout ||= (@@ping_depot_options[:ping_depot_timeout] || 20)
+    ::Settings.log.collection.ping_depot_timeout
   end
 
   def self.do_ping?
-    get_ping_depot_options
-    @@do_ping ||= @@ping_depot_options[:ping_depot] == true
+    ::Settings.log.collection.ping_depot == true
   end
 
   def upload_log_file_ftp
@@ -233,8 +228,19 @@ class LogFile < ApplicationRecord
     resource = server.who_am_i
 
     # server must implement an instance method: started_on? which returns whether the server is started
-    raise MiqException::Error, "started? not implemented for #{server.class.name}" unless server.respond_to?(:started?)
-    raise MiqException::Error, "Log request failed since [#{resource} #{server.name if server.respond_to?(:name)}] is not started" unless server.started?
+    unless server.respond_to?(:started?)
+      raise MiqException::Error, _("started? not implemented for %{server_name}") % {:server_name => server.class.name}
+    end
+    unless server.started?
+      if server.respond_to?(:name)
+        raise MiqException::Error,
+              _("Log request failed since [%{resource} %{server_name}] is not started") % {:resource    => resource,
+                                                                                           :server_name => server.name}
+      else
+        raise MiqException::Error,
+              _("Log request failed since [%{resource}] is not started") % {:resource => resource}
+      end
+    end
 
     task = MiqTask.find(taskid)
 
@@ -243,7 +249,10 @@ class LogFile < ApplicationRecord
     task.update_status("Active", "Ok", msg)
 
     cb = {:class_name => task.class.name, :instance_id => task.id, :method_name => :queue_callback_on_exceptions, :args => ['Finished']}
-    raise MiqException::Error, "_post_my_logs not implemented for #{server.class.name}" unless server.respond_to?(:_post_my_logs)
+    unless server.respond_to?(:_post_my_logs)
+      raise MiqException::Error,
+            _("_post_my_logs not implemented for %{server_name}") % {:server_name => server.class.name}
+    end
     options = options.merge(:callback => cb, :timeout => LOG_REQUEST_TIMEOUT)
     server._post_my_logs(options)
 

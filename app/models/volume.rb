@@ -8,8 +8,6 @@ class Volume < ApplicationRecord
       .where("#{v}.id" => id).to_sql
   }, :foreign_key => :volume_group
 
-  include ReportableMixin
-
   virtual_column :free_space_percent, :type => :float
   virtual_column :used_space_percent, :type => :float
 
@@ -37,8 +35,8 @@ class Volume < ApplicationRecord
     return if hashes.nil?
 
     deletes = {}
-    deletes[:partitions] = parent.hardware.partitions.order(:id).select("id, name").collect { |p| [p.id, p.name] }
-    deletes[:volumes] = parent.hardware.volumes.order(:id).select("id, name").collect { |v| [v.id, v.name] }
+    deletes[:partitions] = parent.hardware.partitions.order(:id).pluck(:id, :name)
+    deletes[:volumes] = parent.hardware.volumes.order(:id).pluck(:id, :name)
 
     new_partitions = []
     new_volumes = []
@@ -147,7 +145,7 @@ class Volume < ApplicationRecord
   end
 
   def self.find_disk_by_controller(parent, controller)
-    return parent.hardware.disks.find_by_controller_type_and_location($1, $2) if controller =~ /^([^0-9]+)([0-9]:[0-9]):[0-9]$/
+    return parent.hardware.disks.find_by(:controller_type => $1, :location => $2) if controller =~ /^([^0-9]+)([0-9]:[0-9]):[0-9]$/
     nil
   end
 end

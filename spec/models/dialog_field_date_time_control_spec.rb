@@ -111,7 +111,8 @@ describe DialogFieldDateTimeControl do
         let(:dynamic) { true }
 
         before do
-          allow(DynamicDialogFieldValueProcessor).to receive(:values_from_automate).with(dialog_field).and_return("2015-01-02")
+          allow(DynamicDialogFieldValueProcessor).to receive(:values_from_automate)
+            .with(dialog_field).and_return("2015-01-02")
         end
 
         it "returns the values from the value processor" do
@@ -136,18 +137,21 @@ describe DialogFieldDateTimeControl do
   end
 
   describe "#refresh_json_value" do
-    let(:dialog_field) { described_class.new }
+    let(:dialog_field) { described_class.new(:read_only => true) }
 
     before do
       allow(described_class).to receive(:server_timezone).and_return("UTC")
-      allow(DynamicDialogFieldValueProcessor).to receive(:values_from_automate).with(dialog_field).and_return("2015-02-03T18:50:00Z")
+      allow(DynamicDialogFieldValueProcessor).to receive(:values_from_automate)
+        .with(dialog_field).and_return("2015-02-03T18:50:00Z")
     end
 
     it "returns the default value in a hash" do
       expect(dialog_field.refresh_json_value).to eq(
-        :date => "02/03/2015",
-        :hour => "18",
-        :min  => "50"
+        :date      => "02/03/2015",
+        :hour      => "18",
+        :min       => "50",
+        :read_only => true,
+        :visible   => true
       )
     end
 

@@ -23,17 +23,13 @@ cols:
 - hostname
 - ipaddress
 - emstype_description
-- port
+- port_show
 
 # Included tables (joined, has_one, has_many) and columns
 include:
-  zone:
-    columns:
-    - name
 
 # Included tables and columns for query performance
 include_for_find:
-  :zone: {}
   :tags: {}
 
 # Order of columns (from all tables)
@@ -41,7 +37,7 @@ col_order:
 - name
 - hostname
 - ipaddress
-- port
+- port_show
 - emstype_description
 
 # Column titles, in order

@@ -34,10 +34,20 @@ module Authenticator
       false
     end
 
+    def user_authorizable_without_authentication?
+      false
+    end
+
+    def authorize_user(userid)
+      return unless user_authorizable_without_authentication?
+      authenticate(userid, "", {}, {:require_user => true, :authorize_only => true})
+    end
+
     def authenticate(username, password, request = nil, options = {})
       options = options.dup
       options[:require_user] ||= false
-      fail_message = "Authentication failed"
+      options[:authorize_only] ||= false
+      fail_message = _("Authentication failed")
 
       user_or_taskid = nil
 
@@ -46,20 +56,22 @@ module Authenticator
 
         username = normalize_username(username)
 
-        if _authenticate(username, password, request)
+        authenticated = options[:authorize_only] || _authenticate(username, password, request)
+        if authenticated
           AuditEvent.success(audit.merge(:message => "User #{username} successfully validated by #{self.class.proper_name}"))
 
           if authorize?
-            user_or_taskid = authorize_queue(username, request)
+            user_or_taskid = authorize_queue(username, request, options)
           else
             # If role_mode == database we will only use the external system for authentication. Also, the user must exist in our database
             # otherwise we will fail authentication
-            user_or_taskid = User.find_by_userid(username)
+            user_or_taskid = lookup_by_identity(username)
             user_or_taskid ||= autocreate_user(username)
 
             unless user_or_taskid
               AuditEvent.failure(audit.merge(:message => "User #{username} authenticated but not defined in EVM"))
-              raise MiqException::MiqEVMLoginError, "User authenticated but not defined in EVM, please contact your EVM administrator"
+              raise MiqException::MiqEVMLoginError,
+                    _("User authenticated but not defined in EVM, please contact your EVM administrator")
             end
           end
 
@@ -105,7 +117,7 @@ module Authenticator
 
           unless identity
             msg = "Authentication failed for userid #{username}, unable to find user object in #{self.class.proper_name}"
-            _log.warn("#{msg}")
+            _log.warn(msg)
             AuditEvent.failure(audit.merge(:message => msg))
             task.error(msg)
             task.state_finished
@@ -114,20 +126,21 @@ module Authenticator
 
           matching_groups = match_groups(groups_for(identity))
           userid = userid_for(identity, username)
-          user   = User.find_by_userid(userid) || User.new(:userid => userid)
+          user   = User.find_or_initialize_by(:userid => userid)
           update_user_attributes(user, username, identity)
+          user.miq_groups = matching_groups
 
           if matching_groups.empty?
             msg = "Authentication failed for userid #{user.userid}, unable to match user's group membership to an EVM role"
             AuditEvent.failure(audit.merge(:message => msg))
-            _log.warn("#{msg}")
+            _log.warn(msg)
             task.error(msg)
             task.state_finished
+            user.save! unless user.new_record?
             return nil
           end
 
           user.lastlogon = Time.now.utc
-          user.miq_groups = matching_groups
           user.save!
 
           _log.info("Authorized User: [#{user.userid}]")
@@ -203,7 +216,7 @@ module Authenticator
       config[:bind_pwd] = MiqPassword.try_encrypt(config[:bind_pwd])
     end
 
-    def authorize_queue(username, _request, *args)
+    def authorize_queue(username, _request, _options, *args)
       task = MiqTask.create(:name => "#{self.class.proper_name} User Authorization of '#{username}'", :userid => username)
       if authorize_queue?
         encrypt_ldap_password(config) if MiqLdap.using_ldap?
@@ -229,9 +242,9 @@ module Authenticator
     end
 
     def run_task(taskid, status)
-      task = MiqTask.find_by_id(taskid)
+      task = MiqTask.find_by(:id => taskid)
       if task.nil?
-        message = "Unable to find task with id: [#{taskid}]"
+        message = _("Unable to find task with id: [%{task_id}]") % {:task_id => taskid}
         _log.error(message)
         raise message
       end
@@ -252,7 +265,7 @@ module Authenticator
       return [] if external_group_names.empty?
       external_group_names = external_group_names.collect(&:downcase)
 
-      internal_groups = MiqGroup.order(:sequence).to_a
+      internal_groups = MiqGroup.in_my_region.order(:sequence).to_a
 
       external_group_names.each { |g| _log.debug("External Group: #{g}") }
       internal_groups.each      { |g| _log.debug("Internal Group: #{g.description.downcase}") }

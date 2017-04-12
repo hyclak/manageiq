@@ -8,7 +8,7 @@ FactoryGirl.define do
     raw_power_state "running"
   end
 
-  factory :template, :class => "Template", :parent => :vm_or_template do
+  factory :template, :class => "MiqTemplate", :parent => :vm_or_template do
     sequence(:name) { |n| "template_#{seq_padded_for_sorting(n)}" }
     template        true
     raw_power_state "never"
@@ -17,6 +17,8 @@ FactoryGirl.define do
   factory(:vm,             :class => "Vm",            :parent => :vm_or_template)
   factory(:vm_cloud,       :class => "VmCloud",       :parent => :vm)       { cloud true }
   factory(:vm_infra,       :class => "VmInfra",       :parent => :vm)
+  factory(:vm_server,      :class => "VmServer",      :parent => :vm)
+  factory(:vm_xen,         :class => "VmXen",         :parent => :vm_infra)
   factory(:template_cloud, :class => "TemplateCloud", :parent => :template) { cloud true }
   factory(:template_infra, :class => "TemplateInfra", :parent => :template)
 
@@ -28,4 +30,6 @@ FactoryGirl.define do
     location { |x| "#{x.name}/#{x.name}.img.manifest.xml" }
     vendor   "amazon"
   end
+
+  factory(:template_xen, :class => "TemplateXen", :parent => :template_infra)
 end

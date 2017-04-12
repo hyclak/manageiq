@@ -32,7 +32,7 @@
           :data_type: :string
         :owner_first_name:
           :description: First Name
-          :required: true
+          :required: false
           :display: :edit
           :data_type: :string
         :owner_manager:
@@ -52,7 +52,7 @@
           :data_type: :string
         :owner_last_name:
           :description: Last Name
-          :required: true
+          :required: false
           :display: :edit
           :data_type: :string
         :owner_manager_mail:
@@ -449,7 +449,7 @@
           :display: :edit
           :data_type: :integer
           :notes_display: :show
-        :number_of_cpus:
+        :number_of_sockets:
           :values:
             1: "1"
             2: "2"
@@ -488,6 +488,9 @@
           :data_type: :boolean
         :vm_memory:
           :values:
+            "32768": "32768"
+            "16384": "16384"
+            "12288": "12288"
             "8192": "8192"
             "4096": "4096"
             "2048": "2048"
@@ -499,6 +502,9 @@
           :data_type: :string
         :vm_maximum_memory:
           :values:
+            "32768": "32768"
+            "16384": "16384"
+            "12288": "12288"
             "8192": "8192"
             "4096": "4096"
             "2048": "2048"
@@ -510,6 +516,9 @@
           :data_type: :string
         :vm_minimum_memory:
           :values:
+            "32768": "32768"
+            "16384": "16384"
+            "12288": "12288"
             "8192": "8192"
             "4096": "4096"
             "2048": "2048"

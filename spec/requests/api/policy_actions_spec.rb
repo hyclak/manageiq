@@ -7,7 +7,7 @@
 # Policy Action subcollection:
 #   /api/policies/:id/policy_actions
 #
-describe ApiController do
+describe "Policy Actions API" do
   let(:miq_action_guid_list) { MiqAction.pluck(:guid) }
 
   def create_actions(count)
@@ -18,15 +18,15 @@ describe ApiController do
 
   context "Policy Action collection" do
     it "query invalid action" do
-      api_basic_authorize
+      api_basic_authorize action_identifier(:policy_actions, :read, :resource_actions, :get)
 
       run_get policy_actions_url(999_999)
 
-      expect_resource_not_found
+      expect(response).to have_http_status(:not_found)
     end
 
     it "query policy actions with no actions defined" do
-      api_basic_authorize
+      api_basic_authorize collection_action_identifier(:policy_actions, :read, :get)
 
       run_get policy_actions_url
 
@@ -34,7 +34,7 @@ describe ApiController do
     end
 
     it "query policy actions" do
-      api_basic_authorize
+      api_basic_authorize collection_action_identifier(:policy_actions, :read, :get)
       create_actions(4)
 
       run_get policy_actions_url
@@ -45,13 +45,13 @@ describe ApiController do
     end
 
     it "query policy actions in expanded form" do
-      api_basic_authorize
+      api_basic_authorize collection_action_identifier(:policy_actions, :read, :get)
       create_actions(4)
 
       run_get policy_actions_url, :expand => "resources"
 
       expect_query_result(:policy_actions, 4, 4)
-      expect_result_resources_to_include_data("resources", "guid" => :miq_action_guid_list)
+      expect_result_resources_to_include_data("resources", "guid" => miq_action_guid_list)
     end
   end
 
@@ -67,7 +67,7 @@ describe ApiController do
     end
 
     it "query policy actions with no actions defined" do
-      api_basic_authorize
+      api_basic_authorize collection_action_identifier(:policy_actions, :read, :get)
 
       run_get policy_actions_url
 
@@ -75,25 +75,25 @@ describe ApiController do
     end
 
     it "query policy actions" do
-      api_basic_authorize
+      api_basic_authorize collection_action_identifier(:policy_actions, :read, :get)
       create_actions(4)
       relate_actions_to(policy)
 
       run_get policy_actions_url, :expand => "resources"
 
       expect_query_result(:policy_actions, 4, 4)
-      expect_result_resources_to_include_data("resources", "guid" => :miq_action_guid_list)
+      expect_result_resources_to_include_data("resources", "guid" => miq_action_guid_list)
     end
 
     it "query policy with expanded policy actions" do
-      api_basic_authorize
+      api_basic_authorize action_identifier(:policies, :read, :resource_actions, :get)
       create_actions(4)
       relate_actions_to(policy)
 
       run_get policy_url, :expand => "policy_actions"
 
       expect_single_resource_query("name" => policy.name, "description" => policy.description, "guid" => policy.guid)
-      expect_result_resources_to_include_data("policy_actions", "guid" => :miq_action_guid_list)
+      expect_result_resources_to_include_data("policy_actions", "guid" => miq_action_guid_list)
     end
   end
 end

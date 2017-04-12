@@ -68,7 +68,7 @@ describe Classification do
       expect(entries.length).to eq(2)
 
       cat.destroy
-      entries.each { |e| expect(Classification.find_by_id(e.id)).to be_nil }
+      entries.each { |e| expect(Classification.find_by(:id => e.id)).to be_nil }
     end
 
     it "should test setup data" do
@@ -157,17 +157,31 @@ describe Classification do
       end
     end
 
+    it "should be able to produce valid names" do
+      ['<My_Name>',
+       'My Name',
+       'My_Name_is...',
+       '123456789_123456789_123456789_123456789_123456789_1'
+      ].each do |name|
+        good_name = Classification.sanitize_name(name)
+        cat = Classification.new(:name => good_name, :description => name, :parent_id => 0)
+        expect(cat).to be_valid
+      end
+    end
+
     it "should test assign single entry to" do
       cat = Classification.find_by_name "test_single_value_category"
       ent1 = cat.entries[0]
       ent2 = cat.entries[1]
 
       ent1.assign_entry_to(host1)
-      expect(any_tagged_with(Host, ent1.name, ent1.parent.name)).to_not be_empty
+      expect(any_tagged_with(Host, ent1.name, ent1.parent.name)).to eq([host1])
+      expect(any_tagged_with(Host, full_tag_name(ent1))).to eq([host1])
+      expect(all_tagged_with(Host, ent1.name, ent1.parent.name)).to eq([host1])
 
       ent2.assign_entry_to(host1)
-      expect(any_tagged_with(Host, ent2.name, ent2.parent.name)).to_not be_empty
-      expect(any_tagged_with(Host, ent1.name, ent1.parent.name)).to     be_empty
+      expect(any_tagged_with(Host, ent2.name, ent2.parent.name)).to eq([host1])
+      expect(any_tagged_with(Host, ent1.name, ent1.parent.name)).not_to eq([host1])
     end
 
     it "should test assign multi entry to" do
@@ -176,12 +190,57 @@ describe Classification do
       ent2 = cat.entries[1]
 
       ent1.assign_entry_to(host2)
-      expect(any_tagged_with(Host, ent1.name, ent1.parent.name)).to_not be_empty
+      expect(any_tagged_with(Host, ent1.name, ent1.parent.name)).to eq([host2])
+      expect(all_tagged_with(Host, ent1.name, ent1.parent.name)).to eq([host2])
+
+      expect(any_tagged_with(Host, [ent1.name, ent2.name], ent1.parent.name)).to eq([host2])
+      expect(all_tagged_with(Host, [ent1.name, ent2.name], ent1.parent.name)).to be_empty
 
       ent2.assign_entry_to(host2)
-      expect(any_tagged_with(Host, ent2.name, ent2.parent.name)).to_not be_empty
-      expect(any_tagged_with(Host, ent1.name, ent1.parent.name)).to_not be_empty
-      expect(all_tagged_with(Host, "#{ent1.name} #{ent2.name}", ent1.parent.name)).to_not be_empty
+      expect(any_tagged_with(Host, ent2.name, ent2.parent.name)).to eq([host2])
+      expect(any_tagged_with(Host, ent1.name, ent1.parent.name)).to eq([host2])
+      expect(all_tagged_with(Host, "#{ent1.name} #{ent2.name}", ent1.parent.name)).to eq([host2])
+      expect(any_tagged_with(Host, [ent2.name, ent1.name], ent2.parent.name)).to eq([host2])
+      expect(any_tagged_with(Host, [full_tag_name(ent2), full_tag_name(ent1)])).to eq([host2])
+    end
+
+    it "find with multiple tags" do
+      cat1 = Classification.find_by_name "test_single_value_category"
+      ent11 = cat1.entries[0]
+      ent12 = cat1.entries[1]
+
+      cat2 = Classification.find_by_name "test_multi_value_category"
+      ent21 = cat2.entries[0]
+      ent22 = cat2.entries[1]
+
+      ent11.assign_entry_to(host2)
+      ent21.assign_entry_to(host2)
+
+      # success
+      expect(any_tagged_with(Host, [[full_tag_name(ent12), full_tag_name(ent11)], [full_tag_name(ent21)]])).to eq([host2])
+      expect(all_tagged_with(Host, [[full_tag_name(ent11)], [full_tag_name(ent11)]])).to eq([host2])
+
+      # failure
+      expect(all_tagged_with(Host, [[full_tag_name(ent12), full_tag_name(ent11)], [full_tag_name(ent21)]])
+            ).not_to eq([host2])
+      expect(all_tagged_with(Host, [[full_tag_name(ent11)], [full_tag_name(ent22)]])).not_to eq([host2])
+      expect(all_tagged_with(Host, [[full_tag_name(ent12)], [full_tag_name(ent21)]])).not_to eq([host2])
+    end
+
+    it "finds tagged items with order clause" do
+      cat1 = Classification.find_by_name "test_single_value_category"
+      ent11 = cat1.entries[0]
+
+      ent11.assign_entry_to(host1)
+
+      expect(all_tagged_with(Host.order('name'), ent11.name, ent11.parent.name)).to eq([host1])
+      expect(any_tagged_with(Host.order('name'), ent11.name, ent11.parent.name)).to eq([host1])
+
+      expect(all_tagged_with(Host.order('lower(name)'), ent11.name, ent11.parent.name)).to eq([host1])
+      expect(any_tagged_with(Host.order('lower(name)'), ent11.name, ent11.parent.name)).to eq([host1])
+
+      expect(all_tagged_with(Host.order(Host.arel_table[:name].lower), ent11.name, ent11.parent.name)).to eq([host1])
+      expect(any_tagged_with(Host.order(Host.arel_table[:name].lower), ent11.name, ent11.parent.name)).to eq([host1])
     end
 
     it "should test find by entry" do
@@ -356,15 +415,93 @@ describe Classification do
     end
   end
 
-  def all_tagged_with(target, all, category)
+  describe '.find_by_name' do
+    let(:my_region_number) { Classification.my_region_number }
+    let(:other_region) { Classification.my_region_number + 1 }
+    let(:other_region_id) { other_region * Classification.rails_sequence_factor + 1 }
+
+    before do
+      @local = FactoryGirl.create(:classification, :name => "test_category1")
+      FactoryGirl.create(:classification, :name => "test_category3")
+
+      FactoryGirl.create(:tag, :name => "/managed/test_category2", :id => other_region_id)
+      @remote = FactoryGirl.create(:classification, :name => "test_category2", :id => other_region_id)
+    end
+
+    it "created classification in other region" do
+      expect(@remote.region_id).to eq(other_region)
+      expect(@remote.reload.id).to eq(other_region_id)
+      expect(@remote.tag_id).to eq(other_region_id)
+      expect(@remote.tag.region_id).to eq(other_region)
+    end
+
+    it "finds in region" do
+      local = Classification.find_by_name("test_category1", my_region_number)
+      expect(local).to eq(@local)
+      remote = Classification.find_by_name("test_category2", other_region)
+      expect(remote).to eq(@remote)
+    end
+
+    it "filters out wrong region" do
+      expect(Classification.find_by_name("test_category1", other_region)).to be_nil
+      expect(Classification.find_by_name("test_category2", my_region_number)).to be_nil
+    end
+
+    it "finds in all regions" do
+      expect(Classification.find_by_name("test_category1", nil)).to eq(@local)
+      expect(Classification.find_by_name("test_category2", nil)).to eq(@remote)
+    end
+
+    it "finds in my region" do
+      expect(Classification.find_by_name("test_category1")).to eq(@local)
+      expect(Classification.find_by_name("test_category2")).to be_nil
+    end
+  end
+
+  describe '.find_by_names' do
+    let(:my_region_number) { Classification.my_region_number }
+    let(:other_region) { Classification.my_region_number + 1 }
+    let(:other_region_id) { other_region * Classification.rails_sequence_factor + 1 }
+
+    before do
+      @local = FactoryGirl.create(:classification, :name => "test_category1")
+      FactoryGirl.create(:tag, :name => Classification.name2tag("test_category2"), :id => other_region_id)
+      @remote = FactoryGirl.create(:classification, :name => "test_category2", :id => other_region_id)
+      FactoryGirl.create(:classification, :name => "test_category3")
+    end
+
+    it "finds in region" do
+      expect(Classification.find_by_names(%w(test_category1 test_category2), my_region_number)).to eq([@local])
+      expect(Classification.find_by_names(%w(test_category1 test_category2), other_region)).to eq([@remote])
+    end
+
+    it "finds in all regions" do
+      expect(Classification.find_by_names(%w(test_category1 test_category2), nil)).to match_array([@local, @remote])
+    end
+
+    it "finds in my region" do
+      Classification.find_by_name(%w(test_category1 test_category2))
+      expect(Classification.find_by_names(%w(test_category1 test_category2))).to eq([@local])
+    end
+  end
+
+  def all_tagged_with(target, all, category = nil)
     tagged_with(target, :all => all, :cat => category)
   end
 
-  def any_tagged_with(target, any, category)
+  def any_tagged_with(target, any, category = nil)
     tagged_with(target, :any => any, :cat => category)
   end
 
   def tagged_with(target, options)
     target.find_tagged_with(options.merge!(:ns => Classification::DEFAULT_NAMESPACE))
+  end
+
+  def grouped_with(target, options)
+    target.find_tags_by_grouping(options.merge!(:ns => Classification::DEFAULT_NAMESPACE))
+  end
+
+  def full_tag_name(tag)
+    Classification.name2tag(tag.name, tag.parent, "") # avoid "managed", it will get added later
   end
 end

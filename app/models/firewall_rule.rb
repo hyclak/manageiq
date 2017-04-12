@@ -7,15 +7,13 @@ class FirewallRule < ApplicationRecord
   end
 
   def operating_system=(os)
-    raise ArgumentError, "must be an OperatingSystem" unless os.kind_of?(OperatingSystem)
+    raise ArgumentError, _("must be an OperatingSystem") unless os.kind_of?(OperatingSystem)
     self.resource = os
   end
 
   def port_range
     port..(end_port || port)
   end
-
-  include ReportableMixin
 
   def self.add_elements(target, xmlNode)
     add_missing_elements(target, xmlNode, nil)

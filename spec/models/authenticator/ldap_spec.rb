@@ -62,6 +62,8 @@ describe Authenticator::Ldap do
       'rootdn' => {:password => 'verysecret'},
       'alice'  => alice_data,
       'bob'    => bob_data,
+      'betty'  => betty_data,
+      'sam'    => sam_data,
     }
   end
   let(:alice_data) do
@@ -86,6 +88,28 @@ describe Authenticator::Ldap do
       :groups            => %w(wibble bubble),
     }
   end
+  let(:betty_data) do
+    {
+      :userprincipalname => 'betty',
+      :password          => 'secret',
+      :displayname       => nil,
+      :givenname         => 'Betty',
+      :sn                => 'Builderson',
+      :mail              => 'betty@example.com',
+      :groups            => %w(wibble bubble),
+    }
+  end
+  let(:sam_data) do
+    {
+      :userprincipalname => 'sam',
+      :password          => 'secret',
+      :displayname       => nil,
+      :givenname         => nil,
+      :sn                => nil,
+      :mail              => 'sam@example.com',
+      :groups            => %w(wibble bubble),
+    }
+  end
 
   before(:each) do
     allow(MiqLdap).to receive(:new) { FakeLdap.new(user_data) }
@@ -95,6 +119,12 @@ describe Authenticator::Ldap do
   describe '#uses_stored_password?' do
     it "is false" do
       expect(subject.uses_stored_password?).to be_falsey
+    end
+  end
+
+  describe ".user_authorizable_without_authentication?" do
+    it "is true" do
+      expect(subject.user_authorizable_without_authentication?).to be_truthy
     end
   end
 
@@ -113,6 +143,7 @@ describe Authenticator::Ldap do
       end
 
       it "refuses users that don't exist in LDAP" do
+        expect(subject).to receive(:userprincipal_for)
         expect(-> { subject.lookup_by_identity('carol') }).to raise_error(/credentials are not configured/)
       end
     end
@@ -147,6 +178,7 @@ describe Authenticator::Ldap do
       end
 
       it "refuses users that don't exist in LDAP" do
+        expect(subject).to receive(:userprincipal_for)
         expect(-> { subject.lookup_by_identity('carol') }).to raise_error(/no data for user/)
       end
     end
@@ -159,6 +191,10 @@ describe Authenticator::Ldap do
 
     let(:username) { 'alice' }
     let(:password) { 'secret' }
+
+    before do
+      allow(subject).to receive(:find_or_create_by_ldap)
+    end
 
     context "when using LDAP" do
       let(:config) { super().merge(:ldap_role => true) }
@@ -342,6 +378,11 @@ describe Authenticator::Ldap do
             expect(authenticate).to be_a(User)
           end
 
+          it "looks in ldap" do
+            expect(subject).to receive(:find_or_create_by_ldap)
+            authenticate
+          end
+
           it "records two successful audit entries" do
             expect(AuditEvent).to receive(:success).with(
               :event   => 'authenticate_ldap',
@@ -443,6 +484,22 @@ describe Authenticator::Ldap do
             task = MiqTask.find(task_id)
             expect(task.status).to eq('Error')
             expect(MiqTask.status_error?(task.status)).to be_truthy
+          end
+        end
+
+        context "when display name is blank" do
+          let(:username) { 'betty' }
+
+          it "creates a new User with name set to givenname + sn" do
+            expect(-> { authenticate }).to change { User.where(:name => 'Betty Builderson').count }.from(0).to(1)
+          end
+        end
+
+        context "when display name, givenname and sn are blank" do
+          let(:username) { 'sam' }
+
+          it "creates a new User with name set to the userid" do
+            expect(-> { authenticate }).to change { User.where(:name => 'sam').count }.from(0).to(1)
           end
         end
       end

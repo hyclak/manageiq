@@ -30,6 +30,7 @@ describe Authenticator::Ldap do
 
     it "user exists" do
       user = FactoryGirl.create(:user_admin, :userid => @fqusername)
+      allow(@auth).to receive(:userprincipal_for).and_return(user)
       expect(current_user).to eq(user)
     end
 
@@ -49,6 +50,7 @@ describe Authenticator::Ldap do
       init_ldap_setup
       setup_to_get_fqdn
     end
+
     subject { @auth.authenticate("username", @password, nil) }
 
     it "password is blank" do
@@ -82,6 +84,7 @@ describe Authenticator::Ldap do
 
         context "with default group for users enabled" do
           it "group exists" do
+            allow(@auth).to receive(:find_or_create_by_ldap)
             group = create_super_admin_group
             setup_to_create_user(group)
             @auth_config[:authentication][:default_group_for_users] = group.description
@@ -115,7 +118,7 @@ describe Authenticator::Ldap do
   end
 
   def setup_vmdb_config
-    stub_server_configuration(@auth_config)
+    stub_settings(@auth_config)
   end
 
   def setup_to_create_user(group)

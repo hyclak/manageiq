@@ -23,10 +23,6 @@ module OntapDerivedMetricMixin
       @basedCounterNames  = nil
       @baseCounterNames = nil
       @metadataClass    = (name + "Metadata").constantize
-
-      cfg = VMDB::Config.new("vmdb")
-      @storageMetricsCollectionInterval = cfg.fetch_with_fallback(:storage, :metrics_collection, :collection_interval).to_i_with_method
-      @storageMetricsMaxGapToFill       = cfg.fetch_with_fallback(:storage, :metrics_collection, :max_gap_to_fill).to_i_with_method
     end
 
     def metadataClass
@@ -62,12 +58,12 @@ module OntapDerivedMetricMixin
 
       deltaSecs = vinst1.timestamp.to_i - vinst0.timestamp.to_i
 
-      return [] if deltaSecs < 0 || deltaSecs > @storageMetricsMaxGapToFill
+      return [] if deltaSecs < 0 || deltaSecs > ::Settings.storage.metrics_collection.max_gap_to_fill.to_i_with_method
 
       counters0 = vinst0.counters
       counters1 = vinst1.counters
 
-      interval = @storageMetricsCollectionInterval.to_f
+      interval = ::Settings.storage.metrics_collection.collection_interval.to_i_with_method.to_f
       nInterval = (deltaSecs / interval + 0.5).to_i
       _log.info "nIntrval = #{nInterval}"
       deltaSecs /= nInterval
@@ -132,12 +128,18 @@ module OntapDerivedMetricMixin
   end
 
   def counter_unit(counterName)
-    raise "#{self.class.name}.counter_unit: counter #{counterName} not found" if (ci = counter_info[counterName]).nil?
+    if (ci = counter_info[counterName]).nil?
+      raise _("%{class_name}.counter_unit: counter %{counter_name} not found") % {:class_name   => self.class.name,
+                                                                                  :counter_name => counterName}
+    end
     ci['unit']
   end
 
   def counter_desc(counterName)
-    raise "#{self.class.name}.counter_desc: counter #{counterName} not found" if (ci = counter_info[counterName]).nil?
+    if (ci = counter_info[counterName]).nil?
+      raise _("%{class_name}.counter_desc: counter %{counter_name} not found") % {:class_name   => self.class.name,
+                                                                                  :counter_name => counterName}
+    end
     ci['desc']
   end
 

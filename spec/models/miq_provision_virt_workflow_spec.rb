@@ -1,6 +1,35 @@
 describe MiqProvisionVirtWorkflow do
   let(:workflow) { FactoryGirl.create(:miq_provision_virt_workflow) }
 
+  context "#new" do
+    let(:sdn)  { 'SysprepDomainName' }
+    let(:host) { double('Host', :id => 1, :name => 'my_host') }
+    let(:user) { FactoryGirl.create(:user_with_email) }
+
+    before do
+      allow(workflow).to receive_messages(:validate => true)
+      allow(workflow).to receive_messages(:get_dialogs => {})
+      workflow.instance_variable_set(:@values, :vm_tags => [], :src_vm_id => 123, :sysprep_enabled => 'fields',
+                                     :sysprep_domain_name => sdn)
+    end
+
+    it "calls password_helper once when a block is not passed in" do
+      expect_any_instance_of(MiqProvisionVirtWorkflow).to receive(:password_helper).with({:allowed_hosts    => [host],
+                                                                                          :skip_dialog_load => true}, false).once
+      MiqProvisionVirtWorkflow.new({:allowed_hosts => [host]}, user, :skip_dialog_load => true)
+    end
+
+    it "sets initial_pass equal to true when values are empty and initial_pass => true is passed in as an option" do
+      expect_any_instance_of(MiqProvisionVirtWorkflow).to receive(:get_value).once
+
+      init_options = {:use_pre_dialog => false, :skip_dialog_load => true, :request_type => :clone_to_vm, :initial_pass => true}
+      p = MiqProvisionVirtWorkflow.new({}, user, init_options)
+
+      expect(p.instance_variable_get(:@values)[:initial_pass]).to be_truthy
+      expect(p.instance_variable_get(:@values)[:request_type]).to eq :clone_to_vm
+    end
+  end
+
   context "#continue_request" do
     let(:sdn) { 'SysprepDomainName' }
 
@@ -69,59 +98,27 @@ describe MiqProvisionVirtWorkflow do
         expect(vlans.values).to match_array(lan_keys)
       end
     end
+  end
 
-    context 'dvs' do
-      before do
-        @host1_dvs = {'pg1' => ['switch1'], 'pg2' => ['switch2']}
-        @host1_dvs_hash = {'dvs_pg1' => 'pg1 (switch1)',
-                           'dvs_pg2' => 'pg2 (switch2)'}
-        allow_any_instance_of(ManageIQ::Providers::Vmware::InfraManager).to receive(:connect)
-        allow(workflow).to receive(:get_host_dvs).with(@host1, nil).and_return(@host1_dvs)
-      end
+  context "#update_requester_from_parameters" do
+    let(:user_new) { FactoryGirl.create(:user_with_email) }
+    let(:data_new_user) { {:user_name => user_new.name} }
+    let(:current_user) { FactoryGirl.create(:user_with_email) }
 
-      it '#allowed_dvs single host' do
-        workflow.instance_variable_set(:@values, :vm_tags => [], :src_vm_id => @src_vm.id,
-                                      :host_id => @host1.id)
-        workflow.instance_variable_set(:@target_resource,
-                                       :host    => workflow.host_to_hash_struct(@host1),
-                                       :ems     => workflow.ci_to_hash_struct(@ems),
-                                       :host_id => @host1.id)
-        dvs = workflow.allowed_dvs({}, nil)
-        expect(dvs).to eql(@host1_dvs_hash)
-      end
+    it "finds and sets a new user if one is passed in" do
+      expect(User).to receive(:lookup_by_identity).and_return(user_new).once
+      expect(MiqProvisionVirtWorkflow.update_requester_from_parameters(data_new_user, current_user)).to eq user_new
+    end
 
-      context "#allowed_dvs" do
-        before do
-          @host2 = FactoryGirl.create(:host_vmware, :ems_id => @ems.id)
-          @host2_dvs = {'pg1' => ['switch21'], 'pg2' => ['switch2'], 'pg3' => ['switch23']}
-          allow(workflow).to receive(:get_host_dvs).with(@host2, nil).and_return(@host2_dvs)
-          workflow.instance_variable_set(:@values, :vm_tags => [], :src_vm_id => @src_vm.id,
-                                        :placement_auto => true)
+    it "returns the original user if a new one is not passed in" do
+      data_no_user = {}
+      expect(User).to_not receive(:lookup_by_identity)
+      expect(MiqProvisionVirtWorkflow.update_requester_from_parameters(data_no_user, current_user)).to eq current_user
+    end
 
-          @combined_dvs_hash = {'dvs_pg1' => 'pg1 (switch1/switch21)',
-                                'dvs_pg2' => 'pg2 (switch2)',
-                                'dvs_pg3' => 'pg3 (switch23)'}
-        end
-
-        it 'multiple hosts auto placement' do
-          dvs = workflow.allowed_dvs({}, nil)
-          expect(dvs).to eql(@combined_dvs_hash)
-        end
-
-        it 'cached filtering' do
-          # Cache the dvs for 2 hosts
-          workflow.allowed_dvs({}, nil)
-
-          workflow.instance_variable_set(:@values, :vm_tags => [], :src_vm_id => @src_vm.id,
-                                        :placement_auto => false)
-          workflow.instance_variable_set(:@target_resource,
-                                         :host    => workflow.host_to_hash_struct(@host1),
-                                         :ems     => workflow.ci_to_hash_struct(@ems),
-                                         :host_id => @host1.id)
-          dvs = workflow.allowed_dvs({}, nil)
-          expect(dvs).to eql(@host1_dvs_hash)
-        end
-      end
+    it "raises an error if the lookup fails" do
+      expect(User).to receive(:lookup_by_identity).and_return(nil).once
+      expect { MiqProvisionVirtWorkflow.update_requester_from_parameters(data_new_user, current_user) }.to raise_error(ActiveRecord::RecordNotFound)
     end
   end
 
@@ -163,39 +160,6 @@ describe MiqProvisionVirtWorkflow do
     end
   end
 
-  context "#update_field_visibility_pxe_iso" do
-    let(:show_hide_iso_pxe) { {:hide => [], :edit => []} }
-    describe "supports iso" do
-      before do
-        allow(workflow).to receive(:supports_iso?).and_return(true)
-        allow(workflow).to receive(:supports_pxe?).and_return(false)
-      end
-
-      it "sets iso_image_id as a validated key" do
-        workflow.update_field_visibility_pxe_iso(show_hide_iso_pxe)
-        expect(show_hide_iso_pxe[:edit]).to eq [:iso_image_id]
-        expect(show_hide_iso_pxe[:edit]).to_not eq [:pxe_image_id, :pxe_server_id]
-        expect(show_hide_iso_pxe[:hide]).to_not eq [:iso_image_id]
-        expect(show_hide_iso_pxe[:hide]).to eq [:pxe_image_id, :pxe_server_id]
-      end
-    end
-
-    describe "supports pxe" do
-      before do
-        allow(workflow).to receive(:supports_iso?).and_return(false)
-        allow(workflow).to receive(:supports_pxe?).and_return(true)
-      end
-
-      it "sets pxe_server_id and pxe_image_id as validated keys" do
-        workflow.update_field_visibility_pxe_iso(show_hide_iso_pxe)
-        expect(show_hide_iso_pxe[:edit]).to_not eq [:iso_image_id]
-        expect(show_hide_iso_pxe[:edit]).to eq [:pxe_image_id, :pxe_server_id]
-        expect(show_hide_iso_pxe[:hide]).to eq [:iso_image_id]
-        expect(show_hide_iso_pxe[:hide]).to_not eq [:pxe_image_id, :pxe_server_id]
-      end
-    end
-  end
-
   context "#validate_memory_reservation" do
     let(:values) { {:vm_memory => %w(1024 1024)} }
 
@@ -225,6 +189,154 @@ describe MiqProvisionVirtWorkflow do
       expect(workflow.class).to receive(:provider_model).once.and_return(ems.class)
 
       expect(workflow.allowed_template_condition).to eq(["vms.template = ? AND vms.ems_id in (?)", true, [ems.id]])
+    end
+  end
+
+  context "#ws_find_template_or_vm" do
+    let(:server) { double("MiqServer", :logon_status => :ready, :server_timezone => 'East') }
+    let(:sdn) { 'SysprepDomainName' }
+
+    before do
+      allow(MiqServer).to receive(:my_server).with(no_args).and_return(server)
+      allow(workflow).to receive_messages(:validate => true)
+      allow(workflow).to receive_messages(:get_dialogs => {})
+      workflow.instance_variable_set(:@values, :vm_tags => [], :src_vm_id => 123, :sysprep_enabled => 'fields',
+                                     :sysprep_domain_name => sdn)
+    end
+
+    it "does a lookup when src_name is blank" do
+      expect(workflow.ws_find_template_or_vm("", "", "asdf-adsf", "asdfadfasdf")).to be_nil
+    end
+
+    it "does a lookup when src_name is not blank" do
+      expect(workflow.ws_find_template_or_vm("", "VMWARE", "asdf-adsf", "asdfadfasdf")).to be_nil
+    end
+
+    it "returns a hash struct if a vm or template is found" do
+      ems    = FactoryGirl.create(:ems_vmware)
+      host1  = FactoryGirl.create(:host_vmware, :ems_id => ems.id)
+      src_vm = FactoryGirl.create(:vm_vmware, :host => host1, :ems_id => ems.id)
+      allow(workflow).to receive(:source_vm_rbac_filter).and_return([src_vm])
+      expect(workflow.ws_find_template_or_vm("", "VMWARE", "asdf-adsf", "asdfadfasdf")).to be_a(MiqHashStruct)
+    end
+  end
+
+  describe "#update_field_visibility" do
+    let(:workflow) do
+      described_class.new(
+        {
+          :addr_mode                => "addr_mode",
+          :linked_clone             => "linked_clone",
+          :number_of_vms            => "123",
+          :placement_auto           => true,
+          :provision_type           => "provision_type",
+          :retirement               => "321",
+          :service_template_request => "service_template_request",
+          :sysprep_auto_logon       => "sysprep_auto_logon",
+          :sysprep_custom_spec      => "sysprep_custom_spec",
+          :sysprep_enabled          => "sysprep_enabled"
+        },
+        requester,
+        :skip_dialog_load => true
+      )
+    end
+
+    let(:requester) { double("User") }
+
+    let(:dialog_field_visibility_service) { double("DialogFieldVisibilityService") }
+
+    let(:options_hash) do
+      {
+        :addr_mode                       => "addr_mode",
+        :auto_placement_enabled          => true,
+        :customize_fields_list           => [],
+        :linked_clone                    => "linked_clone",
+        :number_of_vms                   => 123,
+        :platform                        => nil,
+        :provision_type                  => "provision_type",
+        :request_type                    => "template",
+        :retirement                      => 321,
+        :service_template_request        => "service_template_request",
+        :snapshot_count                  => 0,
+        :supports_customization_template => false,
+        :supports_iso                    => false,
+        :supports_pxe                    => false,
+        :sysprep_auto_logon              => "sysprep_auto_logon",
+        :sysprep_custom_spec             => "sysprep_custom_spec",
+        :sysprep_enabled                 => "sysprep_enabled"
+      }
+    end
+    let(:dialogs) do
+      {
+        :dialogs => {
+          :dialog_name => {
+            :fields => {:field_name => {}}
+          }
+        }
+      }
+    end
+
+    before do
+      allow(requester).to receive(:kind_of?).with(User).and_return(true)
+      allow(DialogFieldVisibilityService).to receive(:new).and_return(dialog_field_visibility_service)
+      allow(dialog_field_visibility_service).to receive(:determine_visibility).with(options_hash).and_return(
+        "visibility_hash"
+      )
+      allow(dialog_field_visibility_service).to receive(:set_visibility_for_field).with(
+        "visibility_hash", :field_name, {}
+      )
+      workflow.instance_variable_set(:@dialogs, dialogs)
+    end
+
+    it "delegates to the dialog_field_visibility_service with the correct options" do
+      expect(dialog_field_visibility_service).to receive(:determine_visibility).with(options_hash)
+      workflow.update_field_visibility
+    end
+
+    it "sets the visibility for all fields" do
+      expect(dialog_field_visibility_service).to receive(:set_visibility_for_field).with(
+        "visibility_hash", :field_name, {}
+      )
+      workflow.update_field_visibility
+    end
+  end
+
+  context '#make_request (update)' do
+    let(:template) do
+      FactoryGirl.create(
+        :template_vmware,
+        :ext_management_system => FactoryGirl.create(:ems_vmware_with_authentication)
+      )
+    end
+    let(:values)  { {:src_vm_id => [template.id, template.name]} }
+    let(:request) { workflow.make_request(nil, :src_vm_id => [999, 'old_template']) }
+    before { workflow.make_request(request, values) }
+
+    it 'updates options' do
+      expect(request.options).to include(values)
+    end
+
+    it 'updates soruce_id' do
+      expect(request.source_id).to eq(template.id)
+    end
+  end
+
+  context "#allowed_templates" do
+    let(:external_region_id) do
+      remote_region_number = ApplicationRecord.my_region_number + 1
+      ApplicationRecord.region_to_range(remote_region_number).first
+    end
+
+    let(:remote_vmware) { FactoryGirl.create(:ems_vmware_with_authentication, :id => external_region_id) }
+    let(:local_vmware)  { FactoryGirl.create(:ems_vmware_with_authentication) }
+
+    it "only returns records from its region" do
+      EvmSpecHelper.local_guid_miq_server_zone # Because there is no default timezone in settings
+      FactoryGirl.create(:template_vmware, :ext_management_system => remote_vmware, :id => external_region_id)
+      FactoryGirl.create(:template_vmware, :ext_management_system => local_vmware)
+
+      expect(MiqTemplate.count).to eq(2)
+      expect(workflow.allowed_templates.count).to eq(1)
     end
   end
 end

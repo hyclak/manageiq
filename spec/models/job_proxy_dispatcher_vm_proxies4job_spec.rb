@@ -1,6 +1,5 @@
 describe "JobProxyDispatcherVmProxies4Job" do
-  require File.expand_path(File.join(File.dirname(__FILE__), 'job_proxy_dispatcher/job_proxy_dispatcher_helper'))
-  include JobProxyDispatcherHelper
+  include Spec::Support::JobProxyDispatcherHelper
 
   context "with two servers on same zone, vix disk enabled for all, " do
     before(:each) do
@@ -11,7 +10,7 @@ describe "JobProxyDispatcherVmProxies4Job" do
 
     context "with hosts with a miq_proxy, vmware vms on storages" do
       before(:each) do
-        @hosts, @proxies, @storages, @vms = build_hosts_proxies_storages_vms
+        @hosts, @proxies, @storages, @vms = build_entities
         @vm = @vms.first
       end
 
@@ -67,7 +66,7 @@ describe "JobProxyDispatcherVmProxies4Job" do
 
       context "with a vm scan job, with no eligible proxies, " do
         before(:each) do
-          @job = @vm.scan
+          @job = @vm.raw_scan
           allow(@vm).to receive_messages(:storage2proxies => [])
           allow(@vm).to receive_messages(:storage2activeproxies => [])
         end

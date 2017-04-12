@@ -1,13 +1,18 @@
 module Metric::Rollup
-  ROLLUP_COLS  = Metric.columns_hash.collect { |c, h| c.to_sym if h.type == :float || c[0, 7] == "derived" }.compact
+  ROLLUP_COLS  = Metric.columns_hash.collect { |c, h| c.to_sym if h.type == :float || c[0, 7] == "derived" }.compact +
+                 [:stat_container_group_create_rate,
+                  :stat_container_group_delete_rate,
+                  :stat_container_image_registration_rate]
   STORAGE_COLS = Metric.columns_hash.collect { |c, _h| c.to_sym if c.starts_with?("derived_storage_") }.compact
 
+  NON_STORAGE_ROLLUP_COLS = (ROLLUP_COLS - STORAGE_COLS)
+
   AGGREGATE_COLS = {
-    :MiqEnterprise_miq_regions            => (ROLLUP_COLS),
-    :MiqRegion_ext_management_systems     => (ROLLUP_COLS - STORAGE_COLS),
+    :MiqEnterprise_miq_regions            => ROLLUP_COLS,
+    :MiqRegion_ext_management_systems     => NON_STORAGE_ROLLUP_COLS,
     :MiqRegion_storages                   => STORAGE_COLS,
-    :ExtManagementSystem_hosts            => (ROLLUP_COLS - STORAGE_COLS),
-    :ExtManagementSystem_container_nodes  => (ROLLUP_COLS - STORAGE_COLS),
+    :ExtManagementSystem_hosts            => NON_STORAGE_ROLLUP_COLS,
+    :ExtManagementSystem_container_nodes  => NON_STORAGE_ROLLUP_COLS,
     :EmsCluster_hosts                     => [
       :cpu_ready_delta_summation,
       :cpu_system_delta_summation,
@@ -34,7 +39,7 @@ module Metric::Rollup
       :derived_vm_numvcpus,
       :derived_vm_used_disk_storage,
     ],
-    :ContainerProject_container_groups    => [
+    :ContainerProject_all_container_groups => [
       :cpu_usage_rate_average,
       :derived_vm_numvcpus,
       :derived_memory_used,
@@ -54,6 +59,13 @@ module Metric::Rollup
     ],
     :AvailabilityZone_vms                 => [
       :cpu_usage_rate_average,
+      :derived_memory_used,
+      :net_usage_rate_average,
+      :disk_usage_rate_average
+    ],
+    :HostAggregate_vms                    => [
+      :cpu_usage_rate_average,
+      :derived_memory_used,
       :net_usage_rate_average,
       :disk_usage_rate_average
     ]
@@ -108,13 +120,35 @@ module Metric::Rollup
 
   EMS_CLUSTER_REALTIME_COLS = HOST_REALTIME_COLS
 
-  # these columns will pass false for aggregate_only to process_for_column
+  INFREQUENTLY_CHANGING_COLS = [
+    :derived_cpu_available,
+    :derived_cpu_reserved,
+    :derived_host_count_off,
+    :derived_host_count_on,
+    :derived_memory_available,
+    :derived_memory_reserved,
+    :derived_vm_allocated_disk_storage,
+    :derived_vm_count_off,
+    :derived_vm_count_on,
+    :derived_vm_numvcpus,
+  ].freeze
+
+  def self.excluded_col_for_expression?(col)
+    NON_STORAGE_ROLLUP_COLS.include?(col) && !INFREQUENTLY_CHANGING_COLS.include?(col)
+  end
+
+  # these columns will pass false for aggregate_only to Aggregation::Process.column
   # this means that when processing the totals for a parent rollup, the total
   # values will be averaged across the number of children
   AVG_VALUE_COLUMNS = [
     :cpu_usage_rate_average
   ]
 
+  DAILY_SUM_COLUMNS = [
+    :stat_container_group_create_rate,
+    :stat_container_group_delete_rate,
+    :stat_container_image_registration_rate
+  ].freeze
   BURST_COLS = [
     :cpu_usage_rate_average,
     :disk_usage_rate_average,
@@ -151,6 +185,7 @@ module Metric::Rollup
 
     new_perf.reverse_merge!(orig_perf)
     new_perf.merge!(Metric::Processing.process_derived_columns(obj, new_perf, hour)) unless DERIVED_COLS_EXCLUDED_CLASSES.include?(obj.class.base_class.name)
+    new_perf.merge!(Metric::Statistic.calculate_stat_columns(obj, hour))
 
     new_perf
   end
@@ -190,12 +225,12 @@ module Metric::Rollup
           rollup_burst(col, new_perf[:min_max], rt.timestamp, value)
         end
 
-        Metric::Aggregation.aggregate_for_column(col, nil, new_perf, new_perf_counts, value)
+        Metric::Aggregation::Aggregate.column(col, nil, new_perf, new_perf_counts, value)
       end
     end
 
     new_perf.each_key do |col|
-      Metric::Aggregation.process_for_column(col, nil, new_perf, new_perf_counts)
+      Metric::Aggregation::Process.column(col, nil, new_perf, new_perf_counts)
     end
 
     new_perf[:intervals_in_rollup] = Metric::Helper.max_count(new_perf_counts)
@@ -223,7 +258,7 @@ module Metric::Rollup
     #   the current hour too because the capture in vim_performance_state_for_ts,
     #   if not found for the perf timestamp, will return a state for the current
     #   hour only.
-    MiqPreloader.preload(recs, :vim_performance_states, :conditions => {'vim_performance_states.timestamp' => [ts, Metric::Helper.nearest_hourly_timestamp(Time.now.utc)]}) unless recs.empty?
+    MiqPreloader.preload(recs, :vim_performance_states, VimPerformanceState.where(:timestamp => [ts, Metric::Helper.nearest_hourly_timestamp(Time.now.utc)])) unless recs.empty?
 
     recs.each do |rec|
       perf = perf_recs.fetch_path(rec.class.base_class.name, rec.id, interval_name, ts)
@@ -233,13 +268,13 @@ module Metric::Rollup
         result[c] ||= 0
         counts[c] ||= 0
         value = perf ? perf.send(c) : 0
-        Metric::Aggregation.aggregate_for_column(c, state, result, counts, value, :average)
+        Metric::Aggregation::Aggregate.column(c, state, result, counts, value, :average)
       end
     end
 
     agg_cols.each do |c|
       aggregate_only = !AVG_VALUE_COLUMNS.include?(c)
-      Metric::Aggregation.process_for_column(c, obj.vim_performance_state_for_ts(timestamp), result, counts, aggregate_only, :average)
+      Metric::Aggregation::Process.column(c, obj.vim_performance_state_for_ts(timestamp), result, counts, aggregate_only, :average)
     end
 
     result

@@ -14,17 +14,30 @@ require 'rspec/rails'
 require 'vcr'
 require 'cgi'
 
+# FIXME: This bypasses the lookup of Javascript dependencies in tests until they can be found and uncoupled
+class << ActionController::Base.helpers
+  def image_path(path, options = {})
+    path
+  end
+end
+
+# Fail tests that try to include stuff in `main`
+require_relative 'support/test_contamination'
+Spec::Support::TestContamination.setup
+
 # Requires supporting ruby files with custom matchers and macros, etc,
 # in spec/support/ and its subdirectories.
 Dir[Rails.root.join("spec/support/**/*.rb")].each { |f| require f }
-# include the gems/pending matchers
-Dir[File.join(GEMS_PENDING_ROOT, "spec/support/custom_matchers/*.rb")].each { |f| require f }
+Dir[Rails.root.join("spec/shared/**/*.rb")].each { |f| require f }
+# include the manageiq-gems-pending matchers
+Dir[ManageIQ::Gems::Pending.root.join("spec/support/custom_matchers/*.rb")].each { |f| require f }
 
 RSpec.configure do |config|
   config.expect_with :rspec do |c|
     c.syntax = :expect
   end
   config.mock_with :rspec do |c|
+    c.allow_message_expectations_on_nil = false
     c.syntax = :expect
   end
 
@@ -38,48 +51,39 @@ RSpec.configure do |config|
 
   unless ENV['CI']
     # File store for --only-failures option
-    config.example_status_persistence_file_path = "./spec/examples.txt"
+    config.example_status_persistence_file_path = Rails.root.join("tmp/rspec_example_store.txt")
   end
-
-  config.include VMDBConfigurationHelper
 
   config.define_derived_metadata(:file_path => /spec\/lib\/miq_automation_engine\/models/) do |metadata|
     metadata[:type] ||= :model
   end
 
-  config.include AuthHelper,     :type => :view
-  config.include ViewSpecHelper, :type => :view
   config.include UiConstants,    :type => :view
 
-  config.include ControllerSpecHelper, :type => :controller
   config.include UiConstants,          :type => :controller
-  config.include AuthHelper,           :type => :controller
+  config.include Spec::Support::AuthHelper, :type => :controller
 
-  config.include AutomationSpecHelper,   :type => :automation
-  config.include AutomationExampleGroup, :type => :automation
-  config.define_derived_metadata(:file_path => /spec\/automation/) do |metadata|
-    metadata[:type] ||= :automation
-  end
+  config.extend  Spec::Support::MigrationHelper::DSL
+  config.include Spec::Support::MigrationHelper, :migrations => :up
+  config.include Spec::Support::MigrationHelper, :migrations => :down
 
-  config.extend  MigrationSpecHelper::DSL
-  config.include MigrationSpecHelper, :migrations => :up
-  config.include MigrationSpecHelper, :migrations => :down
-
-  config.include ApiSpecHelper,     :rest_api => true
-  config.include AuthRequestHelper, :type => :request
+  config.include Spec::Support::ApiHelper, :rest_api => true
+  config.include Spec::Support::AuthRequestHelper, :type => :request
   config.define_derived_metadata(:file_path => /spec\/requests\/api/) do |metadata|
+    metadata[:aggregate_failures] = true
     metadata[:rest_api] = true
   end
 
-  config.include AuthHelper,  :type => :helper
+  config.include Spec::Support::AuthHelper, :type => :helper
 
-  config.include PresenterSpecHelper, :type => :presenter
+  config.include Spec::Support::PresenterHelper, :type => :presenter
   config.define_derived_metadata(:file_path => /spec\/presenters/) do |metadata|
     metadata[:type] ||= :presenter
   end
 
-  config.include RakeTaskExampleGroup, :type => :rake_task
-  config.include ButtonSpecHelper, :type => :button
+  config.include Spec::Support::RakeTaskExampleGroup, :type => :rake_task
+  config.include Spec::Support::ButtonHelper, :type => :button
+  config.include Spec::Support::AuthHelper, :type => :button
   config.define_derived_metadata(:file_path => /spec\/helpers\/application_helper\/buttons/) do |metadata|
     metadata[:type] = :button
   end
@@ -92,31 +96,32 @@ RSpec.configure do |config|
   # end
 
   config.before(:each) do |example|
-    EmsRefresh.debug_failures = true if example.metadata[:migrations].blank?
+    EmsRefresh.try(:debug_failures=, true) if example.metadata[:migrations].blank?
     ApplicationController.handle_exceptions = false if %w(controller requests).include?(example.metadata[:type])
   end
 
   config.before(:each, :rest_api => true) { init_api_spec_env }
 
-  config.after(:each) do
-    EvmSpecHelper.clear_caches
+  config.around(:each) do |example|
+    EvmSpecHelper.clear_caches { example.run }
   end
 
   if ENV["TRAVIS"] && ENV["TEST_SUITE"] == "vmdb"
-    config.after(:suite) do
+    config.before(:suite) do
       require Rails.root.join("spec/coverage_helper.rb")
     end
   end
 
-  if config.backtrace_exclusion_patterns.delete(%r{/lib\d*/ruby/}) ||
-     config.backtrace_exclusion_patterns.delete(%r{/gems/})
+  if config.backtrace_exclusion_patterns.delete(%r{/lib\d*/ruby/})
     config.backtrace_exclusion_patterns << %r{/lib\d*/ruby/[0-9]}
-    config.backtrace_exclusion_patterns << %r{/gems/[0-9][^/]+/gems/}
   end
+
+  config.backtrace_exclusion_patterns << %r{/spec/spec_helper}
+  config.backtrace_exclusion_patterns << %r{/spec/support/evm_spec_helper}
 end
 
 VCR.configure do |c|
-  c.cassette_library_dir = 'spec/vcr_cassettes'
+  c.cassette_library_dir = Rails.root.join('spec/vcr_cassettes')
   c.hook_into :webmock
 
   c.allow_http_connections_when_no_cassette = false

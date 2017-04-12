@@ -44,15 +44,10 @@ module MiqReport::Seeding
     end
 
     def sync_from_file(filename, dir, typ)
-      fd = File.open(filename)
-      fd.gets # throw away "--- !ruby/object:MIQ_Report \r\n"
-      yml = YAML.load(fd.read)
-      fd.close
-
+      yml = YAML.load_file(filename)
       rpt = {}
       column_names.each { |c| rpt[c.to_sym] = yml[c] }
       rpt.delete :id
-      # rpt[:name] = File.basename(filename, ".*")
       rpt[:name] = yml["menu_name"].strip
       rpt[:rpt_group] = File.basename(File.dirname(filename)).split("_").last
       rpt[:rpt_type] = "Default"
@@ -63,8 +58,6 @@ module MiqReport::Seeding
       # will always be different
       rpt[:file_mtime] = File.mtime(filename).utc.round
       rpt[:priority] = File.basename(filename).split("_").first.to_i
-      # rec = self.find_by_name_and_rpt_group(rpt[:name], rpt[:rpt_group])
-      # rec = self.find_by(:name => rpt[:name], :filename => rpt[:filename])
       rpt[:template_type] = typ
       rec = find_by_filename(rpt[:filename])
 

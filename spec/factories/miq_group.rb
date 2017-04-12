@@ -5,22 +5,32 @@ FactoryGirl.define do
     transient do
       features nil
       role nil
+
+      # Temporary: Allows entitlements, a new table, to be invisible to current spec setup code
+      # Do NOT use these if possible.
+      miq_user_role_id nil
+      miq_user_role nil
     end
 
     sequence(:sequence)  # don't want to spend time looking these up
     description { |g| g.role ? "EvmGroup-#{g.role}" : generate(:miq_group_description) }
 
     after :build do |g, e|
-      if e.role
-        g.miq_user_role = MiqUserRole.find_by_name("EvmRole-#{e.role}") ||
-                          FactoryGirl.create(:miq_user_role, :features => e.features, :role => e.role)
-      elsif e.features.present?
-        g.miq_user_role = FactoryGirl.create(:miq_user_role, :features => e.features)
+      if e.role || e.features || e.miq_user_role_id || e.miq_user_role
+        g.entitlement = FactoryGirl.create(:entitlement,
+                                           :features => e.features,
+                                           :role => e.role,
+                                           :miq_user_role_id => e.miq_user_role_id,
+                                           :miq_user_role => e.miq_user_role)
       end
     end
 
-    factory :system_group do
-      group_type "system" # dont want to reference class from factory MiqGroup::SYSTEM_GROUP
+    trait :system_type do
+      group_type { MiqGroup::SYSTEM_GROUP }
+    end
+
+    trait :tenant_type do
+      group_type { MiqGroup::TENANT_GROUP }
     end
   end
 end

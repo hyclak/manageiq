@@ -18,8 +18,15 @@ describe MiqWorker do
       expect_any_instance_of(described_class).to receive(:stop)
       worker = FactoryGirl.create(:miq_worker, :status => "started")
       worker.class.workers = 0
-      expect(worker.class.sync_workers).to eq({:adds => [], :deletes => [worker.pid]})
+      expect(worker.class.sync_workers).to eq(:adds => [], :deletes => [worker.pid])
     end
+  end
+
+  it "renice" do
+    allow(AwesomeSpawn).to receive(:launch)
+    allow(described_class).to receive(:worker_settings).and_return(:nice_delta => 5)
+    result = described_class.renice(123)
+    expect(result.command_line).to eq "renice -n 5 -p 123"
   end
 
   context ".has_required_role?" do
@@ -77,7 +84,7 @@ describe MiqWorker do
 
       it "that is a subset of server roles" do
         check_has_required_role(["foo"], true)
-        check_has_required_role(["bah", "foo"], true)
+        check_has_required_role(%w(bah foo), true)
       end
 
       it "that is not a subset of server roles" do
@@ -117,17 +124,104 @@ describe MiqWorker do
     end
   end
 
+  describe ".worker_settings" do
+    let(:settings) do
+      {
+        :workers => {
+          :worker_base => {
+            :defaults          => {:memory_threshold => "100.megabytes"},
+            :queue_worker_base => {
+              :defaults           => {:memory_threshold => "300.megabytes"},
+              :ems_refresh_worker => {
+                :defaults                  => {:memory_threshold => "500.megabytes"},
+                :ems_refresh_worker_amazon => {
+                  :memory_threshold => "700.megabytes"
+                }
+              }
+            }
+          }
+        },
+        :ems     => {:ems_amazon => {}}
+      }
+    end
+
+    before do
+      EvmSpecHelper.create_guid_miq_server_zone
+      stub_settings(settings)
+    end
+
+    context "at a concrete subclass" do
+      let(:actual) { ManageIQ::Providers::Amazon::CloudManager::RefreshWorker.worker_settings[:memory_threshold] }
+
+      it "with overrides" do
+        expect(actual).to eq(700.megabytes)
+      end
+
+      it "without overrides" do
+        settings.store_path(:workers, :worker_base, :queue_worker_base, :ems_refresh_worker, :ems_refresh_worker_amazon, {})
+        stub_settings(settings)
+
+        expect(actual).to eq(500.megabytes)
+      end
+    end
+
+    context "at the BaseManager level" do
+      let(:actual) { ManageIQ::Providers::BaseManager::RefreshWorker.worker_settings[:memory_threshold] }
+      it "with overrides" do
+        expect(actual).to eq(500.megabytes)
+      end
+
+      it "without overrides" do
+        settings.store_path(:workers, :worker_base, :queue_worker_base, :ems_refresh_worker, :defaults, {})
+        stub_settings(settings)
+
+        expect(actual).to eq(300.megabytes)
+      end
+    end
+
+    context "at the MiqQueueWorkerBase level" do
+      let(:actual) { MiqQueueWorkerBase.worker_settings[:memory_threshold] }
+      it "with overrides" do
+        expect(actual).to eq(300.megabytes)
+      end
+
+      it "without overrides" do
+        settings.store_path(:workers, :worker_base, :queue_worker_base, :defaults, {})
+        stub_settings(settings)
+
+        expect(actual).to eq(100.megabytes)
+      end
+    end
+
+    it "at the base class" do
+      actual = MiqWorker.worker_settings[:memory_threshold]
+      expect(actual).to eq(100.megabytes)
+    end
+
+    it "uses passed in config" do
+      settings.store_path(:workers, :worker_base, :queue_worker_base, :ems_refresh_worker,
+                          :ems_refresh_worker_amazon, :memory_threshold, "5.terabyte")
+      stub_settings(settings)
+
+      settings.store_path(:workers, :worker_base, :queue_worker_base, :ems_refresh_worker,
+                          :ems_refresh_worker_amazon, :memory_threshold, "1.terabyte")
+      actual = ManageIQ::Providers::Amazon::CloudManager::RefreshWorker
+               .worker_settings(:config => settings)[:memory_threshold]
+      expect(actual).to eq(1.terabyte)
+    end
+  end
+
   context "with two servers" do
-    before(:each) do
+    before do
       allow(described_class).to receive(:nice_increment).and_return("+10")
 
       @zone = FactoryGirl.create(:zone)
       @server = FactoryGirl.create(:miq_server, :zone => @zone)
       allow(MiqServer).to receive(:my_server).and_return(@server)
-      @worker = FactoryGirl.create(:miq_ems_refresh_worker, :miq_server => @server)
+      @worker = FactoryGirl.create(:ems_refresh_worker_amazon, :miq_server => @server)
 
       @server2 = FactoryGirl.create(:miq_server, :zone => @zone)
-      @worker2 = FactoryGirl.create(:miq_ems_refresh_worker, :miq_server => @server2)
+      @worker2 = FactoryGirl.create(:ems_refresh_worker_amazon, :miq_server => @server2)
     end
 
     it ".server_scope" do
@@ -145,60 +239,66 @@ describe MiqWorker do
       end
     end
 
-    context "worker_settings" do
+    describe "#worker_settings" do
+      let(:config1) do
+        {
+          :workers => {
+            :worker_base => {
+              :defaults          => {:memory_threshold => "100.megabytes"},
+              :queue_worker_base => {
+                :defaults           => {:memory_threshold => "300.megabytes"},
+                :ems_refresh_worker => {
+                  :defaults                  => {:memory_threshold => "500.megabytes"},
+                  :ems_refresh_worker_amazon => {
+                    :memory_threshold => "700.megabytes"
+                  }
+                }
+              }
+            }
+          }
+        }
+      end
+
+      let(:config2) do
+        {
+          :workers => {
+            :worker_base => {
+              :defaults          => {:memory_threshold => "200.megabytes"},
+              :queue_worker_base => {
+                :defaults           => {:memory_threshold => "400.megabytes"},
+                :ems_refresh_worker => {
+                  :defaults                  => {:memory_threshold => "600.megabytes"},
+                  :ems_refresh_worker_amazon => {
+                    :memory_threshold => "800.megabytes"
+                  }
+                }
+              }
+            }
+          }
+        }
+      end
+
       before do
-        @config1 = {
-          :workers => {
-            :worker_base => {
-              :defaults          => {:count => 1},
-              :queue_worker_base => {
-                :defaults           => {:count => 3},
-                :ems_refresh_worker => {:count => 5}
-              }
-            }
-          }
-        }
-
-        @config2 = {
-          :workers => {
-            :worker_base => {
-              :defaults          => {:count => 2},
-              :queue_worker_base => {
-                :defaults           => {:count => 4},
-                :ems_refresh_worker => {:count => 6}
-              }
-            }
-          }
-        }
-        allow(@server).to receive(:get_config).with("vmdb").and_return(@config1)
-        allow(@server2).to receive(:get_config).with("vmdb").and_return(@config2)
+        Vmdb::Settings.save!(@server,  config1)
+        Vmdb::Settings.save!(@server2, config2)
       end
 
-      context "#worker_settings" do
-        it "uses the worker's server" do
-          expect(@worker.worker_settings[:count]).to eq(5)
-          expect(@worker2.worker_settings[:count]).to eq(6)
-        end
-
-        it "uses passed in config" do
-          expect(@worker.worker_settings(:config => @config2)[:count]).to eq(6)
-          expect(@worker2.worker_settings(:config => @config1)[:count]).to eq(5)
-        end
-
-        it "uses closest parent's defaults" do
-          @config1[:workers][:worker_base][:queue_worker_base][:ems_refresh_worker].delete(:count)
-          expect(@worker.worker_settings[:count]).to eq(3)
-        end
+      it "uses the worker's miq_server" do
+        expect(@worker.worker_settings[:memory_threshold]).to  eq(700.megabytes)
+        expect(@worker2.worker_settings[:memory_threshold]).to eq(800.megabytes)
       end
 
-      context ".worker_settings" do
-        it "uses MiqServer.my_server" do
-          expect(MiqEmsRefreshWorker.worker_settings[:count]).to eq(5)
-        end
+      it "uses passed in config" do
+        expect(@worker.worker_settings(:config => config2)[:memory_threshold]).to  eq(800.megabytes)
+        expect(@worker2.worker_settings(:config => config1)[:memory_threshold]).to eq(700.megabytes)
+      end
 
-        it "uses passed in config" do
-          expect(MiqEmsRefreshWorker.worker_settings(:config => @config2)[:count]).to eq(6)
-        end
+      it "without overrides" do
+        @server.settings_changes.where(
+          :key => "/workers/worker_base/queue_worker_base/ems_refresh_worker/ems_refresh_worker_amazon/memory_threshold"
+        ).delete_all
+        expect(@worker.worker_settings[:memory_threshold]).to  eq(500.megabytes)
+        expect(@worker2.worker_settings[:memory_threshold]).to eq(800.megabytes)
       end
     end
   end
@@ -221,30 +321,6 @@ describe MiqWorker do
     end
   end
 
-  describe ".worker_settings" do
-    let(:capu_worker) do
-      ManageIQ::Providers::Amazon::CloudManager::MetricsCollectorWorker
-    end
-    let(:config) { @server.get_config }
-
-    before do
-      @server = EvmSpecHelper.local_miq_server
-    end
-
-    it "merges parent values" do
-      config.set_worker_setting!(:MiqEmsMetricsCollectorWorker, [:defaults, :memory_threshold], "250.megabytes")
-      config.save
-      expect(capu_worker.worker_settings[:memory_threshold]).to eq(250.megabytes)
-    end
-
-    it "reads child value" do
-      config.set_worker_setting!(:MiqEmsMetricsCollectorWorker, [:defaults, :memory_threshold], "250.megabytes")
-      config.set_worker_setting!(capu_worker, :memory_threshold, "200.megabytes")
-      config.save
-      expect(capu_worker.worker_settings[:memory_threshold]).to eq(200.megabytes)
-    end
-  end
-
   context "instance" do
     before(:each) do
       allow(described_class).to receive(:nice_increment).and_return("+10")
@@ -253,6 +329,27 @@ describe MiqWorker do
 
     it "#worker_options" do
       expect(@worker.worker_options).to eq(:guid => @worker.guid)
+    end
+
+    describe "#stopping_for_too_long?" do
+      subject { @worker.stopping_for_too_long? }
+
+      it "false if started" do
+        @worker.update(:status => described_class::STATUS_STARTED)
+        expect(subject).to be_falsey
+      end
+
+      it "true if stopping and not heartbeated recently" do
+        @worker.update(:status         => described_class::STATUS_STOPPING,
+                       :last_heartbeat => 30.minutes.ago)
+        expect(subject).to be_truthy
+      end
+
+      it "false if stopping and heartbeated recently" do
+        @worker.update(:status         => described_class::STATUS_STOPPING,
+                       :last_heartbeat => 1.minute.ago)
+        expect(subject).to be_falsey
+      end
     end
 
     it "is_current? false when starting" do
@@ -270,30 +367,57 @@ describe MiqWorker do
       expect(@worker.is_current?).to be_truthy
     end
 
-    it ".status_update" do
-      @worker.update_attribute(:pid, 123)
+    context ".status_update" do
+      before do
+        @worker.update_attribute(:pid, 123)
+        require 'miq-process'
+      end
 
-      require 'miq-process'
-      allow(MiqProcess).to receive(:processInfo).with(123).and_return(
-        :pid                   => 123,
-        :memory_usage          => 246_824_960,
-        :memory_size           => 2_792_611_840,
-        :percent_memory        => "1.4",
-        :percent_cpu           => "1.0",
-        :cpu_time              => 660,
-        :priority              => "31",
-        :name                  => "ruby",
-        :proportional_set_size => 198_721_987
-      )
+      it "no such process" do
+        allow(MiqProcess).to receive(:processInfo).with(123).and_raise(Errno::ESRCH)
+        described_class.status_update
+        @worker.reload
+        expect(@worker.status).to eq MiqWorker::STATUS_ABORTED
+      end
 
-      described_class.status_update
-      @worker.reload
-      expect(@worker.os_priority).to eq 31
-      expect(@worker.memory_usage).to eq 246_824_960
-      expect(@worker.percent_memory).to eq 1.4
-      expect(@worker.percent_cpu).to eq 1.0
-      expect(@worker.memory_size).to eq 2_792_611_840
-      expect(@worker.proportional_set_size).to eq 198_721_987
+      it "a StandardError" do
+        allow(MiqProcess).to receive(:processInfo).with(123).and_raise(StandardError.new("LOLRUBY"))
+        expect($log).to receive(:warn).with(/LOLRUBY/)
+        described_class.status_update
+      end
+
+      it "updates expected values" do
+        values = {
+          :pid                   => 123,
+          :memory_usage          => 246_824_960,
+          :memory_size           => 2_792_611_840,
+          :percent_memory        => "1.4",
+          :percent_cpu           => "1.0",
+          :cpu_time              => 660,
+          :priority              => "31",
+          :name                  => "ruby",
+          :proportional_set_size => 198_721_987
+        }
+
+        fields = described_class::PROCESS_INFO_FIELDS.dup
+
+        # convert priority -> os_priority column
+        fields.delete(:priority)
+        fields << :os_priority
+
+        fields.each do |field|
+          expect(@worker.public_send(field)).to be_nil
+        end
+
+        allow(MiqProcess).to receive(:processInfo).with(123).and_return(values)
+        described_class.status_update
+        @worker.reload
+
+        fields.each do |field|
+          expect(@worker.public_send(field)).to be_present
+        end
+        expect(@worker.proportional_set_size).to eq 198_721_987
+      end
     end
   end
 end

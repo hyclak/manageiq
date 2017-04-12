@@ -14,7 +14,7 @@ describe ImportFileUpload do
     end
   end
 
-  describe "#service_dialog_json" do
+  describe "#service_dialog_list" do
     before do
       import_file_upload.create_binary_blob(:binary => "---\n- label: Dialog2\n- label: dialog\n  not_label: test\n")
       allow(Dialog).to receive(:exists?).with(:label => "dialog").and_return(exists?)
@@ -25,19 +25,17 @@ describe ImportFileUpload do
       let(:exists?) { true }
 
       it "returns json with a checkmark status icon" do
-        expected_json = [{
-          :id          => 0,
-          :name        => "dialog",
-          :status_icon => ActionController::Base.helpers.image_path('16/checkmark.png'),
-          :status      => "This object already exists in the database with the same name"
+        expected_list = [{
+          :id     => 0,
+          :name   => "dialog",
+          :exists => true
         }, {
-          :id          => 1,
-          :name        => "Dialog2",
-          :status_icon => ActionController::Base.helpers.image_path('16/checkmark.png'),
-          :status      => "This object already exists in the database with the same name"
-        }].to_json
+          :id     => 1,
+          :name   => "Dialog2",
+          :exists => true
+        }]
 
-        expect(import_file_upload.service_dialog_json).to eq(expected_json)
+        expect(import_file_upload.service_dialog_list).to eq(expected_list)
       end
     end
 
@@ -45,19 +43,17 @@ describe ImportFileUpload do
       let(:exists?) { false }
 
       it "returns json with an equal-green status icon" do
-        expected_json = [{
-          :id          => 0,
-          :name        => "dialog",
-          :status_icon => ActionController::Base.helpers.image_path('16/equal-green.png'),
-          :status      => "New object"
+        expected_list = [{
+          :id     => 0,
+          :name   => "dialog",
+          :exists => false
         }, {
-          :id          => 1,
-          :name        => "Dialog2",
-          :status_icon => ActionController::Base.helpers.image_path('16/equal-green.png'),
-          :status      => "New object"
-        }].to_json
+          :id     => 1,
+          :name   => "Dialog2",
+          :exists => false
+        }]
 
-        expect(import_file_upload.service_dialog_json).to eq(expected_json)
+        expect(import_file_upload.service_dialog_list).to eq(expected_list)
       end
     end
   end
@@ -83,15 +79,13 @@ describe ImportFileUpload do
 
       it "returns json with a checkmark status icon" do
         expected_list = [{
-          :id          => 0,
-          :name        => "widget",
-          :status_icon => ActionController::Base.helpers.image_path('16/checkmark.png'),
-          :status      => "This object already exists in the database with the same name"
+          :id     => 0,
+          :name   => "widget",
+          :exists => true
         }, {
-          :id          => 1,
-          :name        => "Widget1",
-          :status_icon => ActionController::Base.helpers.image_path('16/checkmark.png'),
-          :status      => "This object already exists in the database with the same name"
+          :id     => 1,
+          :name   => "Widget1",
+          :exists => true
         }]
 
         expect(import_file_upload.widget_list).to eq(expected_list)
@@ -103,15 +97,13 @@ describe ImportFileUpload do
 
       it "returns json with an equal-green status icon" do
         expected_list = [{
-          :id          => 0,
-          :name        => "widget",
-          :status_icon => ActionController::Base.helpers.image_path('16/equal-green.png'),
-          :status      => "New object"
+          :id     => 0,
+          :name   => "widget",
+          :exists => false
         }, {
-          :id          => 1,
-          :name        => "Widget1",
-          :status_icon => ActionController::Base.helpers.image_path('16/equal-green.png'),
-          :status      => "New object"
+          :id     => 1,
+          :name   => "Widget1",
+          :exists => false
         }]
 
         expect(import_file_upload.widget_list).to eq(expected_list)

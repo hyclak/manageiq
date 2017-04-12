@@ -3,21 +3,24 @@ class OrchestrationTemplate < ApplicationRecord
   TEMPLATE_DIR = Rails.root.join("product/orchestration_templates")
 
   include NewWithTypeStiMixin
-  include ReportableMixin
 
   acts_as_miq_taggable
 
   has_many :stacks, :class_name => "OrchestrationStack"
+  has_one :picture, :dependent => :destroy, :as => :resource, :autosave => true
 
   default_value_for :draft, false
   default_value_for :orderable, true
 
   validates :md5,
             :uniqueness => {:scope => :draft, :message => "of content already exists (content must be unique)"},
-            :unless     => :draft?
+            :if         => :unique_md5?
   validates_presence_of :name
 
   before_destroy :check_not_in_use
+
+  attr_accessor :remote_proxy
+  alias remote_proxy? remote_proxy
 
   # Try to create the template if the name is not found in table
   def self.seed
@@ -70,6 +73,11 @@ class OrchestrationTemplate < ApplicationRecord
     self.md5 = calc_md5(content)
   end
 
+  # Determines if validation for md5 uniqueness is done
+  def unique_md5?
+    !draft?
+  end
+
   # Check whether a template has been referenced by any stack. A template that is in use should be
   # considered read only
   def in_use?
@@ -87,15 +95,52 @@ class OrchestrationTemplate < ApplicationRecord
   end
 
   def parameter_groups
-    raise NotImplementedError, "parameter_groups must be implemented in subclass"
+    raise NotImplementedError, _("parameter_groups must be implemented in subclass")
+  end
+
+  # Basic options for all templates, each subclass should add more type/provider specific deployment options
+  # Return array of OrchestrationParameters. (Deployment options are different from parameters, but they use same class)
+  def deployment_options(_manager_class = nil)
+    tenant_opt = OrchestrationTemplate::OrchestrationParameter.new(
+      :name        => "tenant_name",
+      :label       => "Tenant",
+      :data_type   => "string",
+      :description => "Tenant where the stack will be deployed",
+      :required    => true,
+      :constraints => [
+        OrchestrationTemplate::OrchestrationParameterAllowedDynamic.new(
+          :fqname => "/Cloud/Orchestration/Operations/Methods/Available_Tenants"
+        )
+      ]
+    )
+
+    stack_name_opt = OrchestrationTemplate::OrchestrationParameter.new(
+      :name        => "stack_name",
+      :label       => "Stack Name",
+      :data_type   => "string",
+      :description => "Name of the stack",
+      :required    => true,
+      :constraints => [
+        OrchestrationTemplate::OrchestrationParameterPattern.new(
+          :pattern => '^[A-Za-z][A-Za-z0-9\-]*$'
+        )
+      ]
+    )
+    [tenant_opt, stack_name_opt]
   end
 
   # List managers that may be able to deploy this template
   def self.eligible_managers
-    ExtManagementSystem.where(:type => eligible_manager_types.collect(&:name))
+    Rbac::Filterer.filtered(ExtManagementSystem, :where_clause => {:type => eligible_manager_types})
   end
 
   delegate :eligible_managers, :to => :class
+
+  def self.stack_type
+    "OrchestrationStack"
+  end
+
+  delegate :stack_type, :to => :class
 
   # return the validation error message; otherwise nil
   def validate_content(manager = nil)
@@ -107,7 +152,7 @@ class OrchestrationTemplate < ApplicationRecord
   end
 
   def validate_format
-    raise NotImplementedError, "validate_format must be implemented in subclass"
+    raise NotImplementedError, _("validate_format must be implemented in subclass")
   end
 
   # use cases for md5 conflict:
@@ -126,7 +171,7 @@ class OrchestrationTemplate < ApplicationRecord
     return save! if draft?
 
     old_template = self.class.find_with_content(content)
-    return save! if old_template.nil? || old_template.orderable
+    return save! if old_template.nil? || old_template.orderable || old_template.id == id
 
     new_record? ? replace_with_old_template(old_template) : transfer_stacks(old_template)
   end

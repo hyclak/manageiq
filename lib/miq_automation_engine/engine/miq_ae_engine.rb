@@ -1,21 +1,11 @@
-require 'miq_ae_exception'
-require 'engine/miq_ae_workspace'
-require 'engine/miq_ae_object'
-require 'engine/miq_ae_method'
-require 'engine/miq_ae_builtin_method'
-require 'engine/miq_ae_service'
-require 'engine/miq_ae_service_model_base'
-require 'engine/miq_ae_event'
 require 'uri'
-require 'engine/miq_ae_uri'
-require 'engine/miq_ae_path'
-require 'engine/miq_ae_domain_search'
+
+Dir.glob(Pathname.new(__dir__).join("miq_ae_engine/*.rb")) do |file|
+  require_relative "miq_ae_engine/#{File.basename(file)}"
+end
 
 module MiqAeEngine
   DEFAULT_ATTRIBUTES = %w( User::user MiqServer::miq_server object_name )
-  AE_ROOT_DIR            = File.expand_path(File.join(Rails.root,    'product/automate'))
-  AE_IMPORT_DIR          = File.expand_path(File.join(AE_ROOT_DIR,   'import'))
-  AE_DEFAULT_IMPORT_FILE = File.expand_path(File.join(AE_IMPORT_DIR, 'automate.xml'))
 
   def self.instantiate(uri, user)
     $miq_ae_logger.info("MiqAeEngine: Instantiating Workspace for URI=#{uri}")
@@ -94,8 +84,9 @@ module MiqAeEngine
       automate_attrs = options[:attrs].dup
 
       if object_type
-        vmdb_object = object_type.constantize.find_by_id(object_id)
+        vmdb_object = object_type.constantize.find_by(:id => object_id)
         automate_attrs[create_automation_attribute_key(vmdb_object)] = object_id
+        vmdb_object.before_ae_starts(options) if vmdb_object.respond_to?(:before_ae_starts)
       end
 
       automate_attrs['User::user']      = user_id            unless user_id.nil?
@@ -117,7 +108,7 @@ module MiqAeEngine
 
       if ws.nil? || ws.root.nil?
         message = "Error delivering #{options[:attrs].inspect} for object [#{object_name}] with state [#{state}] to Automate: Empty Workspace"
-        _log.error("#{message}")
+        _log.error(message)
         return nil
       end
 
@@ -136,12 +127,14 @@ module MiqAeEngine
           options[:ae_state_previous] = YAML.dump(ws.current_state_info) unless ws.current_state_info.empty?
 
           message = "Requeuing #{options.inspect} for object [#{object_name}] with state [#{options[:state]}] to Automate for delivery in [#{ae_retry_interval}] seconds"
-          _log.info("#{message}")
-          deliver_queue(options, :deliver_on => deliver_on)
+          _log.info(message)
+          queue_options = {:deliver_on => deliver_on}
+          queue_options[:server_guid] = MiqServer.my_guid if ws.root['ae_retry_server_affinity']
+          deliver_queue(options, queue_options)
         else
           if ae_result.casecmp('error').zero?
             message = "Error delivering #{options[:attrs].inspect} for object [#{object_name}] with state [#{state}] to Automate: #{ws.root['ae_message']}"
-            _log.error("#{message}")
+            _log.error(message)
           end
           MiqAeEvent.process_result(ae_result, automate_attrs) if options[:instance_name].to_s.casecmp('EVENT').zero?
         end
@@ -150,7 +143,7 @@ module MiqAeEngine
       return ws
     rescue MiqAeException::Error => err
       message = "Error delivering #{automate_attrs.inspect} for object [#{object_name}] with state [#{state}] to Automate: #{err.message}"
-      _log.error("#{message}")
+      _log.error(message)
     ensure
       vmdb_object.after_ae_delivery(ae_result.to_s.downcase) if vmdb_object.respond_to?(:after_ae_delivery)
     end
@@ -210,7 +203,7 @@ module MiqAeEngine
 
   def self.create_automation_attribute_key(object, attr_name = nil)
     klass_name  = create_automation_attribute_class_name(object)
-    return "#{klass_name}" if automation_attribute_is_array?(klass_name)
+    return klass_name.to_s if automation_attribute_is_array?(klass_name)
     attr_name ||= create_automation_attribute_name(object)
     "#{klass_name}::#{attr_name}"
   end

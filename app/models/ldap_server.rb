@@ -7,8 +7,6 @@ class LdapServer < ApplicationRecord
   attr_accessor :ldap
 
   acts_as_miq_taggable
-
-  include ReportableMixin
   include AuthenticationMixin
 
   def name
@@ -20,7 +18,7 @@ class LdapServer < ApplicationRecord
   end
 
   def connected?
-    @ldap ? true : false
+    !!@ldap
   end
 
   def verify_credentials

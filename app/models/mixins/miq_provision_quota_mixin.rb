@@ -5,7 +5,9 @@ module MiqProvisionQuotaMixin
   # requset_by_owner, request_by_group
   def check_quota(quota_type = :vms_by_owner, options = {})
     quota_method = "quota_#{quota_type}"
-    raise "check_quota called with an invalid provisioning quota method <#{quota_type}>" unless self.respond_to?(quota_method)
+    unless respond_to?(quota_method)
+      raise _("check_quota called with an invalid provisioning quota method <%{type}>") % {:type => quota_type}
+    end
     send(quota_method, options)
   end
 
@@ -101,28 +103,14 @@ module MiqProvisionQuotaMixin
   end
 
   def quota_find_vms_by_owner_and_group(options)
-    vms = []
-    prov_owner = get_owner
-    unless prov_owner.nil?
-      vms = Vm.user_or_group_owned(prov_owner)
-      MiqPreloader.preload(vms, :hardware => :disks)
-      vms.reject! do |vm|
-        result = vm.template? || vm.host_id.nil?
-        # if result is already true we can skip the following checks
-        unless result == true
-          result = if options[:retired_vms_only] == true
-                     !vm.retired?
-                   elsif options[:include_retired_vms] == false
-                     # Skip retired VMs by default
-                     vm.retired?
-                   else
-                     result
-                   end
-        end
-        result
-      end
+    scope = Vm.not(:host_id => nil)
+    if options[:retired_vms_only] == true
+      scope = scope.where(:retired => true)
+    elsif options[:include_retired_vms] == false
+      scope = scope.where.not(:retired => true)
     end
-    vms
+
+    scope.user_or_group_owned(prov_owner, prov_owner.current_group).includes(:hardware => :disks).to_a
   end
 
   def quota_find_vms_by_owner(options)

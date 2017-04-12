@@ -35,14 +35,14 @@ class MiqQueueWorkerBase::Runner < MiqWorker::Runner
   def get_message_via_drb
     loop do
       begin
-        msg_id, lock_version = @worker_monitor_drb.get_queue_message(@worker.pid)
+        msg_id, lock_version = worker_monitor_drb.get_queue_message(@worker.pid)
       rescue DRb::DRbError => err
         do_exit("Error communicating with WorkerMonitor because <#{err.message}>", 1)
       end
 
       return nil if msg_id.nil?
 
-      msg = MiqQueue.find_by_id(msg_id)
+      msg = MiqQueue.find_by(:id => msg_id)
       if msg.nil?
         _log.debug("#{log_prefix} Message id: [#{msg_id}] stale (msg gone), retrying...")
         next
@@ -64,7 +64,8 @@ class MiqQueueWorkerBase::Runner < MiqWorker::Runner
         _log.debug("#{log_prefix} #{MiqQueue.format_short_log_msg(msg)} stale, retrying...")
         next
       rescue => err
-        raise "#{log_prefix} \"#{err}\" attempting to get next message"
+        msg.update_column(:state, MiqQueue::STATUS_ERROR)
+        raise _("%{log} \"%{error}\" attempting to get next message") % {:log => log_prefix, :error => err}
       end
     end
   end
@@ -134,9 +135,10 @@ class MiqQueueWorkerBase::Runner < MiqWorker::Runner
     return deliver_queue_message(msg) if msg.kind_of?(MiqQueue)
     return process_message(msg)       if msg.kind_of?(String)
 
-    emsg = "#{log_prefix} Message <#{msg.inspect}> is of unknown type <#{msg.class}>"
-    _log.error(emsg)
-    raise emsg
+    _log.error("#{log_prefix} Message <#{msg.inspect}> is of unknown type <#{msg.class}>")
+    raise _("%{log} Message <%{message}> is of unknown type <%{type}>") % {:log     => log_prefix,
+                                                                           :message => msg.inspect,
+                                                                           :type    => msg.class}
   end
 
   def do_work

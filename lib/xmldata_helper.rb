@@ -1,6 +1,4 @@
-$LOAD_PATH << File.join(GEMS_PENDING_ROOT, "util/xml")
-
-require 'xml_utils'
+require 'xml/xml_utils'
 
 class XmlData < ActiveRecord::Base
   def self.emsinventory(emsId, data)
@@ -14,7 +12,7 @@ class XmlData < ActiveRecord::Base
     _log.info "request received from ems id: #{emsId}"
     handler = EventXmlHandler.new
     Document.parse_stream(data, handler)
-    $log.debug "#{handler.result.inspect}"
+    $log.debug handler.result.inspect
 
     handler.result.each { |event| eval "VmwareEmsEvent.#{event[:type]}(event)" }
   end

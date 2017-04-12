@@ -17,10 +17,8 @@ class AutomationRequest < MiqRequest
     options = {}
     requester_options = MiqRequestWorkflow.parse_ws_string(requester)
     auto_approve = (requester_options[:auto_approve] == 'true' || requester_options[:auto_approve] == true)
-    unless requester_options[:user_name].blank?
-      user = User.find_by_userid!(requester_options[:user_name])
-      _log.warn "Web-service requester changed to <#{user.userid}>"
-    end
+
+    user = MiqRequestWorkflow.update_requester_from_parameters(requester_options, user)
 
     uri_options = MiqRequestWorkflow.parse_ws_string(uri_parts)
     [:namespace, :class, :instance, :message].each { |key| options[key] = uri_options.delete(key) if uri_options.key?(key) }
@@ -29,7 +27,9 @@ class AutomationRequest < MiqRequest
     options[:class_name]    = (options.delete(:class) || DEFAULT_CLASS).strip.gsub(/(^\/|\/$)/, "")
     options[:instance_name] = (options.delete(:instance) || DEFAULT_INSTANCE).strip
 
+    object_parameters = parse_out_objects(parameters)
     attrs = MiqRequestWorkflow.parse_ws_string(parameters)
+    attrs.merge!(object_parameters)
 
     attrs[:userid]     = user.userid
     options[:user_id]  = user.id
@@ -39,10 +39,27 @@ class AutomationRequest < MiqRequest
     create_request(options, user, auto_approve)
   end
 
+  def self.create_from_scheduled_task(user, uri_parts, parameters)
+    [:namespace, :class_name].each { |key| uri_parts.delete(key) if uri_parts.key?(key) }
+    approval = {'auto_approve' => true}
+    uri_parts.stringify_keys!
+    parameters.stringify_keys!
+    create_from_ws("1.1", user, uri_parts, parameters, approval)
+  end
+
+  def self.parse_out_objects(parameters)
+    object_hash = parameters.select { |key, _v| key.to_s.include?(MiqAeEngine::MiqAeObject::CLASS_SEPARATOR) }
+    object_hash.each do |key, _v|
+      parameters.delete(key)
+    end
+  end
+
   def self.zone(options)
     zone_name = options[:attrs][:miq_zone]
     return nil if zone_name.blank?
-    raise ArgumentError, "unknown zone #{zone_name}" unless Zone.where(:name => zone_name).exists?
+    unless Zone.where(:name => zone_name).exists?
+      raise ArgumentError, _("unknown zone %{zone_name}") % {:zone_name => zone_name}
+    end
     zone_name
   end
 

@@ -1,13 +1,11 @@
 class BottleneckEvent < ApplicationRecord
   belongs_to :resource, :polymorphic => true
 
-  include ReportableMixin
-
   serialize :context_data
 
   def self.last_created_on(obj)
     event = where(:resource => obj).order("created_on DESC").first
-    event ? event.created_on : nil
+    event.try(:created_on)
   end
 
   def self.generate_future_events(obj)
@@ -43,7 +41,7 @@ class BottleneckEvent < ApplicationRecord
 
   def self.calculate_future_event(obj, options)
     method = "calculate_future_#{options[:name]}"
-    raise "'#{options[:name]}', calculation not supported" unless self.respond_to?(method)
+    raise _("'%{name}', calculation not supported") % {:name => options[:name]} unless respond_to?(method)
     send(method, obj, options)
   end
 
@@ -85,10 +83,10 @@ class BottleneckEvent < ApplicationRecord
     # =>  :limit_attr_value => value of limit attr
     # => }
 
-    recs = VimPerformanceAnalysis.find_perf_for_time_period(obj, options[:interval], options)
-    return if recs.blank?
+    # TODO: remove `to_a` when `calc_timestamp_at_trend` / `slope` no longer sorts or iterates multiple times
+    recs = VimPerformanceAnalysis.find_perf_for_time_period(obj, options[:interval], options).to_a
 
-    limit_value = recs.last.send(options[:limit_attr])
+    limit_value = recs.last.try(options[:limit_attr])
     return if limit_value.nil?
 
     limit_value = (limit_value * options[:limit_pct] / 100.0) if options[:limit_pct]

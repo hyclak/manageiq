@@ -161,8 +161,6 @@ describe CustomButton do
       vm_other = FactoryGirl.create(:vm_vmware)
 
       button_for_single_vm = FactoryGirl.create(:custom_button,
-                                                # :applies_to_class => "Vm",
-                                                # :applies_to_id    => @vm.id,
                                                 :applies_to  => @vm,
                                                 :name        => @default_name,
                                                 :description => @default_description)
@@ -261,5 +259,12 @@ describe CustomButton do
         expect(test_button.expanded_serializable_hash).to eq(expected_hash)
       end
     end
+  end
+
+  it "#copy" do
+    service_template1 = FactoryGirl.create(:service_template)
+    service_template2 = FactoryGirl.create(:service_template)
+    button = FactoryGirl.create(:custom_button, :applies_to => service_template1)
+    expect { button.copy(:applies_to => service_template2) }.to change { CustomButton.count }.by(1)
   end
 end

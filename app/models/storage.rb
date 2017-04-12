@@ -1,10 +1,11 @@
 class Storage < ApplicationRecord
-  has_many :repositories
   has_many :vms_and_templates, :foreign_key => :storage_id, :dependent => :nullify, :class_name => "VmOrTemplate"
   has_many :miq_templates,     :foreign_key => :storage_id
   has_many :vms,               :foreign_key => :storage_id
   has_many :host_storages
   has_many :hosts,             :through => :host_storages
+  has_many :storage_profile_storages,   :dependent  => :destroy
+  has_many :storage_profiles,           :through    => :storage_profile_storages
   has_and_belongs_to_many :all_vms_and_templates, :class_name => "VmOrTemplate", :join_table => :storages_vms_and_templates, :association_foreign_key => :vm_or_template_id
   has_and_belongs_to_many :all_miq_templates,     :class_name => "MiqTemplate",  :join_table => :storages_vms_and_templates, :association_foreign_key => :vm_or_template_id
   has_and_belongs_to_many :all_vms,               :class_name => "Vm",           :join_table => :storages_vms_and_templates, :association_foreign_key => :vm_or_template_id
@@ -28,15 +29,16 @@ class Storage < ApplicationRecord
   virtual_has_one   :file_share,           :class_name => 'SniaFileShare'
   virtual_has_many  :storage_volumes,      :class_name => 'CimStorageVolume'
   virtual_has_one   :logical_disk,         :class_name => 'CimLogicalDisk'
+  virtual_has_many  :storage_clusters
 
   validates_presence_of     :name
   # We can't uncomment this until the SmartProxy starts sending location when registering VMs
   # validates_uniqueness_of   :location
 
   include RelationshipMixin
+  self.default_relationship_type = "ems_metadata"
 
   acts_as_miq_taggable
-  include ReportableMixin
 
   include SerializedEmsRefObjMixin
   include FilterableMixin
@@ -44,6 +46,8 @@ class Storage < ApplicationRecord
   include StorageMixin
   include AsyncDeleteMixin
   include AvailabilityMixin
+  include SupportsFeatureMixin
+  include TenantIdentityMixin
 
   virtual_column :v_used_space,                   :type => :integer
   virtual_column :v_used_space_percent_of_total,  :type => :integer
@@ -66,10 +70,24 @@ class Storage < ApplicationRecord
   virtual_column :total_unmanaged_vms,            :type => :integer  # uses is handled via class method that aggregates
   virtual_column :count_of_vmdk_disk_files,       :type => :integer
 
-  SUPPORTED_STORAGE_TYPES = %w( VMFS NFS FCP ISCSI GLUSTERFS )
+  SUPPORTED_STORAGE_TYPES = %w( VMFS NFS NFS41 FCP ISCSI GLUSTERFS )
+
+  supports :smartstate_analysis do
+    if ext_management_systems.blank? || !ext_management_system.class.supports_smartstate_analysis?
+      unsupported_reason_add(:smartstate_analysis, _("Smartstate Analysis cannot be performed on selected Datastore"))
+    end
+  end
 
   def to_s
     name
+  end
+
+  def ext_management_system=(ems)
+    @ext_management_system = ems
+  end
+
+  def ext_management_system
+    @ext_management_system ||= ext_management_systems.first
   end
 
   def ext_management_systems
@@ -79,6 +97,10 @@ class Storage < ApplicationRecord
 
   def ext_management_systems_in_zone(zone_name)
     ext_management_systems.select { |ems| ems.my_zone == zone_name }
+  end
+
+  def storage_clusters
+    parents.select { |parent| parent.kind_of?(StorageCluster) }
   end
 
   def active_hosts_with_authentication_status_ok_in_zone(zone_name)
@@ -100,11 +122,11 @@ class Storage < ApplicationRecord
   def my_zone
     return MiqServer.my_zone if     ext_management_systems.empty?
     return MiqServer.my_zone unless ext_management_systems_in_zone(MiqServer.my_zone).empty?
-    ext_management_systems.first.my_zone
+    ext_management_system.my_zone
   end
 
   def scan_starting(miq_task_id, host)
-    miq_task = MiqTask.find_by_id(miq_task_id)
+    miq_task = MiqTask.find_by(:id => miq_task_id)
     if miq_task.nil?
       _log.warn("MiqTask with ID: [#{miq_task_id}] cannot be found")
       return
@@ -117,7 +139,7 @@ class Storage < ApplicationRecord
   def scan_complete_callback(miq_task_id, status, _message, result)
     _log.info "Storage ID: [#{id}], MiqTask ID: [#{miq_task_id}], Status: [#{status}]"
 
-    miq_task = MiqTask.find_by_id(miq_task_id)
+    miq_task = MiqTask.find_by(:id => miq_task_id)
     if miq_task.nil?
       _log.warn("MiqTask with ID: [#{miq_task_id}] cannot be found")
       return
@@ -180,7 +202,7 @@ class Storage < ApplicationRecord
       storage_id = unprocessed.shift
       break if storage_id.nil?
 
-      storage = Storage.find_by_id(storage_id.to_i)
+      storage = Storage.find_by(:id => storage_id.to_i)
       if storage.nil?
         _log.warn("Storage with ID: [#{storage_id}] cannot be found - removing from target list")
         miq_task.context_data[:targets] = miq_task.context_data[:targets].reject { |sid| sid == storage_id }
@@ -225,7 +247,7 @@ class Storage < ApplicationRecord
   end
 
   def self.scan_collection_timeout
-    vmdb_storage_config[:collection] && vmdb_storage_config[:collection][:timeout]
+    ::Settings.storage.collection.timeout
   end
 
   def self.scan_queue_watchdog(miq_task_id)
@@ -243,20 +265,20 @@ class Storage < ApplicationRecord
   end
 
   def self.scan_watchdog(miq_task_id)
-    miq_task = MiqTask.find_by_id(miq_task_id)
+    miq_task = MiqTask.find_by(:id => miq_task_id)
     if miq_task.nil?
       _log.warn("MiqTask with ID: [#{miq_task_id}] cannot be found")
       return
     end
 
     if scan_complete?(miq_task)
-      _log.info "#{scan_complete_message(miq_task)}"
+      _log.info scan_complete_message(miq_task).to_s
       return
     end
 
     miq_task.lock(:exclusive) do |locked_miq_task|
       locked_miq_task.context_data[:pending].each do |storage_id, qitem_id|
-        qitem = MiqQueue.find_by_id(qitem_id)
+        qitem = MiqQueue.find_by(:id => qitem_id)
         if qitem.nil?
           _log.warn "Pending Scan for Storage ID: [#{storage_id}] is missing MiqQueue ID: [#{qitem_id}] - will requeue"
           locked_miq_task.context_data[:pending].delete(storage_id)
@@ -268,27 +290,16 @@ class Storage < ApplicationRecord
     scan_queue_watchdog(miq_task.id)
   end
 
-  def self.vmdb_storage_config
-    VMDB::Config.new("storage").config
-  end
-
-  DEFAULT_WATCHDOG_INTERVAL = 1.minute
   def self.scan_watchdog_interval
-    config = vmdb_storage_config
-    return DEFAULT_WATCHDOG_INTERVAL if config['watchdog_interval'].nil?
-    config['watchdog_interval'].to_s.to_i_with_method
+    ::Settings.storage.watchdog_interval.to_s.to_i_with_method
   end
 
-  DEFAULT_MAX_QITEMS_PER_SCAN_REQUEST = 0
   def self.max_qitems_per_scan_request
-    config = vmdb_storage_config
-    config['max_qitems_per_scan_request'] || DEFAULT_MAX_QITEMS_PER_SCAN_REQUEST
+    ::Settings.storage.max_qitems_per_scan_request
   end
 
-  DEFAULT_MAX_PARALLEL_SCANS_PER_HOST = 1
   def self.max_parallel_storage_scans_per_host
-    config = vmdb_storage_config
-    config['max_parallel_scans_per_host'] || DEFAULT_MAX_PARALLEL_SCANS_PER_HOST
+    ::Settings.storage.max_parallel_scans_per_host
   end
 
   def self.scan_eligible_storages(zone_name = nil)
@@ -347,11 +358,18 @@ class Storage < ApplicationRecord
   end
 
   def scan(userid = "system", _role = "ems_operations")
-    raise(MiqException::MiqUnsupportedStorage, "Action not supported for #{ui_lookup(:table => "storages")} type [#{store_type}], [#{name}] with id: [#{id}]") unless SUPPORTED_STORAGE_TYPES.include?(store_type.upcase)
+    unless SUPPORTED_STORAGE_TYPES.include?(store_type.upcase)
+      raise(MiqException::MiqUnsupportedStorage,
+            _("Action not supported for %{table} type [%{store_type}], [%{name}] with id: [%{id}]") %
+              {:table => ui_lookup(:table => "storages"), :store_type => store_type, :name => name, :id => id})
+    end
 
     hosts = active_hosts_with_authentication_status_ok
-    raise(MiqException::MiqStorageError,       "Check that a Host is running and has valid credentials for #{ui_lookup(:table => "storages")} [#{name}] with id: [#{id}]") if hosts.empty?
-
+    if hosts.empty?
+      raise(MiqException::MiqStorageError,
+            _("Check that a Host is running and has valid credentials for %{table} [%{name}] with id: [%{id}]") %
+              {:table => ui_lookup(:tables => "storage"), :name => name, :id => id})
+    end
     task_name = "SmartState Analysis for [#{name}]"
     self.class.create_scan_task(task_name, userid, [self])
   end
@@ -504,15 +522,17 @@ class Storage < ApplicationRecord
     method_name = "smartstate_analysis"
 
     unless miq_task_id.nil?
-      miq_task = MiqTask.find_by_id(miq_task_id)
+      miq_task = MiqTask.find_by(:id => miq_task_id)
       miq_task.state_active unless miq_task.nil?
     end
 
     hosts = active_hosts_with_authentication_status_ok_in_zone(MiqServer.my_zone)
     if hosts.empty?
       message = "There are no active Hosts with valid credentials connected to Storage: [#{name}] in Zone: [#{MiqServer.my_zone}]."
-      _log.warn "#{message}"
-      raise MiqException::MiqUnreachableStorage, message
+      _log.warn message
+      raise MiqException::MiqUnreachableStorage,
+            _("There are no active Hosts with valid credentials connected to Storage: [%{name}] in Zone: [%{zone}].") %
+              {:name => name, :zone => MiqServer.my_zone}
     end
 
     max_parallel_storage_scans_per_host = self.class.max_parallel_storage_scans_per_host
@@ -702,7 +722,9 @@ class Storage < ApplicationRecord
 
   # TODO: See if we can reuse the main perf_capture method, and only overwrite the perf_collect_metrics method
   def perf_capture(interval_name)
-    raise ArgumentError, "invalid interval_name '#{interval_name}'" unless Metric::Capture::VALID_CAPTURE_INTERVALS.include?(interval_name)
+    unless Metric::Capture::VALID_CAPTURE_INTERVALS.include?(interval_name)
+      raise ArgumentError, _("invalid interval_name '%{name}'") % {:name => interval_name}
+    end
 
     log_header = "[#{interval_name}]"
     log_target = "#{self.class.name} name: [#{name}], id: [#{id}]"
@@ -824,6 +846,12 @@ class Storage < ApplicationRecord
       Benchmark.realtime_block(:process_perfs_tag) { VimPerformanceTagValue.build_from_performance_record(perf) }
 
       update_attribute(:last_perf_capture_on, hour)
+
+      # We don't rollup realtime to Storage, so we need to manually create bottlenecks
+      # when we capture hourly storage.
+      # See: https://github.com/ManageIQ/manageiq/blob/96753f2473391e586d0a563fad9cf7153deab671/app/models/metric/ci_mixin/rollup.rb#L102
+      Benchmark.realtime_block(:process_bottleneck) { BottleneckEvent.generate_future_events(self) } if interval_name == 'hourly'
+
       perf_rollup_to_parents(interval_name, hour)
     end
 
@@ -841,16 +869,17 @@ class Storage < ApplicationRecord
   end
 
   def self.batch_operation_supported?(operation, ids)
-    Storage.where(:id => ids).all? { |s| s.public_send("validate_#{operation}")[:available] }
+    Storage.where(:id => ids).all? do |s|
+      if s.respond_to?("supports_#{operation}?")
+        s.public_send("supports_#{operation}?")
+      else
+        s.public_send("validate_#{operation}")[:available]
+      end
+    end
   end
 
-  def validate_smartstate_analysis
-    return {:available => false, :message => "Smartstate Analysis cannot be performed on selected Datastore"} if ext_management_systems.blank? ||
-                                                     !ext_management_systems.first.kind_of?(ManageIQ::Providers::Vmware::InfraManager)
-    {:available => true,   :message => nil}
-  end
-
-  def tenant_identity
-    ext_management_systems.first.tenant_identity
+  # @param [String, Storage] store_type upcased version of the storage type
+  def self.supports?(store_type)
+    Storage::SUPPORTED_STORAGE_TYPES.include?(store_type)
   end
 end

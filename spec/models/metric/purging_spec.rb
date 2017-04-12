@@ -12,12 +12,11 @@ describe Metric::Purging do
         q.each do |qi|
           expect(qi).to have_attributes(
             :class_name  => described_class.name,
-            :method_name => "purge"
           )
         end
 
-        modes = q.collect { |qi| qi.args.last }
-        expect(modes).to match_array %w(daily hourly realtime)
+        modes = q.collect { |qi| qi[:method_name] }
+        expect(modes).to match_array %w(purge_daily purge_hourly purge_realtime)
       end
     end
 
@@ -25,9 +24,8 @@ describe Metric::Purging do
       let(:vm1) { FactoryGirl.create(:vm_vmware) }
       let(:vm2) { FactoryGirl.create(:vm_vmware) }
       let(:host) { FactoryGirl.create(:host) }
-
-      before(:each) do
-        @vmdb_config = {
+      let(:settings) do
+        {
           :performance => {
             :history => {
               :keep_daily_performance    => "6.months",
@@ -37,7 +35,10 @@ describe Metric::Purging do
             }
           }
         }
-        stub_server_configuration(@vmdb_config)
+      end
+
+      before do
+        stub_settings(settings)
 
         @metrics1 = [
           FactoryGirl.create(:metric_rollup_vm_hr, :resource_id => vm1.id, :timestamp => (6.months + 1.days).ago.utc),
@@ -63,8 +64,10 @@ describe Metric::Purging do
 
         it "with a block" do
           callbacks = []
+
           # Adjust the window size to force multiple block callbacks
-          @vmdb_config.store_path(:performance, :history, :purge_window_size, 2)
+          settings.store_path(:performance, :history, :purge_window_size, 2)
+          stub_settings(settings)
 
           described_class.purge(6.months.ago, "hourly") { |count, total| callbacks << [count, total] }
           expect(MetricRollup.where(:resource_id => @metrics1.last.resource_id)).to eq([@metrics1.last])

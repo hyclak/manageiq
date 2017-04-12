@@ -2,40 +2,32 @@ require 'shellwords'
 
 module ManageIQ::Providers::Kubernetes
   class ContainerManager::RefreshParser
-    def self.ems_inv_to_hashes(inventory)
-      new.ems_inv_to_hashes(inventory)
+    include Vmdb::Logging
+    def self.ems_inv_to_hashes(inventory, options = Config::Options.new)
+      new.ems_inv_to_hashes(inventory, options)
     end
 
     def initialize
       @data = {}
       @data_index = {}
+      @label_tag_mapping = ContainerLabelTagMapping.cache
     end
 
-    def ems_inv_to_hashes(inventory)
+    def ems_inv_to_hashes(inventory, _options = Config::Options.new)
+      get_additional_attributes(inventory)
       get_nodes(inventory)
       get_namespaces(inventory)
       get_resource_quotas(inventory)
       get_limit_ranges(inventory)
       get_replication_controllers(inventory)
+      get_persistent_volume_claims(inventory)
+      get_persistent_volumes(inventory)
       get_pods(inventory)
       get_endpoints(inventory)
       get_services(inventory)
-      get_persistent_volumes(inventory)
       get_component_statuses(inventory)
-      get_registries
-      get_images
       EmsRefresh.log_inv_debug_trace(@data, "data:")
       @data
-    end
-
-    def get_images
-      images = @data_index.fetch_path(:container_image, :by_ref_and_registry_host_port).try(:values) || []
-      process_collection(images, :container_images) { |n| n }
-    end
-
-    def get_registries
-      registries = @data_index.fetch_path(:container_image_registry, :by_host_and_port).try(:values) || []
-      process_collection(registries, :container_image_registries) { |n| n }
     end
 
     def get_nodes(inventory)
@@ -81,7 +73,7 @@ module ManageIQ::Providers::Kubernetes
     end
 
     def get_namespaces(inventory)
-      process_collection(inventory["namespace"], :container_projects) { |n| parse_namespaces(n) }
+      process_collection(inventory["namespace"], :container_projects) { |n| parse_namespace(n) }
 
       @data[:container_projects].each do |ns|
         @data_index.store_path(:container_projects, :by_name, ns[:name], ns)
@@ -92,6 +84,14 @@ module ManageIQ::Providers::Kubernetes
       process_collection(inventory["persistent_volume"], :persistent_volumes) { |n| parse_persistent_volume(n) }
       @data[:persistent_volumes].each do |pv|
         @data_index.store_path(:persistent_volumes, :by_name, pv[:name], pv)
+      end
+    end
+
+    def get_persistent_volume_claims(inventory)
+      process_collection(inventory["persistent_volume_claim"],
+                         :persistent_volume_claims) { |n| parse_persistent_volume_claim(n) }
+      @data[:persistent_volume_claims].each do |pvc|
+        @data_index.store_path(:persistent_volume_claims, :by_namespace_and_name, pvc[:namespace], pvc[:name], pvc)
       end
     end
 
@@ -114,6 +114,19 @@ module ManageIQ::Providers::Kubernetes
       end
     end
 
+    def get_additional_attributes(inventory)
+      inventory["additional_attributes"] ||= {}
+      process_collection(inventory["additional_attributes"], :additional_attributes) do |aa|
+        parse_additional_attribute(aa)
+      end
+
+      @data[:additional_attributes].each do |aa|
+        ats = @data_index.fetch_path(:additional_attributes, :by_node, aa[:node]) || []
+        ats << {:name => aa[:name], :value => aa[:value], :section => "additional_attributes"}
+        @data_index.store_path(:additional_attributes, :by_node, aa[:node], ats)
+      end
+    end
+
     def process_collection(collection, key, &block)
       @data[key] ||= []
       collection.each { |item| process_collection_item(item, key, &block) }
@@ -128,13 +141,77 @@ module ManageIQ::Providers::Kubernetes
       new_result
     end
 
+    def map_labels(model_name, labels)
+      ContainerLabelTagMapping.map_labels(@label_tag_mapping, model_name, labels)
+    end
+
+    def find_host_by_provider_id(provider_id)
+      scheme, instance_uri = provider_id.split("://", 2)
+      prov, name_field = scheme_to_provider_mapping[scheme]
+      instance_id = instance_uri.split('/').last
+
+      prov::Vm.find_by(name_field => instance_id) if !prov.nil? && !instance_id.blank?
+    end
+
+    def scheme_to_provider_mapping
+      @scheme_to_provider_mapping ||= begin
+        {
+          'gce'       => ['ManageIQ::Providers::Google::CloudManager'.safe_constantize, :name],
+          'aws'       => ['ManageIQ::Providers::Amazon::CloudManager'.safe_constantize, :uid_ems],
+          'openstack' => ['ManageIQ::Providers::Openstack::CloudManager'.safe_constantize, :uid_ems]
+        }.reject { |_key, (provider, _name)| provider.nil? }
+      end
+    end
+
+    def find_host_by_bios_uuid(new_result)
+      identity_system = new_result[:identity_system].try(:downcase)
+      Vm.find_by(:uid_ems => identity_system,
+                 :type    => uuid_provider_types) if identity_system
+    end
+
+    def uuid_provider_types
+      @uuid_provider_types ||= begin
+        ['ManageIQ::Providers::Redhat::InfraManager::Vm',
+         'ManageIQ::Providers::Openstack::CloudManager::Vm',
+         'ManageIQ::Providers::Vmware::InfraManager::Vm'].map(&:safe_constantize).compact.map(&:name)
+      end
+    end
+
+    def cross_link_node(new_result)
+      # Establish a relationship between this node and the vm it is on (if it is in the system)
+      host_instance = nil
+      unless new_result[:identity_infra].blank?
+        host_instance = find_host_by_provider_id(new_result[:identity_infra])
+      end
+      unless host_instance
+        host_instance = find_host_by_bios_uuid(new_result)
+      end
+
+      new_result[:lives_on_id] = host_instance.try(:id)
+      new_result[:lives_on_type] = host_instance.try(:type)
+    end
+
+    def parse_additional_attribute(attribute)
+      # Assuming keys are in format "node/<hostname.example.com/key"
+      if attribute[0] && attribute[0].split("/").count == 3
+        { attribute[0].split("/").first.to_sym => attribute[0].split("/").second,
+          :name                                => attribute[0].split("/").last,
+          :value                               => attribute[1],
+          :section                             => "additional_attributes"}
+      else
+        {}
+      end
+    end
+
     def parse_node(node)
       new_result = parse_base_item(node)
 
+      labels = parse_labels(node)
       new_result.merge!(
         :type           => 'ManageIQ::Providers::Kubernetes::ContainerManager::ContainerNode',
-        :identity_infra => node.spec.externalID,
-        :labels         => parse_labels(node),
+        :identity_infra => node.spec.providerID,
+        :labels         => labels,
+        :tags           => map_labels('ContainerNode', labels),
         :lives_on_id    => nil,
         :lives_on_type  => nil
       )
@@ -151,7 +228,8 @@ module ManageIQ::Providers::Kubernetes
       end
 
       node_memory = node.status.try(:capacity).try(:memory)
-      node_memory &&= parse_iec_number(node_memory) / 1.megabyte
+      node_memory = parse_capacity_field("Node-Memory", node_memory)
+      node_memory &&= node_memory / 1.megabyte
 
       new_result[:computer_system] = {
         :hardware         => {
@@ -165,23 +243,12 @@ module ManageIQ::Providers::Kubernetes
       }
 
       max_container_groups = node.status.try(:capacity).try(:pods)
-      new_result[:max_container_groups] = max_container_groups && parse_iec_number(max_container_groups)
+      new_result[:max_container_groups] = parse_capacity_field("Pods", max_container_groups)
 
       new_result[:container_conditions] = parse_conditions(node)
+      cross_link_node(new_result)
 
-      # Establish a relationship between this node and the vm it is on (if it is in the system)
-      # supported relationships: oVirt, Openstack and VMware.
-      types = [ManageIQ::Providers::Redhat::InfraManager::Vm.name,
-               ManageIQ::Providers::Openstack::CloudManager::Vm.name,
-               ManageIQ::Providers::Vmware::InfraManager::Vm.name]
-
-      # Searching for the underlying instance for Openstack or oVirt.
-      identity_system = new_result[:identity_system].try(:downcase)
-      vms = Vm.where(:uid_ems => identity_system, :type => types) if identity_system
-      if vms.to_a.size == 1
-        new_result[:lives_on_id] = vms.first.id
-        new_result[:lives_on_type] = vms.first.type
-      end
+      new_result[:additional_attributes] = @data_index.fetch_path(:additional_attributes, :by_node, node.metadata.name)
 
       new_result
     end
@@ -206,13 +273,14 @@ module ManageIQ::Providers::Kubernetes
         container_groups << cg unless cg.nil?
       end
 
+      labels = parse_labels(service)
       new_result.merge!(
         # TODO: We might want to change portal_ip to clusterIP
         :portal_ip        => service.spec.clusterIP,
         :session_affinity => service.spec.sessionAffinity,
         :service_type     => service.spec.type,
-
-        :labels           => parse_labels(service),
+        :labels           => labels,
+        :tags             => map_labels('ContainerService', labels),
         :selector_parts   => parse_selector_parts(service),
         :container_groups => container_groups
       )
@@ -290,8 +358,9 @@ module ManageIQ::Providers::Kubernetes
       new_result[:container_conditions] = parse_conditions(pod)
 
       new_result[:labels] = parse_labels(pod)
+      new_result[:tags] = map_labels('ContainerGroup', new_result[:labels])
       new_result[:node_selector_parts] = parse_node_selector_parts(pod)
-      new_result[:container_volumes] = parse_volumes(pod.spec.volumes)
+      new_result[:container_volumes] = parse_volumes(pod)
       new_result
     end
 
@@ -314,23 +383,63 @@ module ManageIQ::Providers::Kubernetes
       new_result
     end
 
-    def parse_namespaces(container_projects)
-      parse_base_item(container_projects).except(:namespace)
+    def parse_namespace(namespace)
+      new_result = parse_base_item(namespace).except(:namespace)
+      new_result[:labels] = parse_labels(namespace)
+      new_result[:tags] = map_labels('ContainerProject', new_result[:labels])
+      new_result
     end
 
     def parse_persistent_volume(persistent_volume)
       new_result = parse_base_item(persistent_volume)
       new_result.merge!(parse_volume_source(persistent_volume.spec))
       new_result.merge!(
-        :type           => 'PersistentVolume',
-        :parent_type    => 'ManageIQ::Providers::ContainerManager',
-        :capacity       => persistent_volume.spec.capacity.to_h.map { |k, v| "#{k}=#{v}" }.join(','),
-        :access_modes   => persistent_volume.spec.accessModes.join(','),
-        :reclaim_policy => persistent_volume.spec.persistentVolumeReclaimPolicy,
-        :status_phase   => persistent_volume.status.phase,
-        :status_message => persistent_volume.status.message,
-        :status_reason  => persistent_volume.status.reason
+        :type                    => 'PersistentVolume',
+        :capacity                => parse_resource_list(persistent_volume.spec.capacity.to_h),
+        :access_modes            => persistent_volume.spec.accessModes.join(','),
+        :reclaim_policy          => persistent_volume.spec.persistentVolumeReclaimPolicy,
+        :status_phase            => persistent_volume.status.phase,
+        :status_message          => persistent_volume.status.message,
+        :status_reason           => persistent_volume.status.reason,
+        :persistent_volume_claim => nil
       )
+
+      unless persistent_volume.spec.claimRef.nil?
+        new_result[:persistent_volume_claim] = @data_index.fetch_path(:persistent_volume_claims,
+                                                                      :by_namespace_and_name,
+                                                                      persistent_volume.spec.claimRef.namespace,
+                                                                      persistent_volume.spec.claimRef.name)
+      end
+
+      new_result
+    end
+
+    def parse_resource_list(hash)
+      hash.each_with_object({}) do |(key, val), result|
+        res = parse_capacity_field(key, val)
+        result[key] = res if res
+      end
+    end
+
+    def parse_capacity_field(key, val)
+      return nil unless val
+      begin
+        val.iec_60027_2_to_i
+      rescue ArgumentError
+        _log.warn("Capacity attribute - #{key} was in bad format - #{val}")
+        nil
+      end
+    end
+
+    def parse_persistent_volume_claim(claim)
+      new_result = parse_base_item(claim)
+      new_result.merge!(
+        :desired_access_modes => claim.spec.accessModes,
+        :phase                => claim.status.phase,
+        :actual_access_modes  => claim.status.accessModes,
+        :capacity             => parse_resource_list(claim.status.capacity.to_h),
+      )
+
       new_result
     end
 
@@ -427,11 +536,13 @@ module ManageIQ::Providers::Kubernetes
     def parse_replication_controllers(container_replicator)
       new_result = parse_base_item(container_replicator)
 
+      labels = parse_labels(container_replicator)
       # TODO: parse template
       new_result.merge!(
         :replicas         => container_replicator.spec.replicas,
         :current_replicas => container_replicator.status.replicas,
-        :labels           => parse_labels(container_replicator),
+        :labels           => labels,
+        :tags             => map_labels('ContainerReplicator', labels),
         :selector_parts   => parse_selector_parts(container_replicator)
       )
 
@@ -472,7 +583,7 @@ module ManageIQ::Providers::Kubernetes
       parse_identifying_attributes(entity.spec.nodeSelector, 'node_selectors')
     end
 
-    def parse_identifying_attributes(attributes, section)
+    def parse_identifying_attributes(attributes, section, source = "kubernetes")
       result = []
       return result if attributes.nil?
       attributes.to_h.each do |key, value|
@@ -480,7 +591,7 @@ module ManageIQ::Providers::Kubernetes
           :section => section,
           :name    => key.to_s,
           :value   => value,
-          :source  => "kubernetes"
+          :source  => source
         }
         result << custom_attr
       end
@@ -541,11 +652,11 @@ module ManageIQ::Providers::Kubernetes
       }
       state_attributes = parse_container_state container.lastState
       state_attributes.each { |key, val| h[key.to_s.prepend('last_').to_sym] = val } if state_attributes
-      h.merge! parse_container_state container.state
+      h.merge!(parse_container_state(container.state))
     end
 
     def parse_container_state(state_hash)
-      return if state_hash.to_h.empty?
+      return {} if state_hash.to_h.empty?
       res = {}
       # state_hash key is the state and value are attributes e.g 'running': {...}
       (state, state_info), = state_hash.to_h.to_a
@@ -568,17 +679,22 @@ module ManageIQ::Providers::Kubernetes
         if stored_container_image_registry.nil?
           @data_index.store_path(
             :container_image_registry, :by_host_and_port, host_port, container_image_registry)
+          process_collection_item(container_image_registry, :container_image_registries) { |r| r }
           stored_container_image_registry = container_image_registry
         end
       end
 
+      # old docker references won't yield a digest and will always be distinct
+      container_image_identity = container_image[:digest] || container_image[:image_ref]
       stored_container_image = @data_index.fetch_path(
-        :container_image, :by_ref_and_registry_host_port,  "#{host_port}:#{container_image[:image_ref]}")
+        :container_image, :by_digest, container_image_identity)
 
       if stored_container_image.nil?
         @data_index.store_path(
-          :container_image, :by_ref_and_registry_host_port,
-          "#{host_port}:#{container_image[:image_ref]}", container_image)
+          :container_image, :by_digest,
+          container_image_identity, container_image
+        )
+        process_collection_item(container_image, :container_images) { |img| img }
         stored_container_image = container_image
       end
 
@@ -630,25 +746,46 @@ module ManageIQ::Providers::Kubernetes
     end
 
     def parse_image_name(image, image_ref)
-      parts = %r{
+      # parsing using same logic as in docker
+      # https://github.com/docker/docker/blob/348f6529b71502b561aa493e250fd5be248da0d5/reference/reference.go#L174
+      image_definition_re = %r{
         \A
-          (?:(?:(?<host>[^\.:\/]+\.[^\.:\/]+)|(?:(?<host2>[^:\/]+)(?::(?<port>\d+))))\/)?
-          (?<name>(?:[^:\/@]+\/)*[^\/:@]+)
-          (?:(?::(?<tag>.+))|(?:\@(?<digest>.+)))?
+          (?<protocol>#{ContainerImage::DOCKER_PULLABLE_PREFIX})?
+          (?:(?:
+            (?<host>([^\.:/]+\.)+[^\.:/]+)|
+            (?:(?<host2>[^:/]+)(?::(?<port>\d+)))|
+            (?<localhost>localhost)
+          )/)?
+          (?<name>(?:[^:/@]+/)*[^/:@]+)
+          (?::(?<tag>[^:/@]+))?
+          (?:\@(?<digest>.+))?
         \z
-      }x.match(image)
+      }x
+      image_parts = image_definition_re.match(image)
+      image_ref_parts = image_definition_re.match(image_ref)
+
+      hostname = image_parts[:host] || image_parts[:host2] || image_parts[:localhost]
+      if image_ref.start_with?(ContainerImage::DOCKER_IMAGE_PREFIX) && image_parts[:digest]
+        image_ref = "%{prefix}%{registry}%{name}@%{digest}" % {
+          :prefix   => ContainerImage::DOCKER_PULLABLE_PREFIX,
+          :registry => ("#{hostname}:#{image_parts[:port]}/" if hostname && image_parts[:port]),
+          :name     => image_parts[:name],
+          :digest   => image_parts[:digest],
+        }
+      end
 
       [
         {
-          :name      => parts[:name],
-          :tag       => parts[:tag],
-          :digest    => parts[:digest],
-          :image_ref => image_ref,
+          :name          => image_parts[:name],
+          :tag           => image_parts[:tag],
+          :digest        => image_parts[:digest] || (image_ref_parts[:digest] if image_ref_parts),
+          :image_ref     => image_ref,
+          :registered_on => Time.now.utc
         },
-        (parts[:host] || parts[:host2]) && {
-          :name => parts[:host] || parts[:host2],
-          :host => parts[:host] || parts[:host2],
-          :port => parts[:port],
+        hostname && {
+          :name => hostname,
+          :host => hostname,
+          :port => image_parts[:port],
         },
       ]
     end
@@ -663,12 +800,15 @@ module ManageIQ::Providers::Kubernetes
       }
     end
 
-    def parse_volumes(volumes)
-      volumes.to_a.collect do |volume|
+    def parse_volumes(pod)
+      pod.spec.volumes.to_a.collect do |volume|
         {
-          :type        => 'ContainerVolumeKubernetes',
-          :name        => volume.name,
-          :parent_type => 'ContainerGroup'
+          :type                    => 'ContainerVolume',
+          :name                    => volume.name,
+          :persistent_volume_claim => @data_index.fetch_path(:persistent_volume_claims,
+                                                             :by_namespace_and_name,
+                                                             pod.metadata.namespace,
+                                                             volume.persistentVolumeClaim.try(:claimName))
         }.merge!(parse_volume_source(volume))
       end
     end
@@ -713,16 +853,6 @@ module ManageIQ::Providers::Kubernetes
         :common_partition        => [volume.gcePersistentDisk.try(:partition),
                                      volume.awsElasticBlockStore.try(:partition)].compact.first
       }
-    end
-
-    IEC_SIZE_SUFFIXES = %w(Ki Mi Gi Ti)
-    def parse_iec_number(value)
-      exp_index = IEC_SIZE_SUFFIXES.index(value[-2..-1])
-      if exp_index.nil?
-        return Integer(value)
-      else
-        return Integer(value[0..-3]) * 1024**(exp_index + 1)
-      end
     end
   end
 end

@@ -1,7 +1,7 @@
 #
 # REST API Request Tests - /api authentication
 #
-describe ApiController do
+describe "Authentication API" do
   ENTRYPOINT_KEYS = %w(name description version versions identity collections)
 
   context "Basic Authentication" do
@@ -10,7 +10,7 @@ describe ApiController do
 
       run_get entrypoint_url
 
-      expect_user_unauthorized
+      expect(response).to have_http_status(:unauthorized)
     end
 
     it "test basic authentication with correct credentials" do
@@ -18,7 +18,7 @@ describe ApiController do
 
       run_get entrypoint_url
 
-      expect_single_resource_query
+      expect(response).to have_http_status(:ok)
       expect_result_to_have_keys(ENTRYPOINT_KEYS)
     end
 
@@ -30,7 +30,7 @@ describe ApiController do
 
       run_get entrypoint_url
 
-      expect_user_unauthorized
+      expect(response).to have_http_status(:unauthorized)
     end
 
     it "test basic authentication with a user without a group" do
@@ -41,7 +41,7 @@ describe ApiController do
 
       run_get entrypoint_url
 
-      expect_user_unauthorized
+      expect(response).to have_http_status(:unauthorized)
     end
   end
 
@@ -57,25 +57,25 @@ describe ApiController do
     it "test basic authentication with incorrect group" do
       api_basic_authorize
 
-      run_get entrypoint_url, :headers => {"miq_group" => "bogus_group"}
+      run_get entrypoint_url, :headers => {Api::HttpHeaders::MIQ_GROUP => "bogus_group"}
 
-      expect_user_unauthorized
+      expect(response).to have_http_status(:unauthorized)
     end
 
     it "test basic authentication with a primary group" do
       api_basic_authorize
 
-      run_get entrypoint_url, :headers => {"miq_group" => group1.description}
+      run_get entrypoint_url, :headers => {Api::HttpHeaders::MIQ_GROUP => group1.description}
 
-      expect_single_resource_query
+      expect(response).to have_http_status(:ok)
     end
 
     it "test basic authentication with a secondary group" do
       api_basic_authorize
 
-      run_get entrypoint_url, :headers => {"miq_group" => group2.description}
+      run_get entrypoint_url, :headers => {Api::HttpHeaders::MIQ_GROUP => group2.description}
 
-      expect_single_resource_query
+      expect(response).to have_http_status(:ok)
     end
   end
 
@@ -91,12 +91,12 @@ describe ApiController do
     it "basic authentication with a secondary group" do
       api_basic_authorize
 
-      run_get entrypoint_url, :headers => {"miq_group" => group2.description}
+      run_get entrypoint_url, :headers => {Api::HttpHeaders::MIQ_GROUP => group2.description}
 
-      expect_single_resource_query
+      expect(response).to have_http_status(:ok)
       expect_result_to_have_keys(ENTRYPOINT_KEYS)
       expect_result_to_match_hash(
-        response_hash["identity"],
+        response.parsed_body["identity"],
         "userid"     => @user.userid,
         "name"       => @user.name,
         "user_href"  => "/api/users/#{@user.id}",
@@ -106,7 +106,7 @@ describe ApiController do
         "role_href"  => "/api/roles/#{group2.miq_user_role.id}",
         "tenant"     => @group.tenant.name
       )
-      expect(response_hash["identity"]["groups"]).to match_array(@user.miq_groups.pluck(:description))
+      expect(response.parsed_body["identity"]["groups"]).to match_array(@user.miq_groups.pluck(:description))
     end
 
     it "querying user's authorization" do
@@ -114,9 +114,10 @@ describe ApiController do
 
       run_get entrypoint_url, :attributes => "authorization"
 
-      expect_single_resource_query
-      expect_result_to_have_keys(ENTRYPOINT_KEYS + %w(authorization))
-      expect_hash_to_have_keys(response_hash["authorization"], %w(product_features))
+      expect(response).to have_http_status(:ok)
+      expected = {"authorization" => hash_including("product_features")}
+      ENTRYPOINT_KEYS.each { |k| expected[k] = anything }
+      expect(response.parsed_body).to include(expected)
     end
   end
 
@@ -126,14 +127,14 @@ describe ApiController do
 
       run_get auth_url
 
-      expect_single_resource_query
+      expect(response).to have_http_status(:ok)
       expect_result_to_have_keys(%w(auth_token token_ttl expires_on))
     end
 
     it "authentication using a bad token" do
-      run_get entrypoint_url, :headers => {"auth_token" => "badtoken"}
+      run_get entrypoint_url, :headers => {Api::HttpHeaders::AUTH_TOKEN => "badtoken"}
 
-      expect_user_unauthorized
+      expect(response).to have_http_status(:unauthorized)
     end
 
     it "authentication using a valid token" do
@@ -141,14 +142,14 @@ describe ApiController do
 
       run_get auth_url
 
-      expect_single_resource_query
+      expect(response).to have_http_status(:ok)
       expect_result_to_have_keys(%w(auth_token))
 
-      auth_token = response_hash["auth_token"]
+      auth_token = response.parsed_body["auth_token"]
 
-      run_get entrypoint_url, :headers => {"auth_token" => auth_token}
+      run_get entrypoint_url, :headers => {Api::HttpHeaders::AUTH_TOKEN => auth_token}
 
-      expect_single_resource_query
+      expect(response).to have_http_status(:ok)
       expect_result_to_have_keys(ENTRYPOINT_KEYS)
     end
 
@@ -157,32 +158,30 @@ describe ApiController do
 
       run_get auth_url
 
-      expect_single_resource_query
+      expect(response).to have_http_status(:ok)
       expect_result_to_have_keys(%w(auth_token token_ttl expires_on))
 
-      auth_token = response_hash["auth_token"]
-      token_expires_on = response_hash["expires_on"]
+      auth_token = response.parsed_body["auth_token"]
+      token_expires_on = response.parsed_body["expires_on"]
 
       tm = TokenManager.new("api")
-      token_info = tm.token_get_info("api", auth_token)
+      token_info = tm.token_get_info(auth_token)
       expect(token_info[:expires_on].utc.iso8601).to eq(token_expires_on)
 
-      expect_any_instance_of(TokenManager).to receive(:reset_token).with("api", auth_token)
-      run_get entrypoint_url, :headers => {"auth_token" => auth_token}
+      expect_any_instance_of(TokenManager).to receive(:reset_token).with(auth_token)
+      run_get entrypoint_url, :headers => {Api::HttpHeaders::AUTH_TOKEN => auth_token}
 
-      expect_single_resource_query
+      expect(response).to have_http_status(:ok)
       expect_result_to_have_keys(ENTRYPOINT_KEYS)
     end
 
     it "gets a token based identifier with the default API based token_ttl" do
       api_basic_authorize
-
-      api_token_ttl = VMDB::Config.new("vmdb").config[:api][:token_ttl].to_i_with_method
       run_get auth_url
 
-      expect_single_resource_query
+      expect(response).to have_http_status(:ok)
       expect_result_to_have_keys(%w(auth_token token_ttl expires_on))
-      expect(response_hash["token_ttl"]).to eq(api_token_ttl)
+      expect(response.parsed_body["token_ttl"]).to eq(::Settings.api.token_ttl.to_i_with_method)
     end
 
     it "gets a token based identifier with an invalid requester_type" do
@@ -196,12 +195,11 @@ describe ApiController do
     it "gets a token based identifier with a UI based token_ttl" do
       api_basic_authorize
 
-      ui_token_ttl = VMDB::Config.new("vmdb").config[:session][:timeout].to_i_with_method
       run_get auth_url, :requester_type => "ui"
 
-      expect_single_resource_query
+      expect(response).to have_http_status(:ok)
       expect_result_to_have_keys(%w(auth_token token_ttl expires_on))
-      expect(response_hash["token_ttl"]).to eq(ui_token_ttl)
+      expect(response.parsed_body["token_ttl"]).to eq(::Settings.session.timeout.to_i_with_method)
     end
 
     it "forgets the current token when asked to" do
@@ -209,10 +207,135 @@ describe ApiController do
 
       run_get auth_url
 
-      auth_token = response_hash["auth_token"]
+      auth_token = response.parsed_body["auth_token"]
 
-      expect_any_instance_of(TokenManager).to receive(:invalidate_token).with("api", auth_token)
-      run_delete auth_url, "auth_token" => auth_token
+      expect_any_instance_of(TokenManager).to receive(:invalidate_token).with(auth_token)
+      run_delete auth_url, Api::HttpHeaders::AUTH_TOKEN => auth_token
+    end
+
+    context 'Tokens for Web Sockets' do
+      it 'gets a UI based token_ttl when requesting token for web sockets' do
+        api_basic_authorize
+
+        run_get auth_url, :requester_type => 'ws'
+        expect(response).to have_http_status(:ok)
+        expect_result_to_have_keys(%w(auth_token token_ttl expires_on))
+        expect(response.parsed_body["token_ttl"]).to eq(::Settings.session.timeout.to_i_with_method)
+      end
+
+      it 'cannot authorize user to api based on token that is dedicated for web sockets' do
+        api_basic_authorize
+        run_get auth_url, :requester_type => 'ws'
+        ws_token = response.parsed_body["auth_token"]
+
+        run_get entrypoint_url, :headers => {Api::HttpHeaders::AUTH_TOKEN => ws_token}
+
+        expect(response).to have_http_status(:unauthorized)
+      end
+    end
+  end
+
+  context "System Token Based Authentication" do
+    AUTHENTICATION_ERROR = "Invalid System Authentication Token specified".freeze
+
+    def systoken(server_guid, userid, timestamp)
+      MiqPassword.encrypt({:server_guid => server_guid, :userid => userid, :timestamp => timestamp}.to_yaml)
+    end
+
+    it "authentication using a bad token" do
+      run_get entrypoint_url,
+              :headers => {Api::HttpHeaders::MIQ_TOKEN => "badtoken"}
+
+      expect(response).to have_http_status(:unauthorized)
+      expect(response.parsed_body).to include(
+        "error" => a_hash_including("kind" => "unauthorized", "message" => AUTHENTICATION_ERROR)
+      )
+    end
+
+    it "authentication using a token with a bad server guid" do
+      run_get entrypoint_url,
+              :headers => {Api::HttpHeaders::MIQ_TOKEN => systoken("bad_server_guid", api_config(:user), Time.now.utc)}
+
+      expect(response).to have_http_status(:unauthorized)
+      expect(response.parsed_body).to include(
+        "error" => a_hash_including("kind" => "unauthorized", "message" => AUTHENTICATION_ERROR)
+      )
+    end
+
+    it "authentication using a token with bad user" do
+      run_get entrypoint_url,
+              :headers => {Api::HttpHeaders::MIQ_TOKEN => systoken(MiqServer.first.guid, "bad_user_id", Time.now.utc)}
+
+      expect(response).to have_http_status(:unauthorized)
+      expect(response.parsed_body).to include(
+        "error" => a_hash_including("kind" => "unauthorized", "message" => AUTHENTICATION_ERROR)
+      )
+    end
+
+    it "authentication using a token with an old timestamp" do
+      miq_token = systoken(MiqServer.first.guid, api_config(:user), 10.minutes.ago.utc)
+
+      run_get entrypoint_url, :headers => {Api::HttpHeaders::MIQ_TOKEN => miq_token}
+
+      expect(response).to have_http_status(:unauthorized)
+      expect(response.parsed_body).to include(
+        "error" => a_hash_including("kind" => "unauthorized", "message" => AUTHENTICATION_ERROR)
+      )
+    end
+
+    it "authentication using a valid token succeeds" do
+      miq_token = systoken(MiqServer.first.guid, api_config(:user), Time.now.utc)
+
+      run_get entrypoint_url, :headers => {Api::HttpHeaders::MIQ_TOKEN => miq_token}
+
+      expect(response).to have_http_status(:ok)
+      expect_result_to_have_keys(ENTRYPOINT_KEYS)
+    end
+  end
+
+  context "Role Based Authorization" do
+    before do
+      FactoryGirl.create(:vm_vmware, :name => "vm1")
+    end
+
+    context "actions with single role identifier" do
+      it "are rejected when user is not authorized with the single role identifier" do
+        stub_api_action_role(:vms, :collection_actions, :get, :read, "vm_view_role1")
+        api_basic_authorize
+
+        run_get vms_url
+
+        expect(response).to have_http_status(:forbidden)
+      end
+
+      it "are accepted when user is authorized with the single role identifier" do
+        stub_api_action_role(:vms, :collection_actions, :get, :read, "vm_view_role1")
+        api_basic_authorize "vm_view_role1"
+
+        run_get vms_url
+
+        expect_query_result(:vms, 1, 1)
+      end
+    end
+
+    context "actions with multiple role identifiers" do
+      it "are rejected when user is not authorized with any of the role identifiers" do
+        stub_api_action_role(:vms, :collection_actions, :get, :read, %w(vm_view_role1 vm_view_role2))
+        api_basic_authorize
+
+        run_get vms_url
+
+        expect(response).to have_http_status(:forbidden)
+      end
+
+      it "are accepted when user is authorized with at least one of the role identifiers" do
+        stub_api_action_role(:vms, :collection_actions, :get, :read, %w(vm_view_role1 vm_view_role2))
+        api_basic_authorize "vm_view_role2"
+
+        run_get vms_url
+
+        expect_query_result(:vms, 1, 1)
+      end
     end
   end
 end

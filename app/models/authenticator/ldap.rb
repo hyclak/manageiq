@@ -9,6 +9,10 @@ module Authenticator
         find_or_create_by_ldap(username)
     end
 
+    def user_authorizable_without_authentication?
+      true
+    end
+
     private
 
     def ldap
@@ -27,14 +31,16 @@ module Authenticator
 
     def find_or_create_by_ldap(username)
       username = miq_ldap.fqusername(username)
-      user = User.find_by_userid(username)
+      user = userprincipal_for(username)
       return user unless user.nil?
 
-      raise "Unable to auto-create user because LDAP bind credentials are not configured" unless authorize?
+      raise _("Unable to auto-create user because LDAP bind credentials are not configured") unless authorize?
 
       create_user_from_ldap(username) do |lobj|
         groups = match_groups(groups_for(lobj))
-        raise "Unable to auto-create user because unable to match user's group membership to an EVM role" if groups.empty?
+        if groups.empty?
+          raise _("Unable to auto-create user because unable to match user's group membership to an EVM role")
+        end
         groups
       end
     end
@@ -49,7 +55,10 @@ module Authenticator
 
     def create_user_from_ldap(username)
       lobj = ldap.get_user_object(username)
-      raise "Unable to auto-create user because LDAP search returned no data for user: [#{username}]" if lobj.nil?
+      if lobj.nil?
+        raise _("Unable to auto-create user because LDAP search returned no data for user: [%{name}]") %
+                {:name => username}
+      end
 
       groups = yield lobj
 
@@ -71,7 +80,7 @@ module Authenticator
         ldap_bind(username, password)
     end
 
-    def find_external_identity(username)
+    def find_external_identity(username, *_args)
       # Ldap will be used for authentication and role assignment
       _log.info("Bind DN: [#{config[:bind_dn]}]")
       _log.info(" User FQDN: [#{username}]")
@@ -79,6 +88,11 @@ module Authenticator
       _log.debug("User obj from LDAP: #{lobj.inspect}")
 
       lobj
+    end
+
+    def userprincipal_for(username)
+      lobj = find_external_identity(username)
+      User.find_by_userid(userid_for(lobj, username))
     end
 
     def userid_for(lobj, username)
@@ -117,11 +131,13 @@ module Authenticator
 
     def update_user_attributes(user, _username, lobj)
       user.userid     = ldap.normalize(ldap.get_attr(lobj, :userprincipalname) || ldap.get_attr(lobj, :dn))
-      user.name       = ldap.get_attr(lobj, :displayname)
       user.first_name = ldap.get_attr(lobj, :givenname)
       user.last_name  = ldap.get_attr(lobj, :sn)
       email           = ldap.get_attr(lobj, :mail)
       user.email      = email unless email.blank?
+      user.name       = ldap.get_attr(lobj, :displayname)
+      user.name       = "#{user.first_name} #{user.last_name}" if user.name.blank?
+      user.name       = user.userid if user.name.blank?
     end
 
     REQUIRED_LDAP_USER_PROXY_KEYS = [:basedn, :bind_dn, :bind_pwd, :ldaphost, :ldapport, :mode]
@@ -133,7 +149,11 @@ module Authenticator
       auth[:mode] ||= authentication[:mode]
       auth[:group_memberships_max_depth] ||= DEFAULT_GROUP_MEMBERSHIPS_MAX_DEPTH
 
-      REQUIRED_LDAP_USER_PROXY_KEYS.each { |key| raise "Required key not specified: [#{key}]" unless auth.key?(key) }
+      REQUIRED_LDAP_USER_PROXY_KEYS.each do |key|
+        unless auth.key?(key)
+          raise _("Required key not specified: [%{key}]") % {:key => key}
+        end
+      end
 
       fsp_dn  = "cn=#{sid},CN=ForeignSecurityPrincipals,#{auth[:basedn]}"
 

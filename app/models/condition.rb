@@ -9,8 +9,6 @@ class Condition < ApplicationRecord
   acts_as_miq_taggable
   acts_as_miq_set_member
 
-  include ReportableMixin
-
   belongs_to :miq_policy
   has_and_belongs_to_many :miq_policies
 
@@ -46,13 +44,9 @@ class Condition < ApplicationRecord
     when "script"
       result = eval(expression["expr"].strip)
     when "tag"
-      case expression["include"]
-      when "any"
-        result = false
-      when "all", "none"
-        result = true
-      else
-        raise "condition '#{name}', include value \"#{expression["include"]}\", is invalid. Should be one of \"any, all or none\""
+      unless %w(any all none).include?(expression["include"])
+        raise _("condition '%{name}', include value \"%{value}\", is invalid. Should be one of \"any, all or none\"") %
+                {:name => name, :value => expression["include"]}
       end
 
       result = expression["include"] != "any"
@@ -76,7 +70,7 @@ class Condition < ApplicationRecord
 
       MiqPolicy.logger.debug("MIQ(condition-eval): Name: #{name}, Expression before substitution: [#{expr.gsub(/\n/, " ")}]")
 
-      subst(expr, rec, inputs)
+      subst(expr, rec)
 
       MiqPolicy.logger.debug("MIQ(condition-eval): Name: #{name}, Expression after substitution: [#{expr.gsub(/\n/, " ")}]")
       result = do_eval(expr)
@@ -85,31 +79,34 @@ class Condition < ApplicationRecord
     result
   end
 
-  def self.do_eval(expr)
-    eval(expr) ? true : false
+  # similar to MiqExpression#evaluate
+  # @return [Boolean] true if the expression matches the record
+  def self.subst_matches?(expr, rec)
+    do_eval(subst(expr, rec))
   end
 
-  def self.subst(expr, rec, inputs)
+  def self.do_eval(expr)
+    !!eval(expr)
+  end
+
+  def self.subst(expr, rec)
     findexp = /<find>(.+?)<\/find>/im
     if expr =~ findexp
-      expr = expr.gsub!(findexp) { |_s| _subst_find(rec, inputs, $1.strip) }
+      expr = expr.gsub!(findexp) { |_s| _subst_find(rec, $1.strip) }
       MiqPolicy.logger.debug("MIQ(condition-_subst_find): Find Expression after substitution: [#{expr}]")
     end
 
-    # Make rec class act as miq taggable if not already since the substitution fully relies on virtual tags
-    rec.class.acts_as_miq_taggable unless rec.respond_to?("tag_list") || rec.kind_of?(Hash)
-
     # <mode>/virtual/operating_system/product_name</mode>
     # <mode WE/JWSref=host>/managed/environment/prod</mode>
-    expr.gsub!(/<(value|exist|count|registry)([^>]*)>([^<]+)<\/(value|exist|count|registry)>/im) { |_s| _subst(rec, inputs, $2.strip, $3.strip, $1.strip) }
+    expr.gsub!(/<(value|exist|count|registry)([^>]*)>([^<]+)<\/(value|exist|count|registry)>/im) { |_s| _subst(rec, $2.strip, $3.strip, $1.strip) }
 
     # <mode /virtual/operating_system/product_name />
-    expr.gsub!(/<(value|exist|count|registry)([^>]+)\/>/im) { |_s| _subst(rec, inputs, nil, $2.strip, $1.strip) }
+    expr.gsub!(/<(value|exist|count|registry)([^>]+)\/>/im) { |_s| _subst(rec, nil, $2.strip, $1.strip) }
 
     expr
   end
 
-  def self._subst(rec, _inputs, opts, tag, mode)
+  def self._subst(rec, opts, tag, mode)
     ohash, ref, _object = options2hash(opts, rec)
 
     case mode.downcase
@@ -119,7 +116,7 @@ class Condition < ApplicationRecord
       if ref.kind_of?(Hash)
         value = ref.fetch(tag, "")
       else
-        ref.nil? ? value = "" : value = ref.tag_list(:ns => tag)
+        value = ref.nil? ? "" : Tag.list(ref, :ns => tag)
       end
       value = MiqExpression.quote(value, ohash[:type] || "string")
     when "count"
@@ -144,7 +141,7 @@ class Condition < ApplicationRecord
     result
   end
 
-  def self._subst_find(rec, inputs, expr)
+  def self._subst_find(rec, expr)
     MiqPolicy.logger.debug("MIQ(condition-_subst_find): Find Expression before substitution: [#{expr}]")
     searchexp = /<search>(.+)<\/search>/im
     expr =~ searchexp
@@ -183,10 +180,9 @@ class Condition < ApplicationRecord
     if checkmode == "count"
       e = check.gsub(/<count>/i, list.length.to_s)
       left, operator, right = e.split
-      raise "Illegal operator, '#{operator}'" unless %w(== != < > <= >=).include?(operator)
+      raise _("Illegal operator, '%{operator}'") % {:operator => operator} unless %w(== != < > <= >=).include?(operator)
 
       MiqPolicy.logger.debug("MIQ(condition-_subst_find): Check Expression after substitution: [#{e}]")
-      _ = inputs # used by eval (presumably?)
       result = !!left.to_f.send(operator, right.to_f)
       MiqPolicy.logger.debug("MIQ(condition-_subst_find): Check Expression result: [#{result}]")
       return result
@@ -244,10 +240,10 @@ class Condition < ApplicationRecord
     if ohash[:key_exists]
       return ref.registry_items.where("name LIKE ? ESCAPE ''", name + "%").exists?
     elsif ohash[:value_exists]
-      rec = ref.registry_items.find_by_name(name)
-      return rec ? true : false
+      rec = ref.registry_items.find_by(:name => name)
+      return !!rec
     else
-      rec = ref.registry_items.find_by_name(name)
+      rec = ref.registry_items.find_by(:name => name)
     end
     return nil unless rec
 
@@ -262,7 +258,7 @@ class Condition < ApplicationRecord
 
   def self.import_from_hash(condition, options = {})
     status = {:class => name, :description => condition["description"]}
-    c = Condition.find_by_guid(condition["guid"])
+    c = Condition.find_by(:guid => condition["guid"])
     msg_pfx = "Importing Condition: guid=[#{condition["guid"]}] description=[#{condition["description"]}]"
 
     if c.nil?

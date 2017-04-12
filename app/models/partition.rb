@@ -10,8 +10,6 @@ class Partition < ApplicationRecord
                .where("#{p}.id" => id)
            }, :foreign_key => :volume_group
 
-  include ReportableMixin
-
   virtual_column :aligned, :type => :boolean
 
   def volume_group
@@ -132,13 +130,9 @@ class Partition < ApplicationRecord
     self.class.partition_type_name(partition_type)
   end
 
-  def self.alignment_boundary
-    @boundary ||= (VMDB::Config.new("storage").config.fetch_path(:alignment, :boundary) || 32.kilobytes).to_i_with_method
-  end
-
   def alignment_boundary
     # TODO: Base alignment on logical block size of storage
-    self.class.alignment_boundary
+    ::Settings.storage.alignment.boundary.to_i_with_method
   end
 
   def aligned?

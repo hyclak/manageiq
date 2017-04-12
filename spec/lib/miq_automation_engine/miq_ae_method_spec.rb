@@ -1,6 +1,5 @@
-module MiqAeMethodSpec
-  include MiqAeEngine
-  describe MiqAeMethod do
+describe MiqAeMethod do
+  context "needing datatore" do
     before(:each) do
       MiqAeDatastore.reset
       @user = FactoryGirl.create(:user_with_group)

@@ -12,6 +12,10 @@ module Vmdb
       ActiveRecord::Base.logger.level == 0 ? disable_console_sql_logging : enable_console_sql_logging
     end
 
+    def backtrace(include_external = false)
+      caller.select { |path| include_external || path.start_with?(Rails.root.to_s) }
+    end
+
     # Development helper method for Rails console for simulating queue workers.
     def simulate_queue_worker(break_on_complete = false)
       raise NotImplementedError, "not implemented in production mode" if Rails.env.production?
@@ -23,6 +27,7 @@ module Vmdb
         else
           break_on_complete ? break : sleep(1.second)
         end
+        break if break_on_complete.kind_of?(Integer) && (break_on_complete -= 1) <= 0
       end
     end
   end

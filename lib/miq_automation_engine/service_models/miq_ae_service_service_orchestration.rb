@@ -5,7 +5,6 @@ module MiqAeMethodService
 
     expose :stack_name
     expose :stack_name=
-    expose :stack_ems_ref
     expose :stack_options
     expose :stack_options=
     expose :update_options
@@ -15,5 +14,6 @@ module MiqAeMethodService
     expose :update_orchestration_stack
     expose :orchestration_stack
     expose :build_stack_options_from_dialog
+    expose :post_provision_configure
   end
 end

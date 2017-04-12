@@ -1,5 +1,5 @@
 class DialogFieldDateTimeControl < DialogFieldDateControl
-  AUTOMATE_VALUE_FIELDS = %w(show_past_dates read_only)
+  AUTOMATE_VALUE_FIELDS = %w(show_past_dates read_only visible).freeze
 
   def automate_output_value
     return nil if @value.blank?
@@ -18,9 +18,11 @@ class DialogFieldDateTimeControl < DialogFieldDateControl
     date_time_value = with_current_user_timezone { Time.parse(@value) }
 
     {
-      :date => date_time_value.strftime("%m/%d/%Y"),
-      :hour => date_time_value.strftime("%H"),
-      :min  => date_time_value.strftime("%M")
+      :date      => date_time_value.strftime("%m/%d/%Y"),
+      :hour      => date_time_value.strftime("%H"),
+      :min       => date_time_value.strftime("%M"),
+      :read_only => read_only?,
+      :visible   => visible?
     }
   end
 

@@ -21,18 +21,19 @@ describe DialogFieldRadioButton do
         end
 
         context "when the dialog field is dynamic" do
+          let(:processed_values) { [["processor", 123], ["test", 456]] }
+
           before do
             dialog_field_radio_button.dynamic = true
             dialog_field_radio_button.default_value = "test"
-            allow(DynamicDialogFieldValueProcessor).to receive(:values_from_automate).with(dialog_field_radio_button).and_return(
-              [["processor", 123]]
-            )
+            allow(DynamicDialogFieldValueProcessor).to receive(:values_from_automate)
+              .with(dialog_field_radio_button).and_return(processed_values)
 
             dialog_field_radio_button.initialize_with_values("lolvalues" => 321)
           end
 
           it "gets values from automate" do
-            expect(dialog_field_radio_button.instance_variable_get(:@raw_values)).to eq([["processor", 123]])
+            expect(dialog_field_radio_button.instance_variable_get(:@raw_values)).to eq(processed_values)
           end
 
           it "sets value from default value attribute" do
@@ -48,7 +49,9 @@ describe DialogFieldRadioButton do
           end
 
           it "sets raw values from values attribute" do
-            expect(dialog_field_radio_button.instance_variable_get(:@raw_values)).to eq([["testing", 123]])
+            expect(dialog_field_radio_button.instance_variable_get(:@raw_values)).to eq(
+              [["testing", 123]]
+            )
           end
         end
       end
@@ -60,7 +63,7 @@ describe DialogFieldRadioButton do
         end
 
         it "sets raw_values to initial values" do
-          expect(dialog_field_radio_button.instance_variable_get(:@raw_values)).to eq([["", "<None>"]])
+          expect(dialog_field_radio_button.instance_variable_get(:@raw_values)).to eq([[nil, "<None>"]])
         end
       end
     end
@@ -73,9 +76,10 @@ describe DialogFieldRadioButton do
       context "when the dialog field is dynamic" do
         before do
           dialog_field_radio_button.dynamic = true
-          allow(DynamicDialogFieldValueProcessor).to receive(:values_from_automate).with(dialog_field_radio_button).and_return(
-            [["processor", 123]]
-          )
+          allow(DynamicDialogFieldValueProcessor).to receive(:values_from_automate)
+            .with(dialog_field_radio_button).and_return(
+              [["processor", 123]]
+            )
 
           dialog_field_radio_button.initialize_with_values("lolvalues" => 321)
         end
@@ -93,7 +97,9 @@ describe DialogFieldRadioButton do
         end
 
         it "gets values from values attribute" do
-          expect(dialog_field_radio_button.instance_variable_get(:@raw_values)).to eq([["testing", 123]])
+          expect(dialog_field_radio_button.instance_variable_get(:@raw_values)).to eq(
+            [["testing", 123]]
+          )
         end
       end
     end
@@ -135,7 +141,8 @@ describe DialogFieldRadioButton do
     before do
       dialog_field_radio_button.dynamic = true
       dialog_field_radio_button.default_value = "123"
-      allow(DynamicDialogFieldValueProcessor).to receive(:values_from_automate).and_return(refreshed_values_from_automate)
+      allow(DynamicDialogFieldValueProcessor).to receive(:values_from_automate)
+        .and_return(refreshed_values_from_automate)
     end
 
     context "when the checked value is in the list of refreshed values" do
@@ -143,17 +150,23 @@ describe DialogFieldRadioButton do
 
       it "returns the list of refreshed values and checked value as a hash" do
         expect(dialog_field_radio_button.refresh_json_value("123")).to eq(
-          :refreshed_values => refreshed_values_from_automate, :checked_value => "123", :read_only => nil
+          :refreshed_values => refreshed_values_from_automate,
+          :checked_value    => "123",
+          :read_only        => false,
+          :visible          => true
         )
       end
     end
 
     context "when the checked value is not in the list of refreshed values" do
-      let(:refreshed_values_from_automate) { %w(123 123) }
+      let(:refreshed_values_from_automate) { [%w(123 123)] }
 
-      it "returns the list of refreshed values and checked (default) value as a hash" do
+      it "returns the list of refreshed values and no checked (default) value as a hash" do
         expect(dialog_field_radio_button.refresh_json_value("321")).to eq(
-          :refreshed_values => refreshed_values_from_automate, :checked_value => "123", :read_only => nil
+          :refreshed_values => refreshed_values_from_automate,
+          :checked_value    => nil,
+          :read_only        => false,
+          :visible          => true
         )
       end
     end

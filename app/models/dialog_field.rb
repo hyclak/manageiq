@@ -13,6 +13,7 @@ class DialogField < ApplicationRecord
                                   :message => "Field Name %{value} is reserved."}
 
   default_value_for :required, false
+  default_value_for(:visible, :allows_nil => false) { true }
 
   serialize :values
   serialize :values_method_options,   Hash
@@ -44,16 +45,16 @@ class DialogField < ApplicationRecord
   ]
 
   DIALOG_FIELD_TYPES = {
-    "DialogFieldTextBox"         => "Text Box",
-    "DialogFieldTextAreaBox"     => "Text Area Box",
-    "DialogFieldCheckBox"        => "Check Box",
-    "DialogFieldDropDownList"    => "Drop Down List",
+    "DialogFieldTextBox"         => _("Text Box"),
+    "DialogFieldTextAreaBox"     => _("Text Area Box"),
+    "DialogFieldCheckBox"        => _("Check Box"),
+    "DialogFieldDropDownList"    => _("Drop Down List"),
     # Commented out next to field types until they can be implemented
     #    "DialogFieldButton" => "Button",
-    "DialogFieldTagControl"      => "Tag Control",
-    "DialogFieldDateControl"     => "Date Control",
-    "DialogFieldDateTimeControl" => "Date/Time Control",
-    "DialogFieldRadioButton"     => "Radio Button"
+    "DialogFieldTagControl"      => _("Tag Control"),
+    "DialogFieldDateControl"     => _("Date Control"),
+    "DialogFieldDateTimeControl" => _("Date/Time Control"),
+    "DialogFieldRadioButton"     => _("Radio Button")
   }
 
   DIALOG_FIELD_DYNAMIC_CLASSES = %w(
@@ -75,7 +76,7 @@ class DialogField < ApplicationRecord
   end
 
   def initialize_with_values(dialog_values)
-    @value = value_from_dialog_fields(dialog_values) || get_default_value
+    @value = value_from_dialog_fields(dialog_values) || default_value
   end
 
   def update_values(_dialog_values)
@@ -97,7 +98,7 @@ class DialogField < ApplicationRecord
   end
 
   def validate_field_data(dialog_tab, dialog_group)
-    validate_error_message(dialog_tab, dialog_group) if required? && required_value_error?
+    validate_error_message(dialog_tab, dialog_group) if visible? && required? && required_value_error?
   end
 
   def resource
@@ -106,6 +107,12 @@ class DialogField < ApplicationRecord
 
   def update_and_serialize_values
     DialogFieldSerializer.serialize(self)
+  end
+
+  def deep_copy
+    dup.tap do |new_field|
+      new_field.resource_action = resource_action.dup
+    end
   end
 
   private
@@ -124,10 +131,6 @@ class DialogField < ApplicationRecord
 
   def value_from_dialog_fields(dialog_values)
     dialog_values[automate_key_name] || dialog_values[name]
-  end
-
-  def get_default_value
-    default_value
   end
 
   def values_from_automate

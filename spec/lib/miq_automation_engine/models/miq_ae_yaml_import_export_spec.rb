@@ -1,5 +1,3 @@
-include MiqAeYamlImportExportMixin
-
 describe MiqAeDatastore do
   before do
     @additional_columns = {'on_error'    => "call great gazoo",
@@ -11,9 +9,13 @@ describe MiqAeDatastore do
     @clear_default_password = 'little_secret'
     @clear_password = 'secret'
     @relations_value = "bedrock relations"
+    @domain_counts = {'dom' => 1, 'ns' => 3, 'class' => 4, 'inst' => 10,
+                             'meth' => 3, 'field' => 12, 'value' => 8}
+    @domain_counts_with_extra_items = {'dom' => 1, 'ns' => 4, 'class' => 5, 'inst' => 11,
+                             'meth' => 3, 'field' => 12, 'value' => 8}
     EvmSpecHelper.local_miq_server
     @tenant = Tenant.seed
-    create_factory_data("manageiq", 0)
+    create_factory_data("manageiq", 0, MiqAeDomain::SYSTEM_SOURCE)
     setup_export_dir
     set_manageiq_values
   end
@@ -107,8 +109,7 @@ describe MiqAeDatastore do
     def assert_existing_exported_model(export_options, import_options)
       export_model(@manageiq_domain.name, export_options)
       reset_and_import(@export_dir, @manageiq_domain.name, import_options)
-      check_counts('dom'  => 1,  'ns'   => 3, 'class' => 4, 'inst'  => 10,
-                   'meth' => 3, 'field' => 12, 'value' => 8)
+      check_counts(@domain_counts)
     end
   end
 
@@ -175,10 +176,23 @@ describe MiqAeDatastore do
     end
   end
 
+  context "domain_only_attributes" do
+    it "namespace should not contain domain only attributes" do
+      domain_only_attrs = %w(source top_level_namespace)
+      export_model(@manageiq_domain.name)
+      namespace_file = File.join(@export_dir, @manageiq_domain.name, @aen1.name, '__namespace__.yaml')
+      data = YAML.load_file(namespace_file)
+      hash = data.fetch_path('object', 'attributes')
+      domain_only_attrs.each do |attr|
+        expect(hash.key?(attr)).to be_falsey
+      end
+    end
+  end
+
   context "export import roundtrip" do
     context "export all domains" do
       before do
-        create_factory_data("customer", 1)
+        create_factory_data("customer", 1, MiqAeDomain::USER_SOURCE)
         set_customer_values
       end
 
@@ -197,8 +211,8 @@ describe MiqAeDatastore do
       end
 
       def assert_all_domains_imported(export_options, import_options)
-        export_model(ALL_DOMAINS, export_options)
-        reset_and_import(@export_dir, ALL_DOMAINS, import_options)
+        export_model(MiqAeYamlImportExportMixin::ALL_DOMAINS, export_options)
+        reset_and_import(@export_dir, MiqAeYamlImportExportMixin::ALL_DOMAINS, import_options)
         check_counts('dom'  => 2, 'ns'    => 6,  'class' => 8, 'inst'  => 20,
                      'meth' => 6, 'field' => 24, 'value' => 16)
       end
@@ -217,11 +231,62 @@ describe MiqAeDatastore do
         assert_single_domain_import(options, options)
       end
 
+      it "import single domain, from yaml, no overwrite" do
+        options = {'yaml_file' => @yaml_file}
+        assert_single_domain_import(options, options)
+
+        add_extra_items_to_customer_domain
+        check_counts(@domain_counts_with_extra_items)
+
+        import(@export_dir, @customer_domain.name, options)
+        check_counts(@domain_counts_with_extra_items)
+      end
+
+      it "import single domain, from yaml, overwrite" do
+        options = {'yaml_file' => @yaml_file, 'overwrite' => true}
+        assert_single_domain_import(options, options)
+
+        add_extra_items_to_customer_domain
+        check_counts(@domain_counts_with_extra_items)
+
+        import(@export_dir, @customer_domain.name, options)
+        check_counts(@domain_counts)
+      end
+
+      def add_extra_items_to_customer_domain
+        @customer_domain = MiqAeDomain.find_by_name("customer")
+        n    = FactoryGirl.create(:miq_ae_namespace, :name => "bonus_namespace_2", :parent_id => @customer_domain.id)
+        n_c1 = FactoryGirl.create(:miq_ae_class, :name => "bonus_test_class_3", :namespace_id => n.id)
+        FactoryGirl.create(:miq_ae_instance, :name => "bonus_test_instance1", :class_id => n_c1.id)
+      end
+
+      it "import single user domain" do
+        options = {'yaml_file' => @yaml_file}
+        assert_single_domain_import(options, options)
+        dom = MiqAeDomain.find_by_fqname(@customer_domain.name, false)
+        expect(dom).not_to be_enabled
+      end
+
+      it "check attributes in namespace" do
+        options = {'yaml_file' => @yaml_file}
+        assert_single_domain_import(options, options)
+        ns = MiqAeNamespace.find_by(:name => 'customer_namespace_1')
+        expect(ns.description).to eq("test")
+        expect(ns.display_name).to eq("test")
+      end
+
+      it "import single system domain" do
+        options = {'yaml_file' => @yaml_file}
+        @customer_domain.update_attributes(:source => MiqAeDomain::SYSTEM_SOURCE)
+        assert_single_domain_import(options, options)
+        dom = MiqAeDomain.find_by_fqname(@customer_domain.name, false)
+        expect(dom).to be_enabled
+      end
+
       def assert_single_domain_import(export_options, import_options)
-        export_model(ALL_DOMAINS, export_options)
+        export_model(MiqAeYamlImportExportMixin::ALL_DOMAINS, export_options)
         reset_and_import(@export_dir, @customer_domain.name, import_options)
-        check_counts('dom'  => 1, 'ns'    => 3,  'class' => 4, 'inst'  => 10,
-                     'meth' => 3, 'field' => 12, 'value' => 8)
+        check_counts(@domain_counts)
       end
     end
 
@@ -240,27 +305,26 @@ describe MiqAeDatastore do
     end
 
     it "domain, as directory" do
-      import_options = {'import_dir' => @export_dir, 'system' => false, 'enabled' => true}
+      import_options = {'import_dir' => @export_dir, 'enabled' => true}
       assert_export_import_roundtrip({}, import_options)
     end
 
     it "domain, as zip" do
-      options = {'zip_file' => @zip_file,  'system' => false, 'enabled' => true}
+      options = {'zip_file' => @zip_file, 'enabled' => true}
       assert_export_import_roundtrip(options, options)
     end
 
     it "domain, as yaml" do
-      options = {'yaml_file' => @yaml_file, 'system' => false, 'enabled' => true}
+      options = {'yaml_file' => @yaml_file, 'enabled' => true}
       assert_export_import_roundtrip(options, options)
     end
 
     def assert_export_import_roundtrip(export_options, import_options)
       export_model(@manageiq_domain.name, export_options)
       reset_and_import(@export_dir, @manageiq_domain.name, import_options)
-      check_counts('dom'  => 1, 'ns'    => 3,  'class' => 4, 'inst'  => 10,
-                   'meth' => 3, 'field' => 12, 'value' => 8)
+      check_counts(@domain_counts)
       dom = MiqAeDomain.find_by_fqname(@manageiq_domain.name, false)
-      expect(dom).to be_system
+      expect(dom.source).to eq(MiqAeDomain::SYSTEM_SOURCE)
       expect(dom).to be_enabled
     end
 
@@ -268,8 +332,7 @@ describe MiqAeDatastore do
       export_model(@manageiq_domain.name)
       expect(@manageiq_domain.priority).to equal(0)
       reset_and_import(@export_dir, @manageiq_domain.name)
-      check_counts('dom'  => 1,  'ns'   => 3,  'class' => 4, 'inst'  => 10,
-                   'meth' => 3, 'field' => 12, 'value' => 8)
+      check_counts(@domain_counts)
 
       ns = MiqAeNamespace.find_by_fqname(@manageiq_domain.name, false)
       expect(ns.priority).to equal(0)
@@ -320,8 +383,7 @@ describe MiqAeDatastore do
     def assert_export_as(export_options, import_options)
       export_model(@manageiq_domain.name, export_options)
       reset_and_import(@export_dir, @export_as, import_options)
-      check_counts('dom'  => 1, 'ns'    => 3,  'class' => 4, 'inst'  => 10,
-                   'meth' => 3, 'field' => 12, 'value' => 8)
+      check_counts(@domain_counts)
       expect(MiqAeDomain.find_by_fqname(@export_as)).not_to be_nil
     end
 
@@ -556,7 +618,7 @@ describe MiqAeDatastore do
 
   context 'backup and restore' do
     before do
-      create_factory_data('customer', 16)
+      create_factory_data('customer', 16, MiqAeDomain::USER_SOURCE)
       set_customer_values
     end
 
@@ -564,14 +626,22 @@ describe MiqAeDatastore do
       import_options = {'zip_file' => @zip_file, 'restore' => true}
       export_options = {'zip_file' => @zip_file}
       @customer_domain.update_attributes(:enabled => true)
-      export_model(ALL_DOMAINS, export_options)
-      reset_and_import(@export_dir, ALL_DOMAINS, import_options)
+      export_model(MiqAeYamlImportExportMixin::ALL_DOMAINS, export_options)
+      reset_and_import(@export_dir, MiqAeYamlImportExportMixin::ALL_DOMAINS, import_options)
       expect(MiqAeDomain.find_by_fqname(@manageiq_domain.name, false).priority).to eql(0)
       cust_domain = MiqAeDomain.find_by_fqname(@customer_domain.name, false)
       expect(cust_domain.priority).to eql(1)
       expect(cust_domain).to be_enabled
       expect(MiqAeNamespace.find_by_fqname('$', false)).not_to be_nil
     end
+  end
+
+  def import(import_dir, domain, options = {})
+    options = {'import_dir' => import_dir} if options.empty?
+    import_options = {'preview' => false,
+                      'tenant'  => @tenant,
+                      'mode'    => 'add'}.merge(options)
+    MiqAeImport.new(domain, import_options).import
   end
 
   def reset_and_import(import_dir, domain, options = {})
@@ -669,9 +739,9 @@ describe MiqAeDatastore do
                  'value'         => 'test_input_value')
   end
 
-  def create_factory_data(domain_name, priority)
-    domain   = FactoryGirl.create(:miq_ae_domain_enabled, :name => domain_name,                :priority => priority)
-    n1       = FactoryGirl.create(:miq_ae_namespace, :name => "#{domain_name}_namespace_1",    :parent_id => domain.id)
+  def create_factory_data(domain_name, priority, source = MiqAeDomain::USER_SOURCE)
+    domain   = FactoryGirl.create(:miq_ae_domain_enabled, :name => domain_name, :source => source, :priority => priority)
+    n1       = FactoryGirl.create(:miq_ae_namespace, :name => "#{domain_name}_namespace_1",    :parent_id => domain.id, :description => "test", :display_name => "test")
     n1_c1    = FactoryGirl.create(:miq_ae_class,     :name => "#{domain_name}_test_class_1",   :namespace_id => n1.id)
     n1_1     = FactoryGirl.create(:miq_ae_namespace, :name => "#{domain_name}_namespace_1_1",  :parent_id => n1.id)
     n1_1_c1  = FactoryGirl.create(:miq_ae_class,     :name => "#{domain_name}_test_class_4",   :namespace_id => n1_1.id)

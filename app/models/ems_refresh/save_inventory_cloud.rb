@@ -3,15 +3,16 @@
 # - ems
 #   - flavors
 #   - availability_zones
+#   - host_aggregates
 #   - cloud_tenants
 #   - key_pairs
 #   - orchestration_templates
+#   - orchestration_templates_catalog
 #   - orchestration_stacks
-#   - cloud_networks
-#     - cloud_subnets
 #   - security_groups
 #     - firewall_rules
 #   - cloud_volumes
+#   - cloud_volume_backups
 #   - cloud_volume_snapshots
 #   - vms
 #     - storages (link)
@@ -22,9 +23,9 @@
 #       - guest_devices
 #     - custom_attributes
 #     - snapshots
-#   - floating_ips
 #   - cloud_object_store_containers
 #     - cloud_object_store_objects
+#   - cloud_services
 #
 
 module EmsRefresh::SaveInventoryCloud
@@ -45,32 +46,30 @@ module EmsRefresh::SaveInventoryCloud
     end
 
     child_keys = [
+      :cloud_tenants,
       :flavors,
       :availability_zones,
-      :cloud_tenants,
+      :host_aggregates,
       :key_pairs,
       :orchestration_templates,
+      :orchestration_templates_catalog,
       :orchestration_stacks,
-      :cloud_networks,
-      :security_groups,
       :cloud_volumes,
+      :cloud_volume_backups,
       :cloud_volume_snapshots,
       :vms,
-      :network_routers,
-      :network_ports,
-      :floating_ips,
       :cloud_resource_quotas,
       :cloud_object_store_containers,
       :cloud_object_store_objects,
-      :resource_groups
+      :resource_groups,
+      :cloud_services,
     ]
 
     # Save and link other subsections
     save_child_inventory(ems, hashes, child_keys, target)
 
     link_volumes_to_base_snapshots(hashes[:cloud_volumes]) if hashes.key?(:cloud_volumes)
-    link_floating_ips_to_network_ports(hashes[:floating_ips]) if hashes.key?(:floating_ips)
-    link_cloud_subnets_to_network_routers(hashes[:cloud_subnets]) if hashes.key?(:cloud_subnets)
+    link_parents_to_cloud_tenant(hashes[:cloud_tenants]) if hashes.key?(:cloud_tenants)
 
     ems.save!
     hashes[:id] = ems.id
@@ -90,6 +89,10 @@ module EmsRefresh::SaveInventoryCloud
                 []
               end
 
+    hashes.each do |h|
+      h[:cloud_tenant_ids] = (h.delete(:cloud_tenants) || []).compact.map { |x| x[:id] }.uniq
+    end
+
     save_inventory_multi(ems.flavors, hashes, deletes, [:ems_ref])
     store_ids_for_new_records(ems.flavors, hashes, :ems_ref)
   end
@@ -108,6 +111,21 @@ module EmsRefresh::SaveInventoryCloud
     store_ids_for_new_records(ems.availability_zones, hashes, :ems_ref)
   end
 
+  def save_host_aggregates_inventory(ems, hashes, target = nil)
+    target ||= ems
+
+    ems.host_aggregates.reset
+    deletes = if (target == ems)
+                :use_association
+              else
+                []
+              end
+
+    save_inventory_multi(ems.host_aggregates, hashes, deletes, [:ems_ref])
+    store_ids_for_new_records(ems.host_aggregates, hashes, :ems_ref)
+    # FIXME: what about hosts?
+  end
+
   def save_cloud_tenants_inventory(ems, hashes, target = nil)
     target ||= ems
 
@@ -118,7 +136,7 @@ module EmsRefresh::SaveInventoryCloud
                 []
               end
 
-    save_inventory_multi(ems.cloud_tenants, hashes, deletes, [:ems_ref])
+    save_inventory_multi(ems.cloud_tenants, hashes, deletes, [:ems_ref], nil, [:parent_id])
     store_ids_for_new_records(ems.cloud_tenants, hashes, :ems_ref)
   end
 
@@ -175,6 +193,27 @@ module EmsRefresh::SaveInventoryCloud
     store_ids_for_new_records(ems.cloud_volumes, hashes, :ems_ref)
   end
 
+  def save_cloud_volume_backups_inventory(ems, hashes, target = nil)
+    target = ems if target.nil?
+
+    ems.cloud_volume_backups.reset
+    deletes = if target == ems
+                :use_association
+              else
+                []
+              end
+
+    hashes.each do |h|
+      h[:ems_id]          = ems.id
+      h[:cloud_volume_id] = h.fetch_path(:volume, :id)
+      h[:availability_zone_id] = h.fetch_path(:availability_zone, :id)
+    end
+
+    save_inventory_multi(ems.cloud_volume_backups, hashes, deletes, [:ems_ref], nil,
+                         [:tenant, :volume, :availability_zone])
+    store_ids_for_new_records(ems.cloud_volume_backups, hashes, :ems_ref)
+  end
+
   def save_cloud_volume_snapshots_inventory(ems, hashes, target = nil)
     target = ems if target.nil?
 
@@ -206,11 +245,27 @@ module EmsRefresh::SaveInventoryCloud
     end
   end
 
+  def link_parents_to_cloud_tenant(hashes)
+    mapped_ids = hashes.each_with_object({}) do |cloud_tenant, mapped_ids_hash|
+      ems_ref_parent_id = cloud_tenant[:parent_id]
+      next if ems_ref_parent_id.nil?
+
+      parent_cloud_tenant = hashes.detect { |x| x[:ems_ref] == ems_ref_parent_id }
+      next if parent_cloud_tenant.nil?
+
+      (mapped_ids_hash[parent_cloud_tenant[:id]] ||= []) << cloud_tenant[:id]
+    end
+
+    mapped_ids.each do |parent_id, ids|
+      CloudTenant.where(:id => ids).update_all(:parent_id => parent_id)
+    end
+  end
+
   def save_cloud_object_store_containers_inventory(ems, hashes, target = nil)
     target = ems if target.nil?
 
     ems.cloud_object_store_containers.reset
-    deletes = if (target == ems)
+    deletes = if target == ems
                 :use_association
               else
                 []
@@ -229,7 +284,7 @@ module EmsRefresh::SaveInventoryCloud
     target = ems if target.nil?
 
     ems.cloud_object_store_objects.reset
-    deletes = if (target == ems)
+    deletes = if target == ems
                 :use_association
               else
                 []
@@ -257,5 +312,19 @@ module EmsRefresh::SaveInventoryCloud
 
     save_inventory_multi(ems.resource_groups, hashes, deletes, [:ems_ref])
     store_ids_for_new_records(ems.resource_groups, hashes, :ems_ref)
+  end
+
+  def save_cloud_services_inventory(ems, hashes, target = nil)
+    target = ems if target.nil?
+
+    ems.cloud_services.reset
+    deletes = if target == ems
+                :use_association
+              else
+                []
+              end
+
+    save_inventory_multi(ems.cloud_services, hashes, deletes, [:ems_ref])
+    store_ids_for_new_records(ems.cloud_services, hashes, :ems_ref)
   end
 end

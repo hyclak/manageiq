@@ -78,17 +78,31 @@ describe OrchestrationTemplate do
   end
 
   describe "#eligible_managers" do
+    let!(:miq_server)  { EvmSpecHelper.local_miq_server }
+    let(:user_admin)   { FactoryGirl.create(:user_admin) }
+    let(:tenant)       { FactoryGirl.create(:tenant) }
+    let(:other_tenant) { FactoryGirl.create(:tenant) }
+    let!(:user)        { FactoryGirl.create(:user_with_group, :tenant => tenant) }
+
     before do
       allow(OrchestrationTemplate).to receive_messages(:eligible_manager_types =>
                                                          [ManageIQ::Providers::Amazon::CloudManager,
                                                           ManageIQ::Providers::Openstack::CloudManager])
       @template = FactoryGirl.create(:orchestration_template)
-      @aws = FactoryGirl.create(:ems_amazon)
-      @openstack = FactoryGirl.create(:ems_openstack)
+      @aws = FactoryGirl.create(:ems_amazon, :tenant => other_tenant)
+      @openstack = FactoryGirl.create(:ems_openstack, :tenant => tenant)
     end
 
     it "lists all eligible managers for a template" do
-      expect(@template.eligible_managers).to match_array([@aws, @openstack])
+      User.with_user(user_admin) do
+        expect(@template.eligible_managers).to match_array([@aws, @openstack])
+      end
+    end
+
+    it "lists all eligible managers for a template regard to user's tenant" do
+      User.with_user(user) do
+        expect(@template.eligible_managers).to match_array([@openstack])
+      end
     end
   end
 
@@ -258,6 +272,15 @@ describe OrchestrationTemplate do
           expect(described_class.find_by(:id => existing_discovered_template.id)).to be_nil
         end
       end
+
+      context "when there is no conflict" do
+        it "converts a discovered template to orderable" do
+          allow(existing_discovered_template).to receive_messages(:validate_format => nil)
+          expect(existing_discovered_template.orderable).to be_falsey
+          expect(existing_discovered_template.save_as_orderable!).to be_truthy
+          expect(existing_discovered_template.orderable).to be_truthy
+        end
+      end
     end
   end
 
@@ -301,5 +324,19 @@ describe OrchestrationTemplate do
         expect(OrchestrationTemplate.where(:name => azure_template).count).to eq(1)
       end
     end
+  end
+
+  describe "#deployment_options" do
+    it do
+      options = subject.deployment_options
+      assert_deployment_option(options[0], "tenant_name", :OrchestrationParameterAllowedDynamic, true)
+      assert_deployment_option(options[1], "stack_name", :OrchestrationParameterPattern, true)
+    end
+  end
+
+  def assert_deployment_option(option, name, constraint_type, required)
+    expect(option.name).to eq(name)
+    expect(option.required?).to eq(required)
+    expect(option.constraints[0]).to be_kind_of("OrchestrationTemplate::#{constraint_type}".constantize)
   end
 end

@@ -9,6 +9,18 @@ describe MiqEvent do
         MiqEvent.raise_evm_job_event(obj, {:type => "scan", :suffix => "complete"}, {})
       end
 
+      it "container_image" do
+        obj = FactoryGirl.create(:container_image)
+        expect(MiqEvent).to receive(:raise_evm_event) do |target, raw_event, _inputs|
+          target == obj && raw_event == "container_image_scan_complete"
+        end
+        MiqEvent.raise_evm_job_event(
+          obj,
+          {:type => "container_image_scan", :suffix => "complete"},
+          :container_image => obj
+        )
+      end
+
       it "host" do
         obj = FactoryGirl.create(:host_vmware)
         expect(MiqEvent).to receive(:raise_evm_event) do |target, raw_event, _inputs|
@@ -131,6 +143,28 @@ describe MiqEvent do
         FactoryGirl.create(:miq_event, :event_type => event, :target => ems)
 
         expect(MiqPolicy).to receive(:enforce_policy).with(ems, event, :type => ems.class.name)
+        MiqEvent.first.process_evm_event
+      end
+
+      it"will pass EmsEvent to policy if set" do
+        event = 'vm_clone_start'
+        vm = FactoryGirl.create(:vm_vmware)
+        ems_event = FactoryGirl.create(
+          :ems_event,
+          :event_type => "CloneVM_Task",
+          :full_data  => { "info" => {"task" => "task-5324"}})
+        FactoryGirl.create(:miq_event_definition, :name => event)
+        FactoryGirl.create(
+          :miq_event,
+          :event_type => event,
+          :target     => vm,
+          :full_data  => {:source_event_id => ems_event.id})
+
+        expect(MiqPolicy).to receive(:enforce_policy).with(
+          vm,
+          event,
+          :type         => vm.class.name,
+          :source_event => ems_event)
         MiqEvent.first.process_evm_event
       end
     end

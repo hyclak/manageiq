@@ -2,7 +2,6 @@ require 'io/wait'
 
 class MiqWorker < ApplicationRecord
   include UuidMixin
-  include ReportableMixin
 
   before_destroy :log_destroy_of_worker_messages
 
@@ -36,9 +35,6 @@ class MiqWorker < ApplicationRecord
   def self.atStartup
     # Delete and Kill all workers that were running previously
     clean_all_workers
-
-    # Clean queue of any worker startup entries
-    MiqQueue.where(:method_name => "start_event_monitor", :server_guid => MiqServer.my_guid).destroy_all
   end
 
   def self.atShutdown
@@ -73,7 +69,7 @@ class MiqWorker < ApplicationRecord
     when Array
       required_roles.any? { |role| MiqServer.minimal_env_options.include?(role) }
     else
-      raise "Unexpected type: <self.required_roles.class.name>"
+      raise _("Unexpected type: <self.required_roles.class.name>")
     end
   end
 
@@ -133,7 +129,7 @@ class MiqWorker < ApplicationRecord
     when Array
       required_roles.any? { |role| MiqServer.my_server.has_active_role?(role) }
     else
-      raise "Unexpected type: <self.required_roles.class.name>"
+      raise _("Unexpected type: <self.required_roles.class.name>")
     end
   end
 
@@ -197,7 +193,7 @@ class MiqWorker < ApplicationRecord
         classes = path_to_my_worker_settings
         classes.each do |c|
           section = section[c]
-          raise "Missing config section #{c}" if section.nil?
+          raise _("Missing config section %{section_name}") % {:section_name => c} if section.nil?
           defaults = section[:defaults]
           settings.merge!(defaults) unless defaults.nil?
         end
@@ -241,12 +237,8 @@ class MiqWorker < ApplicationRecord
   end
 
   def self.clean_workers
-    time_threshold = 1.hour
     server_scope.each do |w|
       Process.kill(9, w.pid) if w.pid && w.is_alive? rescue nil
-      # if w.last_heartbeat && (time_threshold.ago.utc < w.last_heartbeat)
-      #   ActiveRecord::Base.connection.kill(w.sql_spid)
-      # end
       w.destroy
     end
   end
@@ -275,6 +267,8 @@ class MiqWorker < ApplicationRecord
     w
   end
 
+  cache_with_timeout(:my_worker) { server_scope.find_by(:pid => Process.pid) }
+
   def self.find_all_current(server_id = nil)
     MiqWorker.find_current(server_id)
   end
@@ -300,8 +294,8 @@ class MiqWorker < ApplicationRecord
   end
 
   def self.send_message_to_worker_monitor(wid, message, *args)
-    w = MiqWorker.find_by_id(wid)
-    raise "Worker with id=<#{wid}> does not exist" if w.nil?
+    w = MiqWorker.find_by(:id => wid)
+    raise _("Worker with id=<%{id}> does not exist") % {:id => wid} if w.nil?
     w.send_message_to_worker_monitor(message, *args)
   end
 
@@ -324,6 +318,7 @@ class MiqWorker < ApplicationRecord
   def self.after_fork
     close_pg_sockets_inherited_from_parent
     DRb.stop_service
+    renice(Process.pid)
   end
 
   # When we fork, the children inherits the parent's file descriptors
@@ -339,7 +334,7 @@ class MiqWorker < ApplicationRecord
     end
   end
 
-  def start
+  def start_runner
     self.class.before_fork
     pid = fork(:cow_friendly => true) do
       self.class.after_fork
@@ -348,7 +343,11 @@ class MiqWorker < ApplicationRecord
     end
 
     Process.detach(pid)
-    self.pid = pid
+    pid
+  end
+
+  def start
+    self.pid = start_runner
     save
 
     msg = "Worker started: ID [#{id}], PID [#{pid}], GUID [#{guid}]"
@@ -398,12 +397,24 @@ class MiqWorker < ApplicationRecord
     STATUSES_STOPPED.include?(status)
   end
 
+  def started?
+    STATUS_STARTED == status
+  end
+
   def actually_running?
     MiqProcess.is_worker?(pid)
   end
 
   def enabled_or_running?
     !is_stopped? || actually_running?
+  end
+
+  def stopping_for_too_long?
+    # Note, a 'stopping' worker heartbeats in DRb but NOT to
+    # the database, so we can see how long it's been
+    # 'stopping' by checking the last_heartbeat.
+    stopping_timeout = self.class.worker_settings[:stopping_timeout] || 10.minutes
+    status == MiqWorker::STATUS_STOPPING && last_heartbeat < stopping_timeout.seconds.ago
   end
 
   def validate_active_messages
@@ -431,17 +442,17 @@ class MiqWorker < ApplicationRecord
   def status_update
     begin
       pinfo = MiqProcess.processInfo(pid)
+    rescue Errno::ESRCH
+      update(:status => STATUS_ABORTED)
+      _log.warn("No such process [#{friendly_name}] with PID=[#{pid}], aborting worker.")
     rescue => err
-      # Calling ps on Linux with a pid that does not exist fails with a RuntimeError containing an empty message.
-      # We will ignore this since we may be asking for the status of a worker who has exited.
-      _log.warn("#{self.class.name}: #{err.message}, while requesting process info for [#{friendly_name}] with PID=[#{pid}]") unless err.message.blank?
-      return
+      _log.warn("Unexpected error: #{err.message}, while requesting process info for [#{friendly_name}] with PID=[#{pid}]")
+    else
+      # Ensure the hash only contains the values we want to store in the table
+      pinfo.slice!(*PROCESS_INFO_FIELDS)
+      pinfo[:os_priority] = pinfo.delete(:priority)
+      update_attributes!(pinfo)
     end
-
-    # Ensure the hash only contains the values we want to store in the table
-    pinfo.keep_if { |k, _v| self.class::PROCESS_INFO_FIELDS.include?(k) }
-    pinfo[:os_priority] = pinfo.delete(:priority)
-    update_attributes!(pinfo)
   end
 
   def log_status(level = :info)
@@ -479,20 +490,12 @@ class MiqWorker < ApplicationRecord
     update_attribute(:last_heartbeat, Time.now.utc)
   end
 
-  def is_current_process?
-    Process.pid == pid
-  end
-
   def self.config_settings_path
     @config_settings_path ||= [:workers] + path_to_my_worker_settings
   end
 
   class << self
     attr_writer :config_settings_path
-  end
-
-  def self.validate_config_settings(configuration = VMDB::Config.new("vmdb"))
-    configuration.merge_from_template_if_missing(*config_settings_path) unless config_settings_path.empty?
   end
 
   def update_spid(spid = ActiveRecord::Base.connection.spid)
@@ -510,8 +513,6 @@ class MiqWorker < ApplicationRecord
     {:guid => guid}
   end
 
-  protected
-
   def self.normalized_type
     @normalized_type ||= if parent == Object
                            name.sub(/^Miq/, '').underscore
@@ -520,12 +521,13 @@ class MiqWorker < ApplicationRecord
                          end
   end
 
-  def self.nice_prefix
-    @nice_prefix ||= "nice -n #{nice_increment}"
+  def self.renice(pid)
+    AwesomeSpawn.run("renice", :params =>  {:n => nice_increment, :p => pid })
   end
 
   def self.nice_increment
     delta = worker_settings[:nice_delta]
     delta.kind_of?(Integer) ? delta.to_s : "+10"
   end
+  private_class_method :nice_increment
 end

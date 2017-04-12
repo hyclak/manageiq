@@ -14,6 +14,7 @@ module MiqRequestMixin
   end
 
   def user_message=(msg)
+    msg = msg.truncate(255)
     options[:user_message] = msg
     update_attribute(:options, options)
     update_attributes(:message => msg) unless msg.blank?
@@ -145,13 +146,23 @@ module MiqRequestMixin
   end
 
   def workflow(request_options = options, flags = {})
-    workflow_class.new(request_options, get_user, flags) if workflow_class
+    if workflow_class
+      current_workflow = workflow_class.new(request_options, get_user, flags)
+      if block_given?
+        begin
+          yield(current_workflow)
+        ensure
+          current_workflow.password_helper
+        end
+      end
+      current_workflow
+    end
   end
 
   def request_dialog(action_name)
     st = service_template
     return {} if st.blank?
-    ra = st.resource_actions.find_by_action(action_name)
+    ra = st.resource_actions.find_by(:action => action_name)
     values = options[:dialog]
     dialog = ResourceActionWorkflow.new(values, get_user, ra, {}).dialog
     DialogSerializer.new.serialize(Array[dialog]).first

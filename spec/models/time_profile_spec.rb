@@ -2,7 +2,6 @@ describe TimeProfile do
   before(:each) do
     @server = EvmSpecHelper.local_miq_server
     @ems    = FactoryGirl.create(:ems_vmware, :zone => @server.zone)
-    EvmSpecHelper.clear_caches
   end
 
   it "will default to the correct profile values" do
@@ -10,6 +9,18 @@ describe TimeProfile do
     expect(t.days).to eq(TimeProfile::ALL_DAYS)
     expect(t.hours).to eq(TimeProfile::ALL_HOURS)
     expect(t.tz).to be_nil
+  end
+
+  describe "#default?" do
+    it "with a default profile" do
+      tp = TimeProfile.seed
+      expect(tp).to be_default
+    end
+
+    it "with a non-default profile" do
+      tp = FactoryGirl.create(:time_profile, :tz => "Hawaii")
+      expect(tp).to_not be_default
+    end
   end
 
   context "will seed the database" do
@@ -105,7 +116,7 @@ describe TimeProfile do
     end
 
     it "gets time profiles for user and global default timeprofile" do
-      tp = TimeProfile.find_by_description(TimeProfile::DEFAULT_TZ)
+      tp = TimeProfile.find_by(:description => TimeProfile::DEFAULT_TZ)
       tp.profile_type = "global"
       tp.save
       FactoryGirl.create(:time_profile,

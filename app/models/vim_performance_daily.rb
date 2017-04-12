@@ -2,91 +2,40 @@ class VimPerformanceDaily < MetricRollup
   def self.instances_are_derived?; true; end
 
   INFO_COLS = [:resource_type, :resource_id, :resource_name]
-
-  INFREQUENTLY_CHANGING_COLS = [
-    :derived_cpu_available,
-    :derived_cpu_reserved,
-    :derived_host_count_off,
-    :derived_host_count_on,
-    :derived_memory_available,
-    :derived_memory_reserved,
-    :derived_vm_allocated_disk_storage,
-    :derived_vm_count_off,
-    :derived_vm_count_on,
-    :derived_vm_numvcpus,
-  ] + Metric::Rollup::STORAGE_COLS
-
-  EXCLUDED_COLS_FOR_EXPRESSIONS = Metric::Rollup::ROLLUP_COLS - INFREQUENTLY_CHANGING_COLS
-
-  def self.excluded_cols_for_expressions
-    EXCLUDED_COLS_FOR_EXPRESSIONS
-  end
-
-  def self.find(cnt, *args)
-    raise "Unsupported finder value #{cnt}" unless cnt == :all
-    Vmdb::Deprecation.deprecation_warning(:find, :find_entries, caller(1))
-
-    all(*args)
-  end
-
-  def self.all(*args)
-    Vmdb::Deprecation.deprecation_warning(:all, :find_entries, caller(1))
-    options = args.last.kind_of?(Hash) ? args.last : {}
-    ext_options = options.delete(:ext_options) || {}
-    find_entries(ext_options)
-      .apply_legacy_finder_options(options)
-      .to_a
-  end
+  PARENT_COLS = [:parent_host_id, :parent_ems_cluster_id, :parent_storage_id, :parent_ems_id].freeze
 
   # @param ext_options [Hash] search options
   # @opts ext_options :klass [Class] class for metrics (default: MetricRollup)
-  # @opts ext_options :tp [TimeProfile]
+  # @opts ext_options :time_profile [TimeProfile]
   # @opts ext_options :tz [Timezone] (default: DEFAULT_TIMEZONE)
   def self.find_entries(ext_options)
     ext_options ||= {}
+    # TODO: remove changing ext_options once this side effect is no longer needed:
     time_profile = ext_options[:time_profile] ||= TimeProfile.default_time_profile(ext_options[:tz])
-    klass = ext_options[:class] || MetricRollup
+    klass = Metric::Helper.class_for_interval_name("daily", ext_options[:class])
 
-    tp_ids = time_profile ? time_profile.profile_for_each_region.collect(&:id) : []
-    klass.where(:time_profile_id => tp_ids, :capture_interval_name => 'daily')
-  end
-
-  def self.find_adhoc(*_args)
-    []
-  end
-
-  def self.generate_daily_for_one_day(recs, options = {})
-    process_hashes(process_hourly_for_one_day(recs, options), options.merge(:save => false))
+    klass.with_time_profile_or_tz(time_profile || ext_options[:tz]).where(:capture_interval_name => 'daily')
   end
 
   def self.process_hourly_for_one_day(recs, options = {})
-    return [] if recs.blank?
-
-    process_only_cols(options)
-    _log.debug("Limiting cols to: #{options[:only_cols].inspect}")
-
+    only_cols = process_only_cols(recs)
     result = {}
     counts = {}
 
     tz = Metric::Helper.get_time_zone(options)
     tp = options[:time_profile]
 
-    # Get ts in desired time zone
-    ts = recs.first.timestamp.in_time_zone(tz)
-    # Convert to midnight in desired timezone to strip off hours to just get the date
-    ts = ts.beginning_of_day
+    ts = nil
 
     recs.each do |perf|
-      next unless perf.capture_interval_name == "hourly"
-
+      # Get ts in desired time zone - converted to local midnight to strip off hours and become a date
+      ts ||= recs.first.timestamp.in_time_zone(tz).beginning_of_day
       rtype = perf.resource_type
       rid   = perf.resource_id
 
       key = [perf.capture_interval_name, rtype, rid]
-      result[key] ||= {}
+      result[key] ||= INFO_COLS.each_with_object({}) { |c, h| h[c] = perf.send(c) }
       counts[key] ||= {}
-
-      INFO_COLS.each { |c| result[key][c] = perf.send(c) } if result[key].empty?
 
       if tp && tp.ts_in_profile?(perf.timestamp) == false
         # Save timestamp and info cols for daily row but don't aggregate any values
@@ -94,7 +43,7 @@ class VimPerformanceDaily < MetricRollup
         next
       end
 
-      (Metric::Rollup::ROLLUP_COLS & (options[:only_cols] || Metric::Rollup::ROLLUP_COLS)).each do |c|
+      relevant_cols(Metric::Rollup::ROLLUP_COLS, only_cols).each do |c|
         result[key][c] ||= 0
         counts[key][c] ||= 0
         value = perf.send(c)
@@ -105,12 +54,13 @@ class VimPerformanceDaily < MetricRollup
         # over the day.
         Metric::Aggregation::Aggregate.average(c, nil, result[key], counts[key], value)
 
-        Metric::Rollup.rollup_min(c, result[key], perf.send(c))
-        Metric::Rollup.rollup_max(c, result[key], perf.send(c))
+        Metric::Rollup.rollup_min(c, result[key], value)
+        Metric::Rollup.rollup_max(c, result[key], value)
       end
       if rtype == 'VmOrTemplate' && perf.min_max.kind_of?(Hash)
         result[key][:min_max] ||= {}
-        (Metric::Rollup::BURST_COLS & (options[:only_cols] || Metric::Rollup::BURST_COLS)).each do |c|
+
+        relevant_cols(Metric::Rollup::BURST_COLS, only_cols).each do |c|
           Metric::Rollup::BURST_TYPES.each do |type|
             ts_key, val_key = Metric::Rollup.burst_col_names(type, c)
             # check the hourly row's min_max column's value for a key such as: "abs_min_mem_usage_absolute_average_value"
@@ -119,12 +69,12 @@ class VimPerformanceDaily < MetricRollup
         end
       end
 
-      Metric::Rollup.rollup_assoc(:assoc_ids, result[key], perf.assoc_ids) if options[:only_cols].nil? || options[:only_cols].include?(:assoc_ids)
-      Metric::Rollup.rollup_tags(:tag_names, result[key], perf.tag_names)  if options[:only_cols].nil? || options[:only_cols].include?(:tag_names)
+      Metric::Rollup.rollup_assoc(:assoc_ids, result[key], perf.assoc_ids) if only_cols.nil? || only_cols.include?(:assoc_ids)
+      Metric::Rollup.rollup_tags(:tag_names, result[key], perf.tag_names)  if only_cols.nil? || only_cols.include?(:tag_names)
 
-      [:parent_host_id, :parent_ems_cluster_id, :parent_storage_id, :parent_ems_id].each do |c|
+      relevant_cols(PARENT_COLS, only_cols).each do |c|
         val = perf.send(c)
-        result[key][c] = val if val && (options[:only_cols].nil? || options[:only_cols].include?(c))
+        result[key][c] = val if val
       end
 
       (options[:reflections] || []).each do |assoc|
@@ -133,32 +83,37 @@ class VimPerformanceDaily < MetricRollup
       end
     end
 
+    return [] if result.empty?
     ts_utc = ts.utc.to_time
 
     # Don't bother rolling up values if day is outside of time profile
     rollup_day = tp.nil? || tp.ts_day_in_profile?(ts)
 
-    results = []
-    result.each_key do |key|
-      int, rtype, rid = key
+    results = result.each_key.collect do |key|
+      _int, rtype, rid = key
 
       if rollup_day
-        (Metric::Rollup::ROLLUP_COLS & (options[:only_cols] || Metric::Rollup::ROLLUP_COLS)).each do |c|
+        rollup_columns = (Metric::Rollup::ROLLUP_COLS & (only_cols || Metric::Rollup::ROLLUP_COLS))
+        average_columns = rollup_columns - Metric::Rollup::DAILY_SUM_COLUMNS
+
+        average_columns.each do |c|
           Metric::Aggregation::Process.average(c, nil, result[key], counts[key])
+        end
+        rollup_columns.each do |c|
           result[key][c] = result[key][c].round if columns_hash[c.to_s].type == :integer && !result[key][c].nil?
         end
       else
         _log.debug("Daily Timestamp: [#{ts}] is outside of time profile: [#{tp.description}]")
       end
 
-      results.push(result[key].merge(
-                     :timestamp             => ts_utc,
-                     :resource_type         => rtype,
-                     :resource_id           => rid,
-                     :capture_interval      => 1.day,
-                     :capture_interval_name => "daily",
-                     :intervals_in_rollup   => Metric::Helper.max_count(counts[key])
-      ))
+      result[key].merge(
+        :timestamp             => ts_utc,
+        :resource_type         => rtype,
+        :resource_id           => rid,
+        :capture_interval      => 1.day,
+        :capture_interval_name => "daily",
+        :intervals_in_rollup   => Metric::Helper.max_count(counts[key])
+      )
     end
 
     # Clean up min_max values that are stored directly by moving into min_max property Hash
@@ -176,33 +131,20 @@ class VimPerformanceDaily < MetricRollup
     results
   end
 
-  def self.process_hashes(results, options = {:save => true})
-    klass = options[:class] || self
-    results.inject([]) do |a, h|
-      if options[:save]
-        perf = find_by_timestamp_and_capture_interval_name_and_resource_type_and_resource_id(
-          h[:timestamp], h[:capture_interval_name], h[:resource_type], h[:resource_id]
-        )
-
-        perf ? perf.update_attributes!(h) : perf = create(h)
-
-        VimPerformanceTagValue.build_from_performance_record(perf) if options[:save]
-      else
-        perf = klass.new(h)
-      end
-
-      a << perf
-    end
+  def self.relevant_cols(cols, only_cols)
+    only_cols ? (cols & only_cols) : cols
   end
 
-  def self.process_only_cols(options)
-    unless options[:only_cols].nil?
-      options[:only_cols] =  options[:only_cols].collect(&:to_sym) if options[:only_cols]
-      options[:only_cols] += options[:only_cols].collect { |c| c.to_s[4..-1].to_sym if c.to_s.starts_with?("min_", "max_") }.compact
-      options[:only_cols] += options[:only_cols].collect { |c| c.to_s.split("_")[2..-2].join("_").to_sym if c.to_s.starts_with?("abs_") }.compact
-      options[:only_cols] += [:cpu_ready_delta_summation, :cpu_wait_delta_summation, :cpu_used_delta_summation] if options[:only_cols].find { |c| c.to_s.starts_with?("v_pct_") }
-      options[:only_cols] += [:derived_storage_total, :derived_storage_free] if options[:only_cols].include?(:v_derived_storage_used)
-      options[:only_cols] += Metric::BASE_COLS.collect(&:to_sym)
+  def self.process_only_cols(recs)
+    only_cols = recs.select_values.collect(&:to_sym).presence
+    return unless only_cols
+    only_cols += only_cols.select { |c| c.to_s.starts_with?("min_", "max_") }.collect { |c| c.to_s[4..-1].to_sym }
+    only_cols += only_cols.select { |c| c.to_s.starts_with?("abs_") }.collect { |c| c.to_s.split("_")[2..-2].join("_").to_sym }
+    if only_cols.detect { |c| c.to_s.starts_with?("v_pct_") }
+      only_cols += [:cpu_ready_delta_summation, :cpu_wait_delta_summation, :cpu_used_delta_summation]
     end
+    only_cols += [:derived_storage_total, :derived_storage_free] if only_cols.include?(:v_derived_storage_used)
+    only_cols += Metric::BASE_COLS.collect(&:to_sym)
+    only_cols.uniq
   end
 end # class VimPerformanceDaily

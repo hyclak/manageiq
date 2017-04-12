@@ -10,6 +10,8 @@ class ManageIQ::Providers::Microsoft::InfraManager < ManageIQ::Providers::InfraM
 
   include_concern "Powershell"
 
+  supports :provisioning
+
   def self.ems_type
     @ems_type ||= "scvmm".freeze
   end
@@ -18,20 +20,11 @@ class ManageIQ::Providers::Microsoft::InfraManager < ManageIQ::Providers::InfraM
     @description ||= "Microsoft System Center VMM".freeze
   end
 
-  def self.raw_connect(auth_url, security_protocol, connect_params)
-    # HACK: WinRM depends on the gssapi gem for encryption purposes.
-    # The gssapi code outputs the following warning:
-    #   WARNING: Could not load IOV methods. Check your GSSAPI C library for an update
-    #   WARNING: Could not load AEAD methods. Check your GSSAPI C library for an update
-    # This warning is considered benign and can be ignored.
-    # Please note - the webmock gem depends on gssapi too and prints out the
-    # above warning when rspec tests are run.
+  def self.raw_connect(connect_params)
+    require 'winrm'
 
-    silence_warnings { require 'winrm' }
-
-    winrm = WinRM::WinRMWebService.new(auth_url, security_protocol.to_sym, connect_params)
-    winrm.set_timeout(1800)
-    winrm
+    connect_params[:operation_timeout] = 1800
+    WinRM::Connection.new(connect_params)
   end
 
   def self.auth_url(hostname, port = nil)
@@ -41,16 +34,16 @@ class ManageIQ::Providers::Microsoft::InfraManager < ManageIQ::Providers::InfraM
   def connect(options = {})
     raise "no credentials defined" if self.missing_credentials?(options[:auth_type])
 
-    hostname       = options[:hostname] || self.hostname
-    auth_url       = self.class.auth_url(hostname, port)
-    connect_params = build_connect_params(options)
+    hostname           = options[:hostname] || self.hostname
+    options[:endpoint] = self.class.auth_url(hostname, port)
+    connect_params     = build_connect_params(options)
 
-    self.class.raw_connect(auth_url, security_protocol, connect_params)
+    self.class.raw_connect(connect_params)
   end
 
   def verify_credentials(_auth_type = nil, options = {})
-    silence_warnings { require 'winrm' }
-    silence_warnings { require 'gssapi' } # Version 1.0.0 of the gssapi gem emits warnings
+    require 'winrm'
+    require 'gssapi' # A winrm dependency
 
     raise MiqException::MiqHostError, "No credentials defined" if self.missing_credentials?(options[:auth_type])
 
@@ -61,7 +54,7 @@ class ManageIQ::Providers::Microsoft::InfraManager < ManageIQ::Providers::InfraM
       "Remote error message: #{e.message}"
     rescue GSSAPI::GssApiError
       raise MiqException::MiqHostError, "Unable to reach any KDC in realm #{realm}"
-    rescue StandardError => e
+    rescue => e
       raise MiqException::MiqHostError, "Unable to connect: #{e.message}"
     end
 
@@ -101,9 +94,7 @@ class ManageIQ::Providers::Microsoft::InfraManager < ManageIQ::Providers::InfraM
   end
 
   def vm_destroy(vm, _options = {})
-    if vm.power_state == "on"
-      vm_stop(vm)
-    end
+    vm_stop(vm)
     execute_power_operation("Remove", vm.uid_ems)
   end
 
@@ -145,8 +136,9 @@ class ManageIQ::Providers::Microsoft::InfraManager < ManageIQ::Providers::InfraM
 
   def build_connect_params(options)
     connect_params  = {
-      :user         => options[:user] || authentication_userid(options[:auth_type]),
-      :pass         => options[:pass] || authentication_password(options[:auth_type]),
+      :user         => options[:user]     || authentication_userid(options[:auth_type]),
+      :password     => options[:password] || authentication_password(options[:auth_type]),
+      :endpoint     => options[:endpoint],
       :disable_sspi => true
     }
 

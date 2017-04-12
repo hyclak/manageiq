@@ -21,6 +21,8 @@ module MiqAeException
   class MethodNotFound < MiqAeEngineError; end
   class MethodParmMissing < MiqAeEngineError; end
   class WorkspaceNotFound < MiqAeEngineError; end
+  class AttributeNotFound < MiqAeEngineError; end
+  class UntaggableModel < MiqAeEngineError; end
 
   class MiqAeDatastoreError < Error; end
   class DomainNotFound < MiqAeDatastoreError; end
@@ -35,6 +37,8 @@ module MiqAeException
   class DirectoryExists < MiqAeDatastoreError; end
   class FileExists < MiqAeDatastoreError; end
   class DomainNotAccessible < MiqAeDatastoreError; end
+  class CannotLock < MiqAeDatastoreError; end
+  class CannotUnlock < MiqAeDatastoreError; end
 end
 
 module MiqException

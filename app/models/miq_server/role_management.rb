@@ -1,7 +1,7 @@
 module MiqServer::RoleManagement
   extend ActiveSupport::Concern
 
-  ROLES_NEEDING_APACHE = %w(user_interface web_services).freeze
+  ROLES_NEEDING_APACHE = %w(user_interface web_services websocket embedded_ansible).freeze
 
   included do
     has_many :assigned_server_roles, :dependent => :destroy
@@ -44,12 +44,13 @@ module MiqServer::RoleManagement
 
   def set_active_role_flags
     self.has_active_userinterface = self.has_active_role?("user_interface")
+    self.has_active_websocket     = self.has_active_role?("websocket")
     self.has_active_webservices   = self.has_active_role?("web_services")
     save
   end
 
   def set_assigned_roles
-    self.role = VMDB::Config.new("vmdb").config[:server][:role]
+    self.role = ::Settings.server.role
   end
 
   def deactivate_all_roles
@@ -180,7 +181,7 @@ module MiqServer::RoleManagement
 
   def licensed_roles
     roles = ServerRole.all.to_a
-    unless VMDB::Config.new("vmdb").config[:product][:storage]
+    unless ::Settings.product.storage
       roles.delete_if { |r| r.name.starts_with?('storage_') }
       roles.delete_if { |r| r.name == 'vmdb_storage_bridge' }
     end
@@ -223,8 +224,8 @@ module MiqServer::RoleManagement
       if r.unlimited?
         current[role_name][:inactive].each { |s, _p| s.activate_roles(role_name) }
       else
-        active   = current[role_name][:active].sort   { |a, b| b.last <=> a.last }
-        inactive = current[role_name][:inactive].sort { |a, b| a.last <=> b.last }
+        active   = current[role_name][:active].sort_by(&:last).reverse
+        inactive = current[role_name][:inactive].sort_by(&:last)
         delta    = r.max_concurrent - active.length
         if delta < 0
           delta.abs.times do
@@ -234,7 +235,7 @@ module MiqServer::RoleManagement
               inactive << [s, p]
             end
           end
-          inactive = inactive.sort { |a, b| a.last <=> b.last } # Sort again, since we may have added to array
+          inactive = inactive.sort_by(&:last) # Sort again, since we may have added to array
         elsif delta > 0
           delta.times do
             if inactive.length > 0
@@ -243,7 +244,7 @@ module MiqServer::RoleManagement
               active << [s, p]
             end
           end
-          active = active.sort { |a, b| b.last <=> a.last } # Sort again, since we may have added to array
+          active = active.sort_by(&:last).reverse # Sort again, since we may have added to array
         end
 
         active.each do |s, p|

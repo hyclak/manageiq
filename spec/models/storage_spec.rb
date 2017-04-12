@@ -1,33 +1,21 @@
 describe Storage do
   it "#scan_watchdog_interval" do
-    allow(Storage).to receive_messages(:vmdb_storage_config => {})
-    expect(Storage.scan_watchdog_interval).to eq(Storage::DEFAULT_WATCHDOG_INTERVAL)
-
-    allow(Storage).to receive_messages(:vmdb_storage_config => {'watchdog_interval' => '5.minutes'})
+    stub_settings(:storage => {'watchdog_interval' => '5.minutes'})
     expect(Storage.scan_watchdog_interval).to eq(5.minutes)
   end
 
   it "#max_parallel_storage_scans_per_host" do
-    allow(Storage).to receive_messages(:vmdb_storage_config => {})
-    expect(Storage.max_parallel_storage_scans_per_host).to eq(Storage::DEFAULT_MAX_PARALLEL_SCANS_PER_HOST)
-
-    allow(Storage).to receive_messages(:vmdb_storage_config => {'max_parallel_scans_per_host' => 3})
+    stub_settings(:storage => {'max_parallel_scans_per_host' => 3})
     expect(Storage.max_parallel_storage_scans_per_host).to eq(3)
   end
 
   it "#max_qitems_per_scan_request" do
-    allow(Storage).to receive_messages(:vmdb_storage_config => {})
-    expect(Storage.max_qitems_per_scan_request).to eq(Storage::DEFAULT_MAX_QITEMS_PER_SCAN_REQUEST)
-
-    allow(Storage).to receive_messages(:vmdb_storage_config => {'max_qitems_per_scan_request' => 3})
+    stub_settings(:storage => {'max_qitems_per_scan_request' => 3})
     expect(Storage.max_qitems_per_scan_request).to eq(3)
   end
 
   it "#scan_collection_timeout" do
-    allow(Storage).to receive_messages(:vmdb_storage_config => {})
-    expect(Storage.scan_collection_timeout).to be_nil
-
-    allow(Storage).to receive_messages(:vmdb_storage_config => {:collection => {:timeout => 3}})
+    stub_settings(:storage => {:collection => {:timeout => 3}})
     expect(Storage.scan_collection_timeout).to eq(3)
   end
 
@@ -38,12 +26,6 @@ describe Storage do
     Timecop.travel(start) do
       expect(Storage.scan_watchdog_deliver_on - (start + scan_watchdog_interval)).to be_within(0.001).of(0.0)
     end
-  end
-
-  it "#vmdb_storage_config" do
-    config = {:foo => 1, :bar => 2}
-    stub_server_configuration(config, "storage")
-    expect(Storage.vmdb_storage_config).to eq(config)
   end
 
   it "#scan_complete?" do
@@ -415,15 +397,15 @@ describe Storage do
       @storage =  FactoryGirl.create(:storage)
     end
 
-    it "returns true for VMware Storage" do
+    it "returns true for VMware Storage when queried whether it supports smartstate analysis" do
       FactoryGirl.create(:host_vmware,
                          :ext_management_system => FactoryGirl.create(:ems_vmware),
                          :storages              => [@storage])
-      expect(@storage.is_available?(:smartstate_analysis)).to eq(true)
+      expect(@storage.supports_smartstate_analysis?).to eq(true)
     end
 
-    it "returns false for non-vmware Storage" do
-      expect(@storage.is_available?(:smartstate_analysis)).to_not eq(true)
+    it "returns false for non-vmware Storage when queried whether it supports smartstate analysis" do
+      expect(@storage.supports_smartstate_analysis?).to_not eq(true)
     end
   end
 
@@ -432,11 +414,11 @@ describe Storage do
       @storage =  FactoryGirl.create(:storage)
     end
 
-    it "when the storage supports smarstate analysis,  returns false" do
+    it "returns false when queried whether the storage supports smarstate analysis" do
       expect(Storage.batch_operation_supported?(:smartstate_analysis, [@storage.id])).to eq(false)
     end
 
-    it "when the storage perform smartstate analysis, returns true" do
+    it "returns true when queried whether the storage supports smarstate analysis" do
       FactoryGirl.create(:host_vmware,
                          :ext_management_system => FactoryGirl.create(:ems_vmware),
                          :storages              => [@storage])
@@ -481,15 +463,15 @@ describe Storage do
       @storage = FactoryGirl.create(:storage)
     end
 
-    it "returns true for VMware Storage" do
+    it "returns true for VMware Storage when queried whether it supports smartstate analysis" do
       FactoryGirl.create(:host_vmware,
                          :ext_management_system => FactoryGirl.create(:ems_vmware),
                          :storages              => [@storage])
-      expect(@storage.is_available?(:smartstate_analysis)).to eq(true)
+      expect(@storage.supports_smartstate_analysis?).to eq(true)
     end
 
-    it "returns false for non-vmware Storage" do
-      expect(@storage.is_available?(:smartstate_analysis)).to_not eq(true)
+    it "returns false for non-vmware Storage when queried whether it supports smartstate analysis" do
+      expect(@storage.supports_smartstate_analysis?).to_not eq(true)
     end
   end
   describe "#smartstate_analysis_count_for_host_id" do
@@ -503,6 +485,61 @@ describe Storage do
       storage.scan_queue_item(3)
 
       expect(storage.smartstate_analysis_count_for_host_id(host.id)).to eq(2)
+    end
+  end
+
+  context '#storage_clusters' do
+    it 'returns only parents' do
+      # A storage mounted on different VCs will have multiple parents
+      storage          = FactoryGirl.create(:storage)
+      storage_cluster1 = FactoryGirl.create(:storage_cluster, :name => 'test_storage_cluster1')
+      storage_cluster2 = FactoryGirl.create(:storage_cluster, :name => 'test_storage_cluster2')
+      _storage_cluster = FactoryGirl.create(:storage_cluster, :name => 'test_storage_cluster3')
+      storage_cluster1.add_child(storage)
+      storage_cluster2.add_child(storage)
+      expect(storage.storage_clusters).to match_array([storage_cluster1, storage_cluster2])
+    end
+
+    it 'returns parents of type storage_cluster only' do
+      # A storage mounted on different VCs will have multiple parents
+      storage          = FactoryGirl.create(:storage)
+      ems_folder       = FactoryGirl.create(:ems_folder,      :name => 'test_folder')
+      storage_cluster1 = FactoryGirl.create(:storage_cluster, :name => 'test_storage_cluster1')
+      storage_cluster2 = FactoryGirl.create(:storage_cluster, :name => 'test_storage_cluster2')
+      ems_folder.add_child(storage)
+      storage_cluster1.add_child(storage)
+      storage_cluster2.add_child(storage)
+      expect(storage.storage_clusters).to match_array([storage_cluster1, storage_cluster2])
+      expect(storage.parents).to match_array([ems_folder, storage_cluster1, storage_cluster2])
+    end
+
+    it 'return [] if not in any storage cluster' do
+      storage = FactoryGirl.create(:storage)
+      expect(storage.storage_clusters).to match_array([])
+    end
+  end
+
+  context "#tenant_identity" do
+    let(:admin)    { FactoryGirl.create(:user_with_group, :userid => "admin") }
+    let(:tenant)   { FactoryGirl.create(:tenant) }
+    let(:ems)      { FactoryGirl.create(:ext_management_system, :tenant => tenant) }
+    let(:host)     { FactoryGirl.create(:host, :ext_management_system => ems) }
+
+    before         { admin }
+    it "has tenant from provider" do
+      storage = FactoryGirl.create(:storage, :hosts => [host])
+
+      expect(storage.tenant_identity).to                eq(admin)
+      expect(storage.tenant_identity.current_group).to  eq(ems.tenant.default_miq_group)
+      expect(storage.tenant_identity.current_tenant).to eq(ems.tenant)
+    end
+
+    it "without a provider, has tenant from root tenant" do
+      storage = FactoryGirl.create(:storage)
+
+      expect(storage.tenant_identity).to                eq(admin)
+      expect(storage.tenant_identity.current_group).to  eq(Tenant.root_tenant.default_miq_group)
+      expect(storage.tenant_identity.current_tenant).to eq(Tenant.root_tenant)
     end
   end
 end

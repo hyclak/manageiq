@@ -42,7 +42,7 @@ describe MiqQueue do
     end
 
     it "sets last_exception on raised Exception" do
-      allow(MiqServer).to receive(:foobar).and_raise(Exception)
+      allow(MiqServer).to receive(:foobar).and_raise(StandardError)
       msg = FactoryGirl.create(:miq_queue, :state => MiqQueue::STATE_DEQUEUE, :handler => @miq_server, :class_name => 'MiqServer', :method_name => 'foobar')
       status, message, result = msg.deliver
       expect(status).to eq(MiqQueue::STATUS_ERROR)
@@ -209,44 +209,6 @@ describe MiqQueue do
       expect(MiqQueue.lower_priority(MiqQueue::MAX_PRIORITY,  MiqQueue::MIN_PRIORITY)).to eq(MiqQueue::MIN_PRIORITY)
       expect(MiqQueue.lower_priority?(MiqQueue::MIN_PRIORITY,  MiqQueue::MAX_PRIORITY)).to be_truthy
       expect(MiqQueue.lower_priority?(MiqQueue::MAX_PRIORITY,  MiqQueue::MIN_PRIORITY)).to be_falsey
-    end
-  end
-
-  context "miq_queue with messages" do
-    before do
-      _, @miq_server, @zone = EvmSpecHelper.create_guid_miq_server_zone
-
-      @t1 = Time.parse("Wed Apr 20 00:15:00 UTC 2011")
-      @t2 = Time.parse("Mon Apr 25 10:30:15 UTC 2011")
-      @t3 = Time.parse("Thu Apr 28 20:45:30 UTC 2011")
-
-      Timecop.freeze(Time.parse("Thu Apr 30 12:45:00 UTC 2011"))
-
-      @msg = []
-      @msg << FactoryGirl.create(:miq_queue, :zone => @zone.name, :state => MiqQueue::STATE_DEQUEUE,  :role => "role1", :priority => 20, :created_on => @t1)
-      @msg << FactoryGirl.create(:miq_queue, :zone => @zone.name, :state => MiqQueue::STATE_DEQUEUE,  :role => "role1", :priority => 20, :created_on => @t1)
-      @msg << FactoryGirl.create(:miq_queue, :zone => @zone.name, :state => MiqQueue::STATE_DEQUEUE,  :role => "role2", :priority => 20, :created_on => @t1)
-      @msg << FactoryGirl.create(:miq_queue, :zone => @zone.name, :state => MiqQueue::STATE_READY,    :role => "role1", :priority => 20, :created_on => @t1)
-      @msg << FactoryGirl.create(:miq_queue, :zone => @zone.name, :state => MiqQueue::STATE_READY,    :role => "role1", :priority => 20, :created_on => @t2)
-      @msg << FactoryGirl.create(:miq_queue, :zone => @zone.name, :state => MiqQueue::STATE_READY,    :role => "role1", :priority => 20, :created_on => @t3)
-      @msg << FactoryGirl.create(:miq_queue, :zone => "east",     :state => MiqQueue::STATE_DEQUEUE,  :role => "role1", :priority => 20, :created_on => @t3)
-      @msg << FactoryGirl.create(:miq_queue, :zone => "west",     :state => MiqQueue::STATE_READY,    :role => "role3", :priority => 20, :created_on => @t3)
-      @msg << FactoryGirl.create(:miq_queue, :zone => @zone.name, :state => MiqQueue::STATE_ERROR,    :role => "role1", :priority => 20, :created_on => @t2)
-      @msg << FactoryGirl.create(:miq_queue, :zone => @zone.name, :state => MiqQueue::STATE_WARN,     :role => "role3", :priority => 20, :created_on => @t2)
-      @msg << FactoryGirl.create(:miq_queue, :zone => "east",     :state => MiqQueue::STATE_DEQUEUE,  :role => "role1", :priority => 20, :created_on => Time.now.utc)
-      @msg << FactoryGirl.create(:miq_queue, :zone => "west",     :state => MiqQueue::STATE_ERROR,    :role => "role2", :priority => 20, :created_on => Time.now.utc)
-    end
-
-    after do
-      Timecop.return
-    end
-
-    it "should calculate wait times" do
-      cor = MiqQueue.wait_times_by_role
-      expect(cor).to eq({
-        "role1" => {:next => (Time.now - @t3), :last => (Time.now - @t1)},
-        "role3" => {:next => (Time.now - @t3), :last => (Time.now - @t3)}
-      })
     end
   end
 
@@ -498,6 +460,12 @@ describe MiqQueue do
       expect(MiqQueue.get).to have_attributes(:args => [3, 4], :task_id => 'fun_task')
       expect(MiqQueue.get).to eq(nil)
     end
+
+    it "does not allow objects on the queue" do
+      expect do
+        MiqQueue.put(:class_name => 'MyClass', :method_name => 'method1', :args => [MiqServer.first])
+      end.to raise_error(ArgumentError)
+    end
   end
 
   describe ".unqueue" do
@@ -594,5 +562,16 @@ describe MiqQueue do
                                   :not_expanded => "notexp",
                                   :expanded     => [nil, "exp"]
                                 )
+  end
+
+  context "#delivered" do
+    it "destroys a stale object" do
+      q = MiqQueue.create!(:state => 'ready')
+      MiqQueue.find(q.id).tap { |q2| q2.state = 'dequeue' }.save # update_attributes doesn't expose the issue
+
+      q.delivered('warn', nil, nil)
+
+      expect(MiqQueue.where(:id => q.id).count).to eq(0)
+    end
   end
 end

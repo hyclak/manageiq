@@ -1,6 +1,9 @@
 class ContainerReplicator < ApplicationRecord
+  include SupportsFeatureMixin
+  include ComplianceMixin
   include CustomAttributeMixin
-  include ReportableMixin
+  include MiqPolicyMixin
+  include TenantIdentityMixin
 
   belongs_to  :ext_management_system, :foreign_key => "ems_id"
   has_many :container_groups
@@ -24,7 +27,7 @@ class ContainerReplicator < ApplicationRecord
 
   def event_where_clause(assoc = :ems_events)
     case assoc.to_sym
-    when :ems_events
+    when :ems_events, :event_streams
       # TODO: improve relationship using the id
       ["container_namespace = ? AND container_replicator_name = ? AND #{events_table_name(assoc)}.ems_id = ?",
        container_project.name, name, ems_id]

@@ -10,7 +10,7 @@
 # - Delete a group by action              /api/groups/:id                       action "delete"
 # - Delete multiple groups                /api/groups                           action "delete"
 #
-describe ApiController do
+describe "Groups API" do
   let(:expected_attributes) { %w(id description group_type tenant_id) }
 
   let(:sample_group1) { {:description => "sample_group_1"} }
@@ -27,7 +27,7 @@ describe ApiController do
 
       run_post(groups_url, sample_group1)
 
-      expect_request_forbidden
+      expect(response).to have_http_status(:forbidden)
     end
 
     it "rejects group creation with id specified" do
@@ -43,7 +43,7 @@ describe ApiController do
 
       run_post(groups_url, "description" => "sample group", "role" => {"id" => 999_999})
 
-      expect_resource_not_found
+      expect(response).to have_http_status(:not_found)
     end
 
     it "rejects group creation with invalid tenant specified" do
@@ -51,7 +51,7 @@ describe ApiController do
 
       run_post(groups_url, "description" => "sample group", "tenant" => {"id" => 999_999})
 
-      expect_resource_not_found
+      expect(response).to have_http_status(:not_found)
     end
 
     it "rejects group creation with invalid filters specified" do
@@ -67,10 +67,10 @@ describe ApiController do
 
       run_post(groups_url, sample_group1)
 
-      expect_request_success
+      expect(response).to have_http_status(:ok)
       expect_result_resources_to_include_keys("results", expected_attributes)
 
-      group_id = response_hash["results"].first["id"]
+      group_id = response.parsed_body["results"].first["id"]
       expect(MiqGroup.exists?(group_id)).to be_truthy
     end
 
@@ -79,10 +79,10 @@ describe ApiController do
 
       run_post(groups_url, gen_request(:create, sample_group1))
 
-      expect_request_success
+      expect(response).to have_http_status(:ok)
       expect_result_resources_to_include_keys("results", expected_attributes)
 
-      group_id = response_hash["results"].first["id"]
+      group_id = response.parsed_body["results"].first["id"]
       expect(MiqGroup.exists?(group_id)).to be_truthy
     end
 
@@ -94,16 +94,17 @@ describe ApiController do
                                        "role"        => {"name" => role3.name},
                                        "tenant"      => {"href" => tenants_url(tenant3.id)}))
 
-      expect_request_success
+      expect(response).to have_http_status(:ok)
       expect_result_resources_to_include_keys("results", expected_attributes)
 
-      result = response_hash["results"].first
-      group_id = result["id"]
-      expect(MiqGroup.exists?(group_id)).to be_truthy
+      result = response.parsed_body["results"].first
+      created_group = MiqGroup.find_by(:id => result["id"])
+
+      expect(created_group).to be_present
+      expect(created_group.entitlement.miq_user_role).to eq(role3)
 
       expect_result_to_match_hash(result,
                                   "description"      => "sample_group3",
-                                  "miq_user_role_id" => role3.id,
                                   "tenant_id"        => tenant3.id)
     end
 
@@ -118,14 +119,15 @@ describe ApiController do
       }
       run_post(groups_url, gen_request(:create, sample_group))
 
-      expect_request_success
+      expect(response).to have_http_status(:ok)
       expect_result_resources_to_include_keys("results", expected_attributes)
 
-      res = response_hash["results"].first
-      group_id = res["id"]
-      expect(MiqGroup.exists?(group_id)).to be_truthy
-
-      expect_result_to_match_hash(res, sample_group)
+      group_id = response.parsed_body["results"][0]["id"]
+      expected_group = MiqGroup.find_by(:id => group_id)
+      expect(expected_group).to be_present
+      expect(expected_group.description).to eq(sample_group["description"])
+      expect(expected_group.entitlement).to be_present
+      expect(expected_group.entitlement.filters).to eq(sample_group["filters"])
     end
 
     it "supports multiple group creation" do
@@ -133,10 +135,10 @@ describe ApiController do
 
       run_post(groups_url, gen_request(:create, [sample_group1, sample_group2]))
 
-      expect_request_success
+      expect(response).to have_http_status(:ok)
       expect_result_resources_to_include_keys("results", expected_attributes)
 
-      results = response_hash["results"]
+      results = response.parsed_body["results"]
       group1_id = results.first["id"]
       group2_id = results.second["id"]
       expect(MiqGroup.exists?(group1_id)).to be_truthy
@@ -151,7 +153,7 @@ describe ApiController do
                                        "description" => "updated_group",
                                        "href"        => groups_url(group1.id)))
 
-      expect_request_forbidden
+      expect(response).to have_http_status(:forbidden)
     end
 
     it "rejects group edits for invalid resources" do
@@ -159,7 +161,7 @@ describe ApiController do
 
       run_post(groups_url(999_999), gen_request(:edit, "description" => "updated_group"))
 
-      expect_resource_not_found
+      expect(response).to have_http_status(:not_found)
     end
 
     it "supports single group edit" do
@@ -194,7 +196,7 @@ describe ApiController do
 
       run_post(groups_url, gen_request(:delete, "description" => "group_description", "href" => groups_url(100)))
 
-      expect_request_forbidden
+      expect(response).to have_http_status(:forbidden)
     end
 
     it "rejects group deletion without appropriate role" do
@@ -202,7 +204,7 @@ describe ApiController do
 
       run_delete(groups_url(100))
 
-      expect_request_forbidden
+      expect(response).to have_http_status(:forbidden)
     end
 
     it "rejects group deletes for invalid groups" do
@@ -210,7 +212,15 @@ describe ApiController do
 
       run_delete(groups_url(999_999))
 
-      expect_resource_not_found
+      expect(response).to have_http_status(:not_found)
+    end
+
+    it 'rejects a request to remove a default tenant group' do
+      api_basic_authorize collection_action_identifier(:groups, :delete)
+
+      run_delete(groups_url(tenant3.default_miq_group_id))
+
+      expect(response).to have_http_status(:forbidden)
     end
 
     it "supports single group delete" do
@@ -219,7 +229,7 @@ describe ApiController do
       g1_id = group1.id
       run_delete(groups_url(g1_id))
 
-      expect_request_success_with_no_content
+      expect(response).to have_http_status(:no_content)
       expect(MiqGroup.exists?(g1_id)).to be_falsey
     end
 
@@ -247,6 +257,63 @@ describe ApiController do
       expect_result_resources_to_include_hrefs("results", [g1_url, g2_url])
       expect(MiqGroup.exists?(g1_id)).to be_falsey
       expect(MiqGroup.exists?(g2_id)).to be_falsey
+    end
+  end
+
+  describe "tags subcollection" do
+    it "can list a group's tags" do
+      group = FactoryGirl.create(:miq_group)
+      FactoryGirl.create(:classification_department_with_tags)
+      Classification.classify(group, "department", "finance")
+      api_basic_authorize
+
+      run_get("#{groups_url(group.id)}/tags")
+
+      expect(response.parsed_body).to include("subcount" => 1)
+      expect(response).to have_http_status(:ok)
+    end
+
+    it "can assign a tag to a group" do
+      group = FactoryGirl.create(:miq_group)
+      FactoryGirl.create(:classification_department_with_tags)
+      api_basic_authorize(subcollection_action_identifier(:groups, :tags, :assign))
+
+      run_post("#{groups_url(group.id)}/tags", :action => "assign", :category => "department", :name => "finance")
+
+      expected = {
+        "results" => [
+          a_hash_including(
+            "success"      => true,
+            "message"      => a_string_matching(/assigning tag/i),
+            "tag_category" => "department",
+            "tag_name"     => "finance"
+          )
+        ]
+      }
+      expect(response.parsed_body).to include(expected)
+      expect(response).to have_http_status(:ok)
+    end
+
+    it "can unassign a tag from a group" do
+      group = FactoryGirl.create(:miq_group)
+      FactoryGirl.create(:classification_department_with_tags)
+      Classification.classify(group, "department", "finance")
+      api_basic_authorize(subcollection_action_identifier(:groups, :tags, :unassign))
+
+      run_post("#{groups_url(group.id)}/tags", :action => "unassign", :category => "department", :name => "finance")
+
+      expected = {
+        "results" => [
+          a_hash_including(
+            "success"      => true,
+            "message"      => a_string_matching(/unassigning tag/i),
+            "tag_category" => "department",
+            "tag_name"     => "finance"
+          )
+        ]
+      }
+      expect(response.parsed_body).to include(expected)
+      expect(response).to have_http_status(:ok)
     end
   end
 end

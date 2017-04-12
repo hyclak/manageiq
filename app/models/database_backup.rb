@@ -12,9 +12,16 @@ class DatabaseBackup < ApplicationRecord
     create.backup(options)
   end
 
+  def self.gc(options)
+    create.gc(options)
+  end
+
   def backup(options)
     # TODO: Create a real exception out of this
-    raise "Missing or Invalid task: #{options[:task_id]}, depot id: #{options[:file_depot_id]}" unless options[:task_id].kind_of?(Integer) && options[:file_depot_id].kind_of?(Integer)
+    unless options[:task_id].kind_of?(Integer) && options[:file_depot_id].kind_of?(Integer)
+      raise _("Missing or Invalid task: %{task_id}, depot id: %{depot_id}") % {:task_id  => options[:task_id],
+                                                                               :depot_id => options[:file_depot_id]}
+    end
 
     task = MiqTask.find(options[:task_id])
     task.update_status("Active", "Ok", "Starting DB Backup for Region: #{region_name}")
@@ -24,7 +31,7 @@ class DatabaseBackup < ApplicationRecord
 
     options[:userid] ||= "system"
 
-    depot = FileDepot.find_by_id(options[:file_depot_id])
+    depot = FileDepot.find_by(:id => options[:file_depot_id])
     _backup(:uri => depot.uri, :username => depot.authentication_userid, :password => depot.authentication_password, :remote_file_name => backup_file_name)
 
     if @sch && @sch.adhoc == true
@@ -44,21 +51,19 @@ class DatabaseBackup < ApplicationRecord
     EvmDatabaseOps.backup(current_db_opts, connect_opts)
   end
 
-  def self.gc(options)
-    raise "Missing or Invalid task: #{options[:task_id]}" unless options[:task_id].kind_of?(Integer)
+  def gc(options)
+    unless options[:task_id].kind_of?(Integer)
+      raise _("Missing or Invalid task: %{task_id}") % {:task_id => options[:task_id]}
+    end
 
     task = MiqTask.find(options[:task_id])
     task.update_status("Active", "Ok", "Starting DB GC for Region: #{region_name}")
 
     options[:userid] ||= "system"
 
-    _gc(options)
+    EvmDatabaseOps.gc(current_db_opts.merge(options))
     task.update_status("Finished", "Ok", "Completed DB GC for Region: #{region_name}.")
     task.id
-  end
-
-  def self._gc(options)
-    EvmDatabaseOps.gc(current_db_opts.merge(options))
   end
 
   def restore(_options)

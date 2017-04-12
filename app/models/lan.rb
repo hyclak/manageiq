@@ -9,5 +9,5 @@ class Lan < ApplicationRecord
   # TODO: Should this go through switch and not guest devices?
   has_many :hosts,             :through => :guest_devices
 
-  include ReportableMixin
+  acts_as_miq_taggable
 end

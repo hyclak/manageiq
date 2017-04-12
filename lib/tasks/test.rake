@@ -28,12 +28,16 @@ namespace :test do
 
   task :setup_db => :initialize do
     puts "** Preparing database"
-    Rake::Task['evm:db:reset'].invoke
+    if !defined?(ENGINE_ROOT)
+      Rake::Task['evm:db:reset'].invoke
+    else
+      Rake::Task['app:evm:db:reset'].invoke
+    end
   end
 end
 
 task :default => 'test:vmdb'
 
-desc "Run vmdb specs"
+desc "Alias of 'test:vmdb'"
 task :test => 'test:vmdb' # TODO: Run all test suites?
 end # ifdef

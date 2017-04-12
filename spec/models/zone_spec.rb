@@ -38,7 +38,7 @@ describe Zone do
 
   context "when dealing with clouds" do
     before :each do
-      guid, server, @zone = EvmSpecHelper.create_guid_miq_server_zone
+      _, _, @zone = EvmSpecHelper.create_guid_miq_server_zone
     end
 
     it "returns the set of ems_clouds" do
@@ -60,28 +60,33 @@ describe Zone do
 
       expect(@zone.availability_zones).to match_array(azs)
     end
+  end
 
-    it "returns the set of vms_without_availability_zones" do
-      openstacks = [FactoryGirl.create(:ems_openstack, :zone => @zone),
-                    FactoryGirl.create(:ems_openstack, :zone => @zone)]
-      azs        = [FactoryGirl.create(:availability_zone, :ems_id => openstacks[0].id),
-                    FactoryGirl.create(:availability_zone, :ems_id => openstacks[1].id)]
-      vms_in_az = []
-      vms_not_in_az = []
-      2.times do
-        vm = FactoryGirl.create(:vm_openstack)
-        azs[0].vms << vm
-        vms_in_az << vm
-      end
-      2.times do
-        vm = FactoryGirl.create(:vm_openstack)
-        azs[1].vms << vm
-        vms_in_az << vm
-      end
-      3.times { vms_not_in_az << FactoryGirl.create(:vm_openstack, :ems_id => openstacks[0].id) }
-      3.times { vms_not_in_az << FactoryGirl.create(:vm_openstack, :ems_id => openstacks[1].id) }
+  describe "#clustered_hosts" do
+    let(:zone) { FactoryGirl.create(:zone) }
+    let(:ems) { FactoryGirl.create(:ems_vmware, :zone => zone) }
+    let(:cluster) { FactoryGirl.create(:ems_cluster, :ext_management_system => ems)}
+    let(:host_with_cluster) { FactoryGirl.create(:host, :ext_management_system => ems, :ems_cluster => cluster) }
+    let(:host) { FactoryGirl.create(:host, :ext_management_system => ems) }
 
-      expect(@zone.vms_without_availability_zone).to match_array(vms_not_in_az)
+    it "returns clustered hosts" do
+      host ; host_with_cluster
+
+      expect(zone.clustered_hosts).to eq([host_with_cluster])
+    end
+  end
+
+  describe "#non_clustered_hosts" do
+    let(:zone) { FactoryGirl.create(:zone) }
+    let(:ems) { FactoryGirl.create(:ems_vmware, :zone => zone) }
+    let(:cluster) { FactoryGirl.create(:ems_cluster, :ext_management_system => ems)}
+    let(:host_with_cluster) { FactoryGirl.create(:host, :ext_management_system => ems, :ems_cluster => cluster) }
+    let(:host) { FactoryGirl.create(:host, :ext_management_system => ems) }
+
+    it "returns clustered hosts" do
+      host ; host_with_cluster
+
+      expect(zone.non_clustered_hosts).to eq([host])
     end
   end
 
@@ -175,5 +180,44 @@ describe Zone do
 
   it "#settings should always be a hash" do
     expect(described_class.new.settings).to be_kind_of(Hash)
+  end
+
+  context "ConfigurationManagementMixin" do
+    let(:zone) { FactoryGirl.create(:zone) }
+
+    describe "#settings_for_resource" do
+      it "returns the resource's settings" do
+        settings = {:some_thing => [1, 2, 3]}
+        stub_settings(settings)
+        expect(zone.settings_for_resource.to_hash).to eq(settings)
+      end
+    end
+
+    describe "#add_settings_for_resource" do
+      it "sets the specified settings" do
+        settings = {:some_test_setting => {:setting => 1}}
+        expect(zone).to receive(:reload_all_server_settings)
+
+        zone.add_settings_for_resource(settings)
+
+        expect(Vmdb::Settings.for_resource(zone).some_test_setting.setting).to eq(1)
+      end
+    end
+
+    describe "#reload_all_server_settings" do
+      it "queues #reload_settings for the started servers" do
+        some_other_zone = FactoryGirl.create(:zone)
+        started_server = FactoryGirl.create(:miq_server, :status => "started", :zone => zone)
+        FactoryGirl.create(:miq_server, :status => "started", :zone => some_other_zone)
+        FactoryGirl.create(:miq_server, :status => "stopped", :zone => zone)
+
+        zone.reload_all_server_settings
+
+        expect(MiqQueue.count).to eq(1)
+        message = MiqQueue.first
+        expect(message.instance_id).to eq(started_server.id)
+        expect(message.method_name).to eq("reload_settings")
+      end
+    end
   end
 end

@@ -3,8 +3,6 @@ class TimeProfile < ApplicationRecord
   ALL_HOURS = (0...24).to_a.freeze
   DEFAULT_TZ = "UTC"
 
-  validates_uniqueness_of :description
-
   serialize :profile
   default_value_for :days,  ALL_DAYS
   default_value_for :hours, ALL_HOURS
@@ -95,6 +93,10 @@ class TimeProfile < ApplicationRecord
     days.sort == ALL_DAYS && hours.sort == ALL_HOURS
   end
 
+  def default?
+    entire_tz? && tz_or_default == DEFAULT_TZ
+  end
+
   def rebuild_daily_metrics
     oldest_hourly = MetricRollup.select(:timestamp).where(:capture_interval_name => "hourly").order(:timestamp).first
     destroy_metric_rollups
@@ -183,7 +185,10 @@ class TimeProfile < ApplicationRecord
     TimeProfile.rollup_daily_metrics.detect { |tp| tp.match_user_tz?(user_id, user_tz) }
   end
 
+  # @param tz [nil|TimeProfile|TimeZone] (default timezone "UTC")
+  # @return [TimeProfile] time profile that uses this time zone
   def self.default_time_profile(tz = DEFAULT_TZ)
+    return tz if tz.kind_of?(TimeProfile)
     tz ||= DEFAULT_TZ
     rollup_daily_metrics.find_all_with_entire_tz.detect { |tp| tp.tz_or_default == tz }
   end

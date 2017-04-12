@@ -2,7 +2,6 @@ module ManageIQ
   module Providers
     class BaseManager::Refresher
       include Vmdb::Logging
-      DEBUG_TRACE = false
 
       attr_accessor :ems_by_ems_id, :targets_by_ems_id
 
@@ -16,7 +15,7 @@ module ManageIQ
 
       def options
         return @options if defined?(@options)
-        @options = VMDB::Config.new("vmdb").config[:ems_refresh]
+        @options = Settings.ems_refresh
       end
 
       def refresher_options

@@ -3,10 +3,10 @@ class MiqUserRole < ApplicationRecord
   ADMIN_ROLE_NAME       = "EvmRole-administrator"
   DEFAULT_TENANT_ROLE_NAME = "EvmRole-tenant_administrator"
 
-  has_many                :miq_groups, :dependent => :restrict_with_exception
+  has_many                :entitlements, :dependent => :restrict_with_exception
+  has_many                :miq_groups, :through => :entitlements
   has_and_belongs_to_many :miq_product_features, :join_table => :miq_roles_features
 
-  virtual_column :group_count,                      :type => :integer
   virtual_column :vm_restriction,                   :type => :string
 
   validates_presence_of   :name
@@ -16,14 +16,10 @@ class MiqUserRole < ApplicationRecord
 
   default_value_for :read_only, false
 
-  before_destroy { |r| raise "Read only roles cannot be deleted." if r.read_only }
-
-  include ReportableMixin
+  before_destroy { |r| raise _("Read only roles cannot be deleted.") if r.read_only }
 
   FIXTURE_PATH = File.join(FIXTURE_DIR, table_name)
   FIXTURE_YAML = "#{FIXTURE_PATH}.yml"
-
-  SCOPES = [:base, :one, :sub]
 
   RESTRICTIONS = {
     :user          => "Only User Owned",
@@ -31,80 +27,34 @@ class MiqUserRole < ApplicationRecord
   }
 
   def feature_identifiers
+    # TODO: Why can't this be #pluck?
     miq_product_features.collect(&:identifier)
   end
 
-  def allows?(options = {})
-    ident = options[:identifier]
-    raise "No value provided for option :identifier" if ident.nil?
-
-    if ident.kind_of?(MiqProductFeature)
-      feat = ident
-      ident = feat.identifier
-    end
-
-    return true if feature_identifiers.include?(ident)
-
-    return false unless MiqProductFeature.feature_exists?(ident)
-
-    parent = MiqProductFeature.feature_parent(ident)
-    return false if parent.nil?
-
-    self.allows?(:identifier => parent)
-  end
-
-  def self.allows?(role, options = {})
-    role = get_role(role)
-    return false if role.nil?
-    role.allows?(options)
-  end
-
-  def allows_any?(options = {})
-    scope = options[:scope] || :sub
-    raise ":scope must be one of #{SCOPES.inspect}" unless SCOPES.include?(scope)
-
-    idents = options[:identifiers].to_miq_a
-    return false if idents.empty?
-
-    if [:base, :sub].include?(scope)
-      # Check passed in identifiers
-      return true if idents.any? { |i| self.allows?(:identifier => i) }
-    end
-
-    return false if scope == :base
-
-    # Check children of passed in identifiers (scopes :one and :base)
-    idents.any? { |i| self.allows_any_children?(:scope => (scope == :one ? :base : :sub), :identifier => i) }
-  end
-
-  def self.allows_any?(role, options = {})
-    role = get_role(role)
-    return false if role.nil?
-    role.allows_any?(options)
-  end
-
-  def allows_any_children?(options = {})
-    ident = options.delete(:identifier)
-    return false if ident.nil? || !MiqProductFeature.feature_exists?(ident)
-
-    child_idents = MiqProductFeature.feature_children(ident)
-    self.allows_any?(options.merge(:identifiers => child_idents))
-  end
-
-  def self.allows_any_children?(role, options = {})
-    role = get_role(role)
-    return false if role.nil?
-    role.allows_any_children?(options)
-  end
-
-  def self.get_role(role)
-    case role
-    when self, nil
-      role
-    when Integer
-      includes(:miq_product_features).find_by_id(role)
+  # @param identifier [String] Product feature identifier to check if this role allows access to it
+  #   Returns true when requested feature is directly assigned or a descendant of a feature
+  def allows?(identifier:)
+    if feature_identifiers.include?(identifier)
+      true
+    elsif (parent_identifier = MiqProductFeature.feature_parent(identifier))
+      allows?(:identifier => parent_identifier)
     else
-      includes(:miq_product_features).find_by_name(role)
+      false
+    end
+  end
+
+  # @param identifiers [Array] Product feature identifiers to check if this role allows access
+  #   to any of them in the given scope.
+  def allows_any?(identifiers: [])
+    if identifiers.any? { |i| allows?(:identifier => i) }
+      true
+    else
+      child_idents = identifiers.map { |i| MiqProductFeature.feature_children(i) }.flatten
+      if child_idents.present?
+        allows_any?(:identifiers => child_idents)
+      else
+        false
+      end
     end
   end
 
@@ -114,6 +64,14 @@ class MiqUserRole < ApplicationRecord
 
   def limited_self_service?
     (settings || {}).fetch_path(:restrictions, :vms) == :user
+  end
+
+  def disallowed_roles
+    !super_admin_user? && Rbac::Filterer::DISALLOWED_ROLES_FOR_USER_ROLE[name]
+  end
+
+  def self.with_allowed_roles_for(user_or_group)
+    where.not(:name => user_or_group.disallowed_roles)
   end
 
   def self.seed
@@ -129,7 +87,7 @@ class MiqUserRole < ApplicationRecord
       feature_ids = hash.delete(:miq_product_feature_identifiers)
 
       hash[:miq_product_features] = MiqProductFeature.where(:identifier => feature_ids).to_a
-      role = find_by_name(hash[:name]) || new(hash.except(:id))
+      role = find_by(:name => hash[:name]) || new(hash.except(:id))
       new_role = role.new_record?
       hash[:miq_product_features] &&= role.miq_product_features if !new_role && merge_features
       unless role.settings.nil? # Makse sure existing settings are merged in with the new ones.
@@ -140,9 +98,7 @@ class MiqUserRole < ApplicationRecord
     end
   end
 
-  def group_count
-    miq_groups.count
-  end
+  virtual_total :group_count, :miq_groups
 
   def vm_restriction
     vmr = settings && settings.fetch_path(:restrictions, :vms)

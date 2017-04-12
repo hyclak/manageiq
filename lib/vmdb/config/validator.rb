@@ -1,8 +1,17 @@
 module VMDB
   class Config
     class Validator
+      include Vmdb::Logging
+
       def initialize(config)
-        @config = config.respond_to?(:config) ? config.config : config
+        @config =
+          if config.kind_of?(::Config::Options)
+            config.to_hash
+          elsif config.respond_to?(:config)
+            config.config
+          else
+            config
+          end
       end
 
       def valid?
@@ -14,10 +23,12 @@ module VMDB
         valid = true
         @config.each_key do|k|
           if respond_to?(k.to_s, true)
+            _log.debug("Validating #{k}")
             ost = OpenStruct.new(@config[k].stringify_keys)
             section_valid, errors = send(k.to_s, ost)
 
             unless section_valid
+              _log.debug("  Invalid: #{errors}")
               errors.each do|e|
                 key, msg = e
                 @errors[[k, key].join("_")] = msg
@@ -34,19 +45,21 @@ module VMDB
       def webservices(data)
         valid, errors = true, []
 
-        unless ["invoke", "disable"].include?(data.mode)
+        keys = data.each_pair.to_a.transpose.first.to_set
+
+        if keys.include?(:mode) && !["invoke", "disable"].include?(data.mode)
           valid = false; errors << [:mode, "webservices mode, \"#{data.mode}\", invalid. Should be one of: invoke or disable"]
         end
 
-        unless ["ipaddress", "hostname"].include?(data.contactwith)
+        if keys.include?(:contactwith) && !["ipaddress", "hostname"].include?(data.contactwith)
           valid = false; errors << [:contactwith, "webservices contactwith, \"#{data.contactwith}\", invalid. Should be one of: ipaddress or hostname"]
         end
 
-        unless [true, false].include?(data.nameresolution)
+        if keys.include?(:nameresolution) && ![true, false].include?(data.nameresolution)
           valid = false; errors << [:nameresolution, "webservices nameresolution, \"#{data.nameresolution}\", invalid. Should be one of: true or false"]
         end
 
-        unless data.timeout.kind_of?(Fixnum)
+        if keys.include?(:timeout) && !data.timeout.kind_of?(Fixnum)
           valid = false; errors << [:timeout, "timeout, \"#{data.timeout}\", invalid. Should be numeric"]
         end
 
@@ -58,7 +71,9 @@ module VMDB
       def authentication(data)
         valid, errors = true, []
 
-        unless AUTH_TYPES.include?(data.mode)
+        keys = data.each_pair.to_a.transpose.first.to_set
+
+        if keys.include?(:mode) && !AUTH_TYPES.include?(data.mode)
           valid = false
           errors << [:mode, "authentication type, \"#{data.mode}\", invalid. Should be one of: #{AUTH_TYPES.join(", ")}"]
         end
@@ -99,20 +114,26 @@ module VMDB
       def session(data)
         valid, errors = true, []
 
-        unless data.timeout.kind_of?(Fixnum)
-          valid = false; errors << [:timeout, "timeout, \"#{data.timeout}\", invalid. Should be numeric"]
+        keys = data.each_pair.to_a.transpose.first.to_set
+
+        if keys.include?(:timeout)
+          unless data.timeout.kind_of?(Fixnum)
+            valid = false; errors << [:timeout, "timeout, \"#{data.timeout}\", invalid. Should be numeric"]
+          end
+
+          if data.timeout == 0
+            valid = false; errors << [:timeout, "timeout can't be zero"]
+          end
         end
 
-        unless data.interval.kind_of?(Fixnum)
-          valid, key, message = [false, :interval, "interval, \"#{data.interval}\", invalid.  invalid. Should be numeric"]
-        end
+        if keys.include?(:interval)
+          unless data.interval.kind_of?(Fixnum)
+            valid, key, message = [false, :interval, "interval, \"#{data.interval}\", invalid.  invalid. Should be numeric"]
+          end
 
-        if data.timeout == 0
-          valid = false; errors << [:timeout, "timeout can't be zero"]
-        end
-
-        if data.interval == 0
-          valid = false; errors << [:interval, "interval can't be zero"]
+          if data.interval == 0
+            valid = false; errors << [:interval, "interval can't be zero"]
+          end
         end
 
         return valid, errors
@@ -121,11 +142,15 @@ module VMDB
       def server(data)
         valid, errors = true, []
 
-        unless is_numeric?(data.listening_port) || data.listening_port.blank?
-          valid = false; errors << [:listening_port, "listening_port, \"#{data.listening_port}\", invalid. Should be numeric"]
+        keys = data.each_pair.to_a.transpose.first.to_set
+
+        if keys.include?(:listening_port)
+          unless is_numeric?(data.listening_port) || data.listening_port.blank?
+            valid = false; errors << [:listening_port, "listening_port, \"#{data.listening_port}\", invalid. Should be numeric"]
+          end
         end
 
-        unless ["sql", "memory", "cache"].include?(data.session_store)
+        if keys.include?(:session_store) && !["sql", "memory", "cache"].include?(data.session_store)
           valid = false; errors << [:session_store, "session_store, \"#{data.session_store}\", invalid. Should be one of \"sql\", \"memory\", \"cache\""]
         end
 
@@ -135,19 +160,21 @@ module VMDB
       def smtp(data)
         valid, errors = true, []
 
-        unless ["login", "plain", "none"].include?(data.authentication)
+        keys = data.each_pair.to_a.transpose.first.to_set
+
+        if keys.include?(:authentication) && !["login", "plain", "none"].include?(data.authentication)
           valid = false; errors << [:mode, "authentication, \"#{data.mode}\", invalid. Should be one of: login, plain, or none"]
         end
 
-        if data.user_name.blank? && data.authentication == "login"
+        if data.authentication == "login" && data.user_name.blank?
           valid = false; errors << [:user_name, "cannot be blank for 'login' authentication"]
         end
 
-        unless data.port.to_s =~ /^[0-9]*$/
+        if keys.include?(:port) && data.port.to_s !~ /^[0-9]*$/
           valid = false; errors << [:port, "\"#{data.port}\", invalid. Should be numeric"]
         end
 
-        unless data.from =~ /^\A([\w\.\-\+]+)@((?:[-a-z0-9]+\.)+[a-z]{2,})\z$/i
+        if keys.include?(:from) && data.from !~ /^\A([\w\.\-\+]+)@((?:[-a-z0-9]+\.)+[a-z]{2,})\z$/i
           valid = false; errors << [:from, "\"#{data.from}\", invalid. Should be a valid email address"]
         end
 

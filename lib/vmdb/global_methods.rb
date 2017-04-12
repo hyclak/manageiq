@@ -28,7 +28,7 @@ module Vmdb
     end
 
     def column_type(model, column)
-      MiqExpression.col_type(model, column)
+      MiqExpression.create_field(model, [], column).column_type
     end
 
     # Had to add timezone methods here, they are being called from models
@@ -39,27 +39,22 @@ module Vmdb
         new_time = time.in_time_zone(timezone)
         case ftype
         when "gtl"                                  # for gtl views
-          new_time = new_time.strftime("%m/%d/%y %H:%M:%S %Z")
-        when "on_at"                                  # for gtl views
-          new_time = new_time.strftime("on %m/%d/%y at %H:%M:%S %Z")
+          new_time = I18n.l(new_time.to_date) + new_time.strftime(" %H:%M:%S %Z")
         when "fname"                                # for download filename
           new_time = new_time.strftime("%Y_%m_%d")
         when "date"                                 # for just mm/dd/yy
-          new_time = new_time.strftime("%m/%d/%y")
-        when "datetime"                             # mm/dd/yy hh:mm:ss
-          new_time = new_time.strftime("%m/%d/%y %H:%M:%S")
-        when "export_filename", "support_log_fname"    # for export/log filename
+          new_time = I18n.l(new_time.to_date)
+        when "export_filename"                      # for export/log filename
           new_time = new_time.strftime("%Y%m%d_%H%M%S")
         when "tl"
-          new_time = new_time.strftime("%a %b %d %Y %H:%M:%S") + " " + Time.zone.to_s
-          new_time = new_time.gsub(/\) [a-zA-Z0-9\s\S]*/, ")")
+          new_time = I18n.l new_time
         when "raw"                                  # return without formatting
         when "compare_hdr"                          # for drift/compare headers
-          new_time = new_time.strftime("%m/%d/%y %H:%M %Z")
+          new_time = I18n.l(new_time, :format => :long) + new_time.strftime(" %Z")
         when "widget_footer"                        # for widget footers
-          new_time = new_time.strftime("%m/%d/%y %H:%M")
+          new_time = I18n.l(new_time, :format => :long)
         else                                        # for summary screens
-          new_time = new_time.strftime("%a %b %d %H:%M:%S %Z %Y")
+          new_time = I18n.l new_time
         end
       else    # if time is nil
         new_time = ""
@@ -85,7 +80,7 @@ module Vmdb
     end
 
     def ui_lookup_for_title(text)
-      Dictionary.gettext(text, :type => :ui_title, :notfound => :titleize)
+      Dictionary.gettext(text, :type => :ui_title)
     end
 
     # Wrap a report html table body with html table tags and headers for the columns
@@ -98,7 +93,7 @@ module Vmdb
       # table headings
       unless report.headers.nil?
         report.headers.each do |h|
-          html << "<th>" << CGI.escapeHTML(h.to_s) << "</th>"
+          html << "<th>" << CGI.escapeHTML(_(h.to_s)) << "</th>"
         end
         html << "</tr>"
         html << "</thead>"

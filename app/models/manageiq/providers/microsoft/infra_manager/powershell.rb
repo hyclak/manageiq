@@ -3,22 +3,30 @@ class ManageIQ::Providers::Microsoft::InfraManager
     extend ActiveSupport::Concern
 
     module ClassMethods
+      def execute_powershell_json(connection, script)
+        parse_json_results(run_powershell_script(connection, script))
+      end
+
       def execute_powershell(connection, script)
         powershell_results_to_hash(run_powershell_script(connection, script))
       end
 
       def run_powershell_script(connection, script)
         log_header = "MIQ(#{self.class.name}.#{__method__})"
-        File.open(script, "r") do |file|
-          begin
-            results = connection.run_powershell_script(file)
-            log_dos_error_results(results)
-            results
-          rescue Errno::ECONNREFUSED => err
-            $scvmm_log.error "MIQ(#{log_header} Unable to connect to SCVMM. #{err.message})"
-            raise
+        script_string = IO.read(script)
+        results = []
+
+        begin
+          with_winrm_shell(connection) do |shell|
+            results = shell.run(script_string)
+            log_dos_error_results(results.stderr)
           end
+        rescue Errno::ECONNREFUSED => err
+          $scvmm_log.error "MIQ(#{log_header} Unable to connect to SCVMM: #{err.message})"
+          raise
         end
+
+        results.stdout
       end
 
       def powershell_results_to_hash(results)
@@ -32,7 +40,7 @@ class ManageIQ::Providers::Microsoft::InfraManager
 
       def log_dos_error_results(results)
         log_header = "MIQ(#{self.class.name}##{__method__})"
-        error = results.stderr
+        error = results.respond_to?(:stderr) ? parse_xml_error_string(results.stderr) : results
         $scvmm_log.error("#{log_header} #{error}") unless error.blank?
       end
 
@@ -42,10 +50,47 @@ class ManageIQ::Providers::Microsoft::InfraManager
       end
 
       def decompress_results(results)
+        results = results.stdout if results.respond_to?(:stdout)
         begin
-          ActiveSupport::Gzip.decompress(Base64.decode64(results.stdout))
+          ActiveSupport::Gzip.decompress(Base64.decode64(results))
         rescue Zlib::GzipFile::Error # Not in gzip format
-          results.stdout
+          results
+        end
+      end
+
+      # Parse an ugly XML error string into something much more readable.
+      #
+      def parse_xml_error_string(str)
+        require 'nokogiri'
+        str = str.sub("#< CLIXML\r\n", '') # Illegal, nokogiri can't cope
+        doc = Nokogiri::XML::Document.parse(str)
+        doc.remove_namespaces!
+
+        text = doc.xpath("//S").map(&:text).join
+        array = text.split(/_x\h{1,}_/) # Split on stuff like '_x000D_'
+        array.delete('') # Delete empty elements
+
+        array.inject('') do |string, element|
+          break string if element =~ /at line:\d+/i
+          string << element
+        end
+      end
+
+      def with_winrm_shell(connection, shell_type = :powershell)
+        shell = connection.shell(shell_type)
+        yield shell
+      ensure
+        shell.close
+      end
+    end
+
+    def with_winrm_shell(shell_type = :powershell)
+      with_provider_connection do |connection|
+        begin
+          shell = connection.shell(shell_type)
+          yield shell
+        ensure
+          shell.close
         end
       end
     end
@@ -56,15 +101,15 @@ class ManageIQ::Providers::Microsoft::InfraManager
       results = []
 
       _result, timings = Benchmark.realtime_block(:execution) do
-        with_provider_connection do |connection|
-          results = connection.run_cmd(command)
-          self.class.log_dos_error_results(results)
+        with_winrm_shell(:cmd) do |shell|
+          results = shell.run(command)
+          self.class.log_dos_error_results(results.stderr)
         end
       end
 
       $scvmm_log.debug("#{log_header} Execute DOS command <#{command}>...Complete - Timings: #{timings}")
 
-      results
+      results.stdout
     end
 
     def run_powershell_script(script)
@@ -73,15 +118,16 @@ class ManageIQ::Providers::Microsoft::InfraManager
       results = []
 
       _result, timings = Benchmark.realtime_block(:execution) do
-        with_provider_connection do |connection|
-          results = connection.run_powershell_script(script)
-          self.class.log_dos_error_results(results)
+        with_winrm_shell do |shell|
+          script_string = IO.read(script)
+          results = shell.run(script_string)
+          self.class.log_dos_error_results(results.stderr)
         end
       end
 
       $scvmm_log.debug("#{log_header} Execute Powershell script... Complete - Timings: #{timings}")
 
-      results
+      results.stdout
     end
   end
 end

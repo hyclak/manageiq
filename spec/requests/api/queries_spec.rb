@@ -1,9 +1,8 @@
 #
 # REST API Request Tests - Queries
 #
-describe ApiController do
+describe "Queries API" do
   let(:zone)       { FactoryGirl.create(:zone, :name => "api_zone") }
-  let(:miq_server) { FactoryGirl.create(:miq_server, :guid => miq_server_guid, :zone => zone) }
   let(:ems)        { FactoryGirl.create(:ems_vmware, :zone => zone) }
   let(:host)       { FactoryGirl.create(:host) }
 
@@ -18,30 +17,32 @@ describe ApiController do
 
   describe "Query collections" do
     it "returns resource lists with only hrefs" do
-      api_basic_authorize
+      api_basic_authorize collection_action_identifier(:vms, :read, :get)
       create_vms(3)
 
       run_get vms_url
 
       expect_query_result(:vms, 3, 3)
-      expect_result_resources_to_have_only_keys("resources", %w(href))
-      expect_result_resource_keys_to_match_pattern("resources", "href", :vm_href_pattern)
+      expect(response.parsed_body).to include("resources" => all(match("href" => a_string_matching(vm_href_pattern))))
     end
 
     it "returns seperate ids and href when expanded" do
-      api_basic_authorize
+      api_basic_authorize collection_action_identifier(:vms, :read, :get)
       create_vms(3)
 
       run_get vms_url, :expand => "resources"
 
       expect_query_result(:vms, 3, 3)
-      expect_result_resource_keys_to_match_pattern("resources", "href", :vm_href_pattern)
-      expect_result_resource_keys_to_be_like_klass("resources", "id", Integer)
-      expect_result_resources_to_include_keys("resources", %w(guid))
+      expected = {
+        "resources" => all(a_hash_including("href" => a_string_matching(vm_href_pattern),
+                                            "id"   => a_kind_of(Integer),
+                                            "guid" => anything))
+      }
+      expect(response.parsed_body).to include(expected)
     end
 
     it "always return ids and href when asking for specific attributes" do
-      api_basic_authorize
+      api_basic_authorize collection_action_identifier(:vms, :read, :get)
       vm1   # create resource
 
       run_get vms_url, :expand => "resources", :attributes => "guid"
@@ -53,12 +54,29 @@ describe ApiController do
 
   describe "Query resource" do
     it "returns both id and href" do
-      api_basic_authorize
+      api_basic_authorize action_identifier(:vms, :read, :resource_actions, :get)
       vm1   # create resource
 
       run_get vm1_url
 
       expect_single_resource_query("id" => vm1.id, "href" => vm1_url, "guid" => vm1.guid)
+    end
+
+    it 'supports compressed ids' do
+      api_basic_authorize action_identifier(:vms, :read, :resource_actions, :get)
+
+      run_get vms_url(ApplicationRecord.compress_id(vm1.id))
+
+      expect_single_resource_query("id" => vm1.id, "href" => vm1_url, "guid" => vm1.guid)
+    end
+
+    it 'returns 404 on url with trailing garbage' do
+      api_basic_authorize action_identifier(:vms, :read, :resource_actions, :get)
+      vm1   # create resource
+
+      run_get vm1_url + 'garbage'
+
+      expect(response).to have_http_status(:not_found)
     end
   end
 
@@ -79,7 +97,7 @@ describe ApiController do
       run_get vm1_accounts_url
 
       expect_query_result(:accounts, 2)
-      expect_result_resources_to_include_hrefs("resources", :vm1_accounts_url_list)
+      expect_result_resources_to_include_hrefs("resources", vm1_accounts_url_list)
     end
 
     it "includes both id and href when getting a single resource" do
@@ -100,14 +118,29 @@ describe ApiController do
 
       expect_query_result(:accounts, 2)
       expect_result_resources_to_include_keys("resources", %w(id href))
-      expect_result_resources_to_include_hrefs("resources", :vm1_accounts_url_list)
+      expect_result_resources_to_include_hrefs("resources", vm1_accounts_url_list)
       expect_result_resources_to_include_data("resources", "id" => [acct1.id, acct2.id])
+    end
+
+    it 'supports compressed ids' do
+      api_basic_authorize
+
+      run_get vms_url(ApplicationRecord.compress_id(vm1.id)) + "/accounts/#{acct1.id}"
+
+      expect_single_resource_query("id" => acct1.id, "href" => acct1_url, "name" => acct1.name)
+    end
+
+    it 'returns 404 on url with trailing garbage' do
+      api_basic_authorize
+
+      run_get acct1_url + 'garbage'
+      expect(response).to have_http_status(:not_found)
     end
   end
 
   describe "Querying encrypted attributes" do
     it "hides them from database records" do
-      api_basic_authorize
+      api_basic_authorize action_identifier(:providers, :read, :resource_actions, :get)
 
       credentials = {:userid => "admin", :password => "super_password"}
 
@@ -116,35 +149,16 @@ describe ApiController do
 
       run_get(providers_url(provider.id), :attributes => "authentications")
 
-      expect_request_success
-      expect_result_to_match_hash(response_hash, "name" => "sample")
+      expect(response).to have_http_status(:ok)
+      expect_result_to_match_hash(response.parsed_body, "name" => "sample")
       expect_result_to_have_keys(%w(authentications))
-      authentication = response_hash["authentications"].first
+      authentication = response.parsed_body["authentications"].first
       expect(authentication["userid"]).to eq("admin")
       expect(authentication.key?("password")).to be_falsey
     end
 
-    it "hides them from configuration hashes" do
-      api_basic_authorize
-
-      password_field = ::Vmdb::ConfigurationEncoder::PASSWORD_FIELDS.last.to_s
-      config = {:authentication => {:userid => "admin", password_field.to_sym => "super_password"}}
-
-      Configuration.create_or_update(miq_server, config, "authentications")
-
-      run_get(servers_url(miq_server.id), :attributes => "configurations")
-
-      expect_request_success
-      expect_result_to_have_keys(%w(configurations))
-      configuration = response_hash["configurations"].first
-      authentication = configuration.fetch_path("settings", "authentication")
-      expect(authentication).to_not be_nil
-      expect(authentication["userid"]).to eq("admin")
-      expect(authentication.key?(password_field)).to be_falsey
-    end
-
     it "hides them from provisioning hashes" do
-      api_basic_authorize
+      api_basic_authorize action_identifier(:provision_requests, :read, :resource_actions, :get)
 
       password_field = ::MiqRequestWorkflow.all_encrypted_options_fields.last.to_s
       options = {:attrs => {:userid => "admin", password_field.to_sym => "super_password"}}
@@ -158,9 +172,9 @@ describe ApiController do
 
       run_get provision_requests_url(request.id)
 
-      expect_request_success
-      expect_result_to_match_hash(response_hash, "description" => "sample provision")
-      provision_attrs = response_hash.fetch_path("options", "attrs")
+      expect(response).to have_http_status(:ok)
+      expect_result_to_match_hash(response.parsed_body, "description" => "sample provision")
+      provision_attrs = response.parsed_body.fetch_path("options", "attrs")
       expect(provision_attrs).to_not be_nil
       expect(provision_attrs["userid"]).to eq("admin")
       expect(provision_attrs.key?(password_field)).to be_falsey

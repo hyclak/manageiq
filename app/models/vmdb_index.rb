@@ -2,9 +2,9 @@ class VmdbIndex < ApplicationRecord
   belongs_to :vmdb_table
 
   has_many :vmdb_metrics,          :as => :resource  # Destroy will be handled by purger
-  has_one  :latest_hourly_metric,  -> { where(:capture_interval_name => 'hourly').order "timestamp DESC" }, :as => :resource, :class_name => 'VmdbMetric'
 
-  include ReportableMixin
+  has_one  :latest_hourly_metric,  -> { VmdbMetric.where(:capture_interval_name => 'hourly', :resource_type => 'VmdbIndex', :timestamp => VmdbMetric.maximum(:timestamp)) }, :as => :resource, :class_name => 'VmdbMetric'
+
   include VmdbDatabaseMetricsMixin
 
   include_concern 'Seeding'

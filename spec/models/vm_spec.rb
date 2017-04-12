@@ -1,4 +1,6 @@
 describe Vm do
+  include_examples "OwnershipMixin"
+
   it "#corresponding_model" do
     expect(Vm.corresponding_model).to eq(MiqTemplate)
     expect(ManageIQ::Providers::Vmware::InfraManager::Vm.corresponding_model).to eq(ManageIQ::Providers::Vmware::InfraManager::Template)
@@ -112,7 +114,7 @@ describe Vm do
 
   context "#invoke_tasks_local" do
     before(:each) do
-      @guid, @server, @zone = EvmSpecHelper.create_guid_miq_server_zone
+      EvmSpecHelper.create_guid_miq_server_zone
       @host = FactoryGirl.create(:host)
       @vm = FactoryGirl.create(:vm_vmware, :host => @host)
     end
@@ -188,6 +190,41 @@ describe Vm do
     end
   end
 
+  context "#scan" do
+    before do
+      EvmSpecHelper.create_guid_miq_server_zone
+      @host = FactoryGirl.create(:host_vmware)
+      @vm = FactoryGirl.create(
+        :vm_vmware,
+        :host      => @host,
+        :miq_group => FactoryGirl.create(:miq_group)
+      )
+      FactoryGirl.create(:miq_event_definition, :name => :request_vm_scan)
+      # admin user is needed to process Events
+      User.super_admin || FactoryGirl.create(:user_with_group, :userid => "admin")
+    end
+
+    it "policy passes" do
+      expect_any_instance_of(ManageIQ::Providers::Vmware::InfraManager::Vm).to receive(:raw_scan)
+
+      allow(MiqAeEngine).to receive_messages(:deliver => ['ok', 'sucess', MiqAeEngine::MiqAeWorkspaceRuntime.new])
+      @vm.scan
+      status, message, result = MiqQueue.first.deliver
+      MiqQueue.first.delivered(status, message, result)
+    end
+
+    it "policy prevented" do
+      expect_any_instance_of(ManageIQ::Providers::Vmware::InfraManager::Vm).to_not receive(:raw_scan)
+
+      event = {:attributes => {"full_data" => {:policy => {:prevented => true}}}}
+      allow_any_instance_of(MiqAeEngine::MiqAeWorkspaceRuntime).to receive(:get_obj_from_path).with("/").and_return(:event_stream => event)
+      allow(MiqAeEngine).to receive_messages(:deliver => ['ok', 'sucess', MiqAeEngine::MiqAeWorkspaceRuntime.new])
+      @vm.scan
+      status, message, _result = MiqQueue.first.deliver
+      MiqQueue.first.delivered(status, message, MiqAeEngine::MiqAeWorkspaceRuntime.new)
+    end
+  end
+
   it "#save_drift_state" do
     # TODO: Beef up with more data
     vm = FactoryGirl.create(:vm_vmware)
@@ -217,41 +254,21 @@ describe Vm do
     })
   end
 
-  context ".process_tasks" do
-    before(:each) do
-      @guid, @server, @zone = EvmSpecHelper.create_guid_miq_server_zone
-      @host = FactoryGirl.create(:host_vmware, :name => "test_host",    :hostname   => "test_host", :state => 'on')
-    end
+  it '#set_remote_console_url' do
+    vm = FactoryGirl.create(:vm_vmware)
+    vm.send(:remote_console_url=, url = 'http://www.redhat.com', 1)
 
-    it "deletes VM via call to MiqTask#queue_callback and verifies message" do
-      @vm1 = FactoryGirl.create(:vm_vmware, :host => @host, :name => "VM-mini1")
+    console = SystemConsole.find_by(:vm_id => vm.id)
+    expect(console.url).to eq(url)
+    expect(console.url_secret).to be
+  end
 
-      @vm1.class.process_tasks(:task => "destroy", :userid => "system", :ids => [@vm1.id])
+  it '#add_to_service' do
+    vm = FactoryGirl.create(:vm_vmware)
+    service = FactoryGirl.create(:service)
 
-      expect(MiqQueue.count).to eq(1)
-      @msg1 = MiqQueue.first
-      status, message, result = @msg1.deliver
-
-      expect(@msg1.state).to eq("ready")
-      expect(@msg1.class_name).to eq("ManageIQ::Providers::Vmware::InfraManager::Vm")
-      @msg1.args.each do |h|
-        expect(h[:task]).to eq("destroy")
-        expect(h[:ids]).to eq([@vm1.id])
-        expect(h[:userid]).to eq("system")
-      end
-
-      @msg1.destroy
-      expect(MiqQueue.count).to eq(1)
-      @msg2 = MiqQueue.first
-      status, message, result = @msg2.deliver
-      expect_any_instance_of(MiqTask).to receive(:queue_callback).with("Finished", status, message, result)
-      @msg2.delivered(status, message, result)
-    end
-
-    it "deletes VM via call to MiqTask#queue_callback and successfully saves object image via YAML.dump" do
-      @vm2 = FactoryGirl.create(:vm_vmware, :host => @host, :name => "VM-mini2")
-      @vm2.destroy
-      expect { YAML.dump(@vm2) }.not_to raise_error
-    end
+    vm.add_to_service(service)
+    service.reload
+    expect(service.vms.count).to eq(1)
   end
 end

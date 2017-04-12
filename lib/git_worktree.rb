@@ -17,11 +17,11 @@ class GitWorktree
     @commit_sha    = options[:commit_sha]
     @password      = options[:password]
     @fast_forward_merge = options[:ff] || true
-    @ssl_no_verify = options[:ssl_no_verify] || false
     @remote_name   = 'origin'
     @cred          = Rugged::Credentials::UserPassword.new(:username => @username,
                                                            :password => @password)
     @base_name = File.basename(@path)
+    @certificate_check_cb = options[:certificate_check]
     process_repo(options)
   end
 
@@ -30,6 +30,38 @@ class GitWorktree
     @repo.close
     FileUtils.rm_rf(@path)
     true
+  end
+
+  def branches(where = nil)
+    where.nil? ? @repo.branches.each_name.sort : @repo.branches.each_name(where).sort
+  end
+
+  def branch=(name)
+    branch = @repo.branches.each.detect { |b| b.name.casecmp(name) == 0 }
+    raise GitWorktreeException::BranchMissing, name unless branch
+    @commit_sha = branch.target.oid
+  end
+
+  def branch_info(name)
+    branch = @repo.branches.each.detect { |b| b.name.casecmp(name) == 0 }
+    raise GitWorktreeException::BranchMissing, name unless branch
+    {:time => branch.target.time, :message => branch.target.message, :commit_sha => branch.target.oid}
+  end
+
+  def tags
+    @repo.tags.each.collect(&:name)
+  end
+
+  def tag=(name)
+    tag = @repo.tags.each.detect { |t| t.name.casecmp(name) == 0 }
+    raise GitWorktreeException::TagMissing, name unless tag
+    @commit_sha = tag.target.oid
+  end
+
+  def tag_info(name)
+    tag = @repo.tags.each.detect { |t| t.name.casecmp(name) == 0 }
+    raise GitWorktreeException::TagMissing, name unless tag
+    {:time => tag.target.time, :message => tag.target.message, :commit_sha => tag.target.oid}
   end
 
   def add(path, data, default_entry_keys = {})
@@ -144,10 +176,8 @@ class GitWorktree
   end
 
   def fetch
-    options = {:credentials => @cred}
-    ssl_no_verify_options(options) do
-      @repo.fetch(@remote_name, options)
-    end
+    options = {:credentials => @cred, :certificate_check => @certificate_check_cb}
+    @repo.fetch(@remote_name, options)
   end
 
   def pull
@@ -171,7 +201,7 @@ class GitWorktree
       result = differences_with_master(commit)
       raise GitWorktreeException::GitConflicts, result
     end
-    commit = rebase(commit, merge_index, master_branch ? master_branch.target : nil) if rebase
+    commit = rebase(commit, merge_index, master_branch.try(:target)) if rebase
     @repo.reset(commit, :soft)
   end
 
@@ -213,10 +243,8 @@ class GitWorktree
   end
 
   def clone(url)
-    options = {:credentials => @cred, :bare => true, :remote => @remote_name}
-    ssl_no_verify_options(options) do
-      @repo = Rugged::Repository.clone_at(url, @path, options)
-    end
+    options = {:credentials => @cred, :bare => true, :remote => @remote_name, :certificate_check => @certificate_check_cb}
+    @repo = Rugged::Repository.clone_at(url, @path, options)
   end
 
   def fetch_entry(path)
@@ -317,16 +345,5 @@ class GitWorktree
       differences[delta.old_file[:path]] = {:status => delta.status, :diffs => result}
     end
     differences
-  end
-
-  def ssl_no_verify_options(options)
-    return yield unless @ssl_no_verify
-    begin
-      options[:ignore_cert_errors] = true
-      ENV['GIT_SSL_NO_VERIFY'] = 'false'
-      yield
-    ensure
-      ENV.delete('GIT_SSL_NO_VERIFY')
-    end
   end
 end

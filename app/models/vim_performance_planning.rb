@@ -33,7 +33,7 @@ class VimPerformancePlanning < ActsAsArModel
       elsif options[:targets][:host]
         targets[:compute] = Host.extract_objects(targets.delete(:host))
       else
-        raise "Targets must contain a cluster or a host key"
+        raise _("Targets must contain a cluster or a host key")
       end
 
       targets[:storage] = Storage.extract_objects(targets[:storage])
@@ -115,7 +115,7 @@ class VimPerformancePlanning < ActsAsArModel
     #     :time_profile_id => <ID of time profile>
     # }
 
-    options[:ext_options] = {:tz => options[:tz], :time_profile => TimeProfile.find_by_id(options[:time_profile_id])}
+    options[:ext_options] = {:tz => options[:tz], :time_profile => TimeProfile.find_by(:id => options[:time_profile_id])}
 
     anal = VimPerformanceAnalysis::Planning.new(vm, options)
     vm_needs = anal.get_vm_needs

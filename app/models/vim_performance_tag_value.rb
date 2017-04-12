@@ -54,32 +54,16 @@ class VimPerformanceTagValue < ApplicationRecord
     ts = parent_perf.timestamp
     children = parent_perf.resource.send("#{assoc}_from_vim_performance_state_for_ts", ts)
     return [] if children.empty?
+    vim_performance_daily = parent_perf.kind_of?(VimPerformanceDaily)
+    recs = get_metrics(children, ts, parent_perf.capture_interval_name, vim_performance_daily, options[:category])
 
     result = {}
     counts = {}
-    assoc = nil
     association_type = nil
     tag_cols = TAG_COLS.key?(parent_perf.resource_type.to_sym) ? TAG_COLS[parent_perf.resource_type.to_sym] : TAG_COLS[:default]
 
-    if parent_perf.kind_of?(VimPerformanceDaily)
-      klass = MetricRollup
-      conditions = [
-        "resource_type = ? AND resource_id IN (?) AND (timestamp >= ? AND timestamp < ?) AND tag_names LIKE ? AND capture_interval_name = 'hourly'",
-        children.first.class.base_class.name,
-        children.collect(&:id),
-        ts, ts + 1.day, "%#{options[:category]}/%"
-      ]
-    else
-      klass, meth = Metric::Helper.class_and_association_for_interval_name(parent_perf.capture_interval_name)
-      conditions = {
-        :resource_type         => children.first.class.base_class.name,
-        :resource_id           => children.collect(&:id),
-        :timestamp             => parent_perf.timestamp,
-        :capture_interval_name => parent_perf.capture_interval_name
-      }
-    end
     perf_data = {}
-    perf_data[:perf_recs] = klass.where(conditions)
+    perf_data[:perf_recs] = recs
     perf_data[:categories] = perf_data[:perf_recs].collect do |perf|
       perf.tag_names.split(TAG_SEP).collect { |t| t.split("/").first } unless perf.tag_names.nil?
     end.flatten.compact.uniq
@@ -146,6 +130,18 @@ class VimPerformanceTagValue < ApplicationRecord
       a << tag_value_rec
     end
   end
+
+  def self.get_metrics(resources, timestamp, capture_interval_name, vim_performance_daily, category)
+    if vim_performance_daily
+      MetricRollup.with_interval_and_time_range("hourly", (timestamp)..(timestamp+1.day)).where(:resource => resources)
+          .for_tag_names(category, "") # append trailing slash
+    else
+      Metric::Helper.class_for_interval_name(capture_interval_name).where(:resource => resources)
+          .with_interval_and_time_range(capture_interval_name, timestamp)
+    end
+  end
+
+  private_class_method :get_metrics
 
   def self.tag_cols(name)
     return TAG_COLS[name.to_sym] if TAG_COLS.key?(name.to_sym)

@@ -1,5 +1,3 @@
-require 'spec_helper'
-
 describe EmsRefresh::SaveInventoryInfra do
   let(:refresher) do
     Class.new do
@@ -130,6 +128,17 @@ describe EmsRefresh::SaveInventoryInfra do
 
       hosts = Host.all
       expect(hosts.length).to eq(data.length)
+    end
+
+    it "should not change the name of a host every refresh if there are duplicate names" do
+      FactoryGirl.create(:host, :ems_id => nil,     :ems_ref => "host-1", :name => "localhost",     :hostname => "localhost")
+      FactoryGirl.create(:host, :ems_id => @ems.id, :ems_ref => "host-2", :name => "localhost - 2", :hostname => "localhost")
+
+      data = [{:name => 'localhost', :hostname => 'localhost', :ems_ref => "host-2"}]
+
+      EmsRefresh.save_hosts_inventory(@ems, data)
+
+      expect(Host.where(:ems_ref => "host-2").first.name).to eq("localhost - 2")
     end
   end
 end

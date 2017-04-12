@@ -24,35 +24,24 @@ module MiqReport::Generator::Trend
     #   :trend_filter   => MiqExpression#object
     #   :trend_db       => VmPerformance
     # }
+    trend_klass = db_options[:trend_db]
+    trend_klass = Object.const_get(trend_klass) unless trend_klass.kind_of?(Class)
     if db_options[:interval] == "daily"
-      results = []
-
       includes = include.blank? ? [] : include.keys
-      associations = includes.kind_of?(Hash) ? includes.keys : Array(includes)
-      only_cols = [db_options[:limit_col], db_options[:trend_col]].compact
 
-      start_time, end_time = Metric::Helper.get_time_range_from_offset(db_options[:start_offset], db_options[:end_offset], :tz => tz)
-      trend_klass = db_options[:trend_db].kind_of?(Class) ? db_options[:trend_db] : Object.const_get(db_options[:trend_db])
-
-      recs = VimPerformanceDaily.find_entries(:class => trend_klass, :tz => tz, :time_profile => time_profile)
-             .where(where_clause).where(:timestamp => start_time..end_time).includes(includes)
-      results = Rbac.filtered(recs, :class        => db_options[:trend_db],
-                                    :filter       => db_options[:trend_filter],
-                                    :userid       => options[:userid],
-                                    :miq_group_id => options[:miq_group_id])
+      time_range = Metric::Helper.time_range_from_offset("daily", db_options[:start_offset], db_options[:end_offset], tz)
+      recs = Metric::Helper.find_for_interval_name("daily", time_profile || tz, trend_klass)
+                           .where(where_clause).where(:timestamp => time_range).includes(includes)
     else
-      start_time = Time.now.utc - db_options[:start_offset].seconds
-      end_time   =  db_options[:end_offset].nil? ? Time.now.utc : Time.now.utc - db_options[:end_offset].seconds
+      time_range = Metric::Helper.time_range_from_offset('hourly', db_options[:start_offset], db_options[:end_offset])
 
       # Search and filter performance data
-      trend_klass = db_options[:trend_db].kind_of?(Class) ? db_options[:trend_db] : Object.const_get(db_options[:trend_db])
-      recs = trend_klass.find_all_by_interval_and_time_range('hourly', start_time, end_time).where(where_clause)
-      results = Rbac.filtered(recs, :class        => db_options[:trend_db],
-                                    :filter       => db_options[:trend_filter],
-                                    :userid       => options[:userid],
-                                    :miq_group_id => options[:miq_group_id])
+      recs = trend_klass.with_interval_and_time_range('hourly', time_range).where(where_clause)
     end
-
+    results = Rbac.filtered(recs, :class        => db_options[:trend_db],
+                                  :filter       => db_options[:trend_filter],
+                                  :userid       => options[:userid],
+                                  :miq_group_id => options[:miq_group_id])
     klass = db.kind_of?(Class) ? db : Object.const_get(db)
     self.title = klass.report_title(db_options)
     self.cols, self.headers = klass.report_cols(db_options)
@@ -61,12 +50,12 @@ module MiqReport::Generator::Trend
     # Build and filter trend data from performance data
     build_apply_time_profile(results)
     results = klass.build(results, db_options)
-    results = Rbac.filtered(results, :class        => db,
-                                     :filter       => conditions,
-                                     :limit        => options[:limit],
-                                     :userid       => options[:userid],
-                                     :miq_group_id => options[:miq_group_id])
 
+     if conditions
+      tz = User.find_by_userid(options[:userid]).get_timezone if options[:userid]
+      results = results.reject { |obj| conditions.lenient_evaluate(obj, tz) }
+    end
+    results = results[0...options[:limit]] if options[:limit]
     [results]
   end
 
@@ -142,7 +131,7 @@ module MiqReport::Generator::Trend
       @extras ||= {}
       @extras[:trend] ||= {}
 
-      limit = recs.sort { |a, b| a.timestamp <=> b.timestamp }.last.send(c) unless recs.empty?
+      limit = recs.max_by(&:timestamp).send(c) unless recs.empty?
 
       attributes.each do |attribute|
         trend_data_key = CHART_TREND_COLUMN_PREFIX + attribute.to_s
@@ -153,7 +142,7 @@ module MiqReport::Generator::Trend
   end
 
   def calc_value_at_target(limit, trend_data_key, trend_data)
-    unknown = "Trending Down"
+    unknown = _("Trending Down")
     if limit.nil? || trend_data[trend_data_key].nil? || trend_data[trend_data_key][:slope].nil? || trend_data[trend_data_key][:yint].nil? || trend_data[trend_data_key][:slope] <= 0 # can't project with a negative slope value
       return unknown
     else
